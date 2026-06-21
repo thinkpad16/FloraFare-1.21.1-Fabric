@@ -1,0 +1,14 @@
+{
+  "target": "namespace:croptopia",
+  "duration": 4800,
+  "nutrition": 3,
+  "saturation": 0.5,
+  "health_bonus": 0.0,
+  "attributes": [
+    {
+      "attribute": "minecraft:attack_speed",
+      "amount": 0.1,
+      "operation": "add_multiplied_base"
+    }
+  ]
+}

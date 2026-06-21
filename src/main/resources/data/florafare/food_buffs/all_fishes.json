@@ -1,0 +1,15 @@
+{
+  "target": "tag:minecraft:fishes",
+  "duration": 6000,
+  "nutrition": 2,
+  "saturation": 0.2,
+  "health_bonus": 2.0,
+  "effects": [
+    {
+      "id": "minecraft:water_breathing",
+      "duration": 6000,
+      "amplifier": 0
+    }
+  ],
+  "attributes": []
+}

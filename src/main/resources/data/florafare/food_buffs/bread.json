@@ -1,0 +1,36 @@
+{
+  "target": "item:minecraft:bread",
+  "duration": 12000,
+  "nutrition": 5,
+  "saturation": 0.8,
+  "health_bonus": 20.0,
+  "effects": [
+    {
+      "id": "minecraft:regeneration",
+      "duration": 400,
+      "amplifier": 1
+    },
+    {
+      "id": "minecraft:night_vision",
+      "duration": 12000,
+      "amplifier": 0
+    }
+  ],
+  "attributes": [
+    {
+      "attribute": "minecraft:movement_speed",
+      "amount": 0.15,
+      "operation": "add_multiplied_total"
+    },
+    {
+      "attribute": "rpgseries:melee_damage",
+      "amount": 4.0,
+      "operation": "add_value"
+    },
+    {
+      "attribute": "spell_engine:spell_power",
+      "amount": 0.25,
+      "operation": "add_multiplied_base"
+    }
+  ]
+}

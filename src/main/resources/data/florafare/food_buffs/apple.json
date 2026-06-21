@@ -1,0 +1,20 @@
+{
+  "target": "item:minecraft:apple",
+  "duration": 100,
+  "nutrition": 4,
+  "saturation": 0.3,
+  "health_bonus": 100.0,
+  "effects": [],
+  "attributes": [
+    {
+      "attribute": "minecraft:generic.attack_damage",
+      "amount": 1000,
+      "operation": "add_multiplied_base"
+    },
+    {
+      "attribute": "minecraft:safe_fall_distance",
+      "amount": 10.0,
+      "operation": "add_value"
+    }
+  ]
+}
