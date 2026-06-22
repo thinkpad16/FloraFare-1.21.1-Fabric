@@ -1,0 +1,55 @@
+[
+  { "target": "item:minecraft:bread", "duration": 1200, "nutrition": 3, "saturation": 0.6, "health_bonus": 1.0 },
+  { "target": "item:minecraft:cookie", "duration": 1200, "nutrition": 1, "saturation": 0.2, "attributes": [{"attribute": "minecraft:generic.movement_speed", "amount": 0.05, "operation": "add_multiplied_base"}] },
+  { "target": "item:minecraft:cake", "duration": 1200, "nutrition": 2, "saturation": 0.4, "health_bonus": 2.0 },
+  { "target": "item:minecraft:pumpkin_pie", "duration": 1200, "nutrition": 4, "saturation": 0.8, "health_bonus": 2.0 },
+
+  { "target": "item:minecraft:apple", "duration": 1200, "nutrition": 2, "saturation": 0.3, "attributes": [{"attribute": "minecraft:generic.movement_speed", "amount": 0.02, "operation": "add_multiplied_base"}] },
+  { "target": "item:minecraft:chorus_fruit", "duration": 1200, "nutrition": 2, "saturation": 0.3 },
+  { "target": "item:minecraft:sweet_berries", "duration": 1200, "nutrition": 1, "saturation": 0.2, "attributes": [{"attribute": "minecraft:generic.movement_speed", "amount": 0.05, "operation": "add_multiplied_base"}] },
+  { "target": "item:minecraft:glow_berries", "duration": 1200, "nutrition": 1, "saturation": 0.2, "effects": [{"id": "minecraft:night_vision", "duration": 1200}] },
+  { "target": "item:minecraft:melon_slice", "duration": 1200, "nutrition": 1, "saturation": 0.2 },
+  { "target": "item:minecraft:beetroot", "duration": 1200, "nutrition": 1, "saturation": 0.2 },
+  { "target": "item:minecraft:carrot", "duration": 1200, "nutrition": 2, "saturation": 0.3, "attributes": [{"attribute": "minecraft:generic.movement_speed", "amount": 0.03, "operation": "add_multiplied_base"}] },
+  { "target": "item:minecraft:potato", "duration": 1200, "nutrition": 1, "saturation": 0.2 },
+  { "target": "item:minecraft:baked_potato", "duration": 1200, "nutrition": 3, "saturation": 0.6, "health_bonus": 1.0 },
+
+  { "target": "item:minecraft:beef", "duration": 1200, "nutrition": 2, "saturation": 0.3, "effects": [{"id": "minecraft:hunger", "duration": 100}] },
+  { "target": "item:minecraft:porkchop", "duration": 1200, "nutrition": 2, "saturation": 0.3, "effects": [{"id": "minecraft:hunger", "duration": 100}] },
+  { "target": "item:minecraft:chicken", "duration": 1200, "nutrition": 1, "saturation": 0.2, "effects": [{"id": "minecraft:hunger", "duration": 200}] },
+  { "target": "item:minecraft:cod", "duration": 1200, "nutrition": 1, "saturation": 0.2 },
+  { "target": "item:minecraft:salmon", "duration": 1200, "nutrition": 1, "saturation": 0.2 },
+  { "target": "item:minecraft:pufferfish", "duration": 1200, "nutrition": 1, "saturation": 0.1, "effects": [{"id": "minecraft:poison", "duration": 300, "amplifier": 1}] },
+
+  { "target": "item:minecraft:cooked_beef", "duration": 6000, "nutrition": 8, "saturation": 1.2, "health_bonus": 4.0 },
+  { "target": "item:minecraft:cooked_porkchop", "duration": 6000, "nutrition": 8, "saturation": 1.2, "health_bonus": 4.0 },
+  { "target": "item:minecraft:cooked_chicken", "duration": 6000, "nutrition": 6, "saturation": 1.0, "health_bonus": 2.0 },
+  { "target": "item:minecraft:cooked_mutton", "duration": 6000, "nutrition": 6, "saturation": 1.0, "health_bonus": 3.0 },
+  { "target": "item:minecraft:cooked_rabbit", "duration": 6000, "nutrition": 5, "saturation": 0.8, "attributes": [{"attribute": "minecraft:generic.jump_strength", "amount": 0.1, "operation": "add_value"}] },
+  { "target": "item:minecraft:cooked_cod", "duration": 6000, "nutrition": 5, "saturation": 0.8, "health_bonus": 2.0 },
+
+  { "target": "item:minecraft:mushroom_stew", "duration": 6000, "nutrition": 6, "saturation": 1.5, "health_bonus": 4.0 },
+  { "target": "item:minecraft:beetroot_soup", "duration": 6000, "nutrition": 6, "saturation": 1.5, "health_bonus": 4.0 },
+  { "target": "item:minecraft:rabbit_stew", "duration": 6000, "nutrition": 10, "saturation": 2.0, "health_bonus": 6.0, "attributes": [{"attribute": "minecraft:generic.jump_strength", "amount": 0.2, "operation": "add_value"}] },
+
+  {
+    "target": "item:minecraft:golden_apple",
+    "duration": 9600, "nutrition": 4, "saturation": 1.0,
+    "attributes": [{"attribute": "minecraft:generic.max_health", "amount": -4.0, "operation": "add_value"}]
+  },
+  {
+    "target": "item:minecraft:golden_carrot",
+    "duration": 9600, "nutrition": 3, "saturation": 1.0,
+    "attributes": [{"attribute": "minecraft:generic.max_health", "amount": -6.0, "operation": "add_value"}, {"attribute": "minecraft:generic.movement_speed", "amount": 0.2, "operation": "add_multiplied_base"}]
+  },
+  {
+    "target": "item:minecraft:enchanted_golden_apple",
+    "duration": 9600, "nutrition": 4, "saturation": 2.0,
+    "effects": [{"id": "minecraft:regeneration", "duration": 800, "amplifier": 3}, {"id": "minecraft:absorption", "duration": 2400, "amplifier": 0}]
+  },
+
+  { "target": "item:minecraft:dried_kelp", "duration": 1200, "nutrition": 1, "saturation": 0.2, "effects": [{"id": "minecraft:conduit_power", "duration": 300}] },
+  { "target": "item:minecraft:honey_bottle", "duration": 1200, "nutrition": 1, "saturation": 0.1, "effects": [{"id": "minecraft:speed", "duration": 400}] },
+  { "target": "item:minecraft:rotten_flesh", "duration": 1200, "nutrition": 2, "saturation": 0.1, "effects": [{"id": "minecraft:hunger", "duration": 600, "amplifier": 1}] },
+  { "target": "item:minecraft:spider_eye", "duration": 1200, "nutrition": 1, "saturation": 0.1, "effects": [{"id": "minecraft:poison", "duration": 100, "amplifier": 0}] }
+]

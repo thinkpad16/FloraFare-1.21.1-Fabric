@@ -34,7 +34,6 @@ public class Florafare implements ModInitializer {
 		LOGGER.info("Florafare is initializing!");
         ItemRegistry.initialize();
         ResourceManagerHelper.get(ResourceType.SERVER_DATA).registerReloadListener(new FoodReloadListener());
-        ResourceManagerHelper.get(ResourceType.SERVER_DATA).registerReloadListener(new FoodReloadListener());
         net.tend1tnuy.florafare.food.FoodBuffManager.loadRuntimeConfigs();
         // 1. Реєстрація мережевого пакету
         PayloadTypeRegistry.playS2C().register(FoodBuffSyncPayload.ID, FoodBuffSyncPayload.CODEC);
