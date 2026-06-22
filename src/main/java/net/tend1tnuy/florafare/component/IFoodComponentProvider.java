@@ -1,20 +1,15 @@
 package net.tend1tnuy.florafare.component;
 
 /**
- * Provides access to the {@link PlayerFoodComponent}
- * attached to a player entity.
- *
- * <p>This interface is typically implemented through Mixins
- * and serves as the primary access point for player-specific
- * Florafare data.</p>
+ * Interface used to access the {@link PlayerFoodComponent} attached to a player.
+ * Typically implemented via Mixins on the PlayerEntity class.
  */
 public interface IFoodComponentProvider {
 
     /**
-     * Returns the {@link PlayerFoodComponent} associated
-     * with the current player instance.
+     * Retrieves the food component for the player.
      *
-     * @return the player's food component
+     * @return the associated PlayerFoodComponent.
      */
     PlayerFoodComponent florafare$getFoodComponent();
 }

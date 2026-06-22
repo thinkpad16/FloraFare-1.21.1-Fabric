@@ -8,61 +8,27 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 import net.tend1tnuy.registry.ItemRegistry;
 
-/**
- * Toast notification displayed when the player discovers a new food item.
- */
 public class FoodDiscoveryToast implements Toast {
 
-    private static final Identifier BACKGROUND_SPRITE =
-            Identifier.of("minecraft", "toast/recipe");
-
-    private static final Text TITLE =
-            Text.literal("Culinary Journal");
-
-    private static final Text DESCRIPTION =
-            Text.literal("A new dish has been discovered!");
-
-    private static final int TITLE_COLOR = 0xAA6600;
-    private static final int DESCRIPTION_COLOR = 0x000000;
-    private static final long DISPLAY_TIME = 5000L;
-
+    // Правильний ідентифікатор спрайту для фону тоста у нових версіях
+    private static final Identifier BACKGROUND_SPRITE = Identifier.of("minecraft", "toast/recipe");
     private final ItemStack icon = new ItemStack(ItemRegistry.FOOD_JOURNAL);
 
     @Override
     public Visibility draw(DrawContext context, ToastManager manager, long startTime) {
-        // Draw vanilla toast background
-        context.drawGuiTexture(
-                BACKGROUND_SPRITE,
-                0,
-                0,
-                getWidth(),
-                getHeight()
-        );
+        // 1. Малюємо правильний ванільний фон через метод drawGuiTexture
+        context.drawGuiTexture(BACKGROUND_SPRITE, 0, 0, this.getWidth(), this.getHeight());
 
-        // Draw title and description
-        context.drawText(
-                manager.getClient().textRenderer,
-                TITLE,
-                30,
-                7,
-                TITLE_COLOR,
-                false
-        );
+        // 2. Малюємо Заголовок (Колір: Темно-оранжевий/Золотий)
+        context.drawText(manager.getClient().textRenderer, Text.literal("Кулінарна Книга"), 30, 7, 0xAA6600, false);
 
-        context.drawText(
-                manager.getClient().textRenderer,
-                DESCRIPTION,
-                30,
-                18,
-                DESCRIPTION_COLOR,
-                false
-        );
+        // 3. Малюємо Опис (Колір: Чорний)
+        context.drawText(manager.getClient().textRenderer, Text.literal("Нову страву досліджено!"), 30, 18, 0x000000, false);
 
-        // Draw journal icon
+        // 4. Малюємо іконку книги
         context.drawItem(icon, 8, 8);
 
-        return startTime >= DISPLAY_TIME
-                ? Visibility.HIDE
-                : Visibility.SHOW;
+        // Показуємо тост 5 секунд (5000 мілісекунд)
+        return startTime >= 5000L ? Visibility.HIDE : Visibility.SHOW;
     }
 }

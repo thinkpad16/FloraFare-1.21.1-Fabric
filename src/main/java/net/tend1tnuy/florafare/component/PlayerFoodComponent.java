@@ -9,10 +9,7 @@ import net.minecraft.entity.effect.StatusEffect;
 import net.minecraft.entity.effect.StatusEffectInstance;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.nbt.NbtElement;
-import net.minecraft.nbt.NbtList;
-import net.minecraft.nbt.NbtString;
+import net.minecraft.nbt.*;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.server.network.ServerPlayerEntity;
@@ -22,64 +19,56 @@ import net.tend1tnuy.florafare.food.FoodBuffData;
 import net.tend1tnuy.florafare.network.FoodBuffSyncPayload;
 import net.tend1tnuy.florafare.network.FoodUnlockedPayload;
 
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
 
 public class PlayerFoodComponent {
 
-    public static final int MAX_SLOTS = 3;
+    public static final int MAX_BUFF_SLOTS = 3;
 
     private static final String NBT_BUFFS_KEY = "FlorafareActiveBuffs";
     private static final String NBT_DISCOVERED_KEY = "FlorafareDiscoveredFoods";
+    private static final String NBT_JOURNAL_KEY = "FlorafareReceivedJournal";
 
     private final PlayerEntity player;
 
     private final List<ActiveFoodBuff> activeBuffs = new ArrayList<>();
     private final Set<String> discoveredFoods = new HashSet<>();
 
-    // Marks whether the player has already received the journal item
     private boolean hasReceivedJournal = false;
 
     public PlayerFoodComponent(PlayerEntity player) {
         this.player = player;
     }
 
-    // Returns whether the player has received the journal
     public boolean hasReceivedJournal() {
         return hasReceivedJournal;
     }
 
-    // Sets whether the player has received the journal
     public void setHasReceivedJournal(boolean value) {
         this.hasReceivedJournal = value;
     }
 
-    // Returns all discovered food IDs
     public Set<String> getDiscoveredFoods() {
         return discoveredFoods;
     }
 
     /**
-     * Unlocks a food item for the player.
+     * Unlocks a food entry for the player.
      */
     public boolean unlockFood(String itemId) {
-        if (discoveredFoods.add(itemId)) {
-            sync();
+        if (!discoveredFoods.add(itemId)) return false;
 
-            // Sends a client-side toast notification
-            if (player instanceof ServerPlayerEntity serverPlayer) {
-                ServerPlayNetworking.send(serverPlayer, new FoodUnlockedPayload());
-            }
-            return true;
+        sync();
+
+        if (player instanceof ServerPlayerEntity serverPlayer) {
+            ServerPlayNetworking.send(serverPlayer, new FoodUnlockedPayload());
         }
-        return false;
+
+        return true;
     }
 
     /**
-     * Attempts to add or refresh a food buff.
+     * Attempts to apply or refresh a food buff.
      */
     public boolean tryAddBuff(ItemStack stack, FoodBuffData data) {
         String itemId = Registries.ITEM.getId(stack.getItem()).toString();
@@ -91,112 +80,110 @@ public class PlayerFoodComponent {
         if (existing.isPresent()) {
             ActiveFoodBuff buff = existing.get();
             buff.resetDuration(data.duration());
-            applyBuffEffectsAndAttributes(buff, data);
+            applyBuffEffects(buff, data);
             sync();
             return true;
         }
 
-        if (activeBuffs.size() >= MAX_SLOTS) {
-            return false;
-        }
+        if (activeBuffs.size() >= MAX_BUFF_SLOTS) return false;
 
-        ActiveFoodBuff newBuff = new ActiveFoodBuff(
+        ActiveFoodBuff buff = new ActiveFoodBuff(
                 data.target(),
                 itemId,
                 data.duration(),
                 data.duration()
         );
 
-        applyBuffEffectsAndAttributes(newBuff, data);
-        activeBuffs.add(newBuff);
+        applyBuffEffects(buff, data);
+        activeBuffs.add(buff);
         sync();
+
         return true;
     }
 
     public boolean removeLastBuff() {
         if (activeBuffs.isEmpty()) return false;
 
-        ActiveFoodBuff lastBuff = activeBuffs.remove(activeBuffs.size() - 1);
-        removeBuffAttributes(lastBuff);
+        ActiveFoodBuff buff = activeBuffs.remove(activeBuffs.size() - 1);
+        removeBuffAttributes(buff);
         sync();
+
         return true;
     }
 
     /**
-     * Applies buff effects and attribute modifiers.
+     * Applies effects and attribute modifiers from food data.
      */
-    private void applyBuffEffectsAndAttributes(ActiveFoodBuff buff, FoodBuffData data) {
+    private void applyBuffEffects(ActiveFoodBuff buff, FoodBuffData data) {
         if (player.getWorld().isClient) return;
 
         String safeItemId = buff.getConsumedItemId().replace(":", "_");
 
-        // Health bonus
+        // Apply health bonus
         if (data.healthBonus() > 0) {
-            Identifier modId = Identifier.of(Florafare.MOD_ID, "health_bonus_" + safeItemId);
-            applySingleAttribute(buff, EntityAttributes.GENERIC_MAX_HEALTH,
-                    modId, data.healthBonus(), EntityAttributeModifier.Operation.ADD_VALUE);
+            Identifier id = Identifier.of(Florafare.MOD_ID, "health_" + safeItemId);
+            applyAttribute(buff, EntityAttributes.GENERIC_MAX_HEALTH, id,
+                    data.healthBonus(), EntityAttributeModifier.Operation.ADD_VALUE);
         }
 
-        // Custom attributes
-        for (FoodBuffData.AttributeData attrData : data.attributes()) {
-            Optional<RegistryEntry.Reference<EntityAttribute>> attrEntryOpt =
-                    Registries.ATTRIBUTE.getEntry(attrData.attributeId());
+        // Apply custom attributes
+        for (FoodBuffData.AttributeData attr : data.attributes()) {
+            Optional<RegistryEntry.Reference<EntityAttribute>> entry =
+                    Registries.ATTRIBUTE.getEntry(attr.attributeId());
 
-            if (attrEntryOpt.isEmpty()) continue;
+            if (entry.isEmpty()) continue;
 
-            Identifier modId = Identifier.of(
+            Identifier id = Identifier.of(
                     Florafare.MOD_ID,
-                    "attr_" + safeItemId + "_" + attrData.attributeId().getPath()
+                    "attr_" + safeItemId + "_" + attr.attributeId().getPath()
             );
 
-            applySingleAttribute(buff, attrEntryOpt.get(),
-                    modId, attrData.amount(), mapOperation(attrData.operation()));
+            applyAttribute(buff, entry.get(), id,
+                    attr.amount(), mapOperation(attr.operation()));
         }
 
-        // Status effects
-        for (FoodBuffData.EffectData effData : data.effects()) {
-            Optional<RegistryEntry.Reference<StatusEffect>> effectEntryOpt =
-                    Registries.STATUS_EFFECT.getEntry(effData.id());
+        // Apply effects
+        for (FoodBuffData.EffectData effect : data.effects()) {
+            Optional<RegistryEntry.Reference<StatusEffect>> entry =
+                    Registries.STATUS_EFFECT.getEntry(effect.id());
 
-            effectEntryOpt.ifPresent(statusEffectReference ->
+            entry.ifPresent(status ->
                     player.addStatusEffect(new StatusEffectInstance(
-                            statusEffectReference,
-                            effData.duration(),
-                            effData.amplifier()
+                            status, effect.duration(), effect.amplifier()
                     ))
             );
         }
     }
 
-    private void applySingleAttribute(
+    private void applyAttribute(
             ActiveFoodBuff buff,
-            RegistryEntry<EntityAttribute> attributeEntry,
-            Identifier modId,
+            RegistryEntry<EntityAttribute> attribute,
+            Identifier modifierId,
             double amount,
             EntityAttributeModifier.Operation operation
     ) {
-        EntityAttributeInstance instance = player.getAttributeInstance(attributeEntry);
-        if (instance != null) {
-            instance.removeModifier(modId);
+        EntityAttributeInstance instance = player.getAttributeInstance(attribute);
+        if (instance == null) return;
 
-            try {
-                instance.addPersistentModifier(
-                        new EntityAttributeModifier(modId, amount, operation)
-                );
+        instance.removeModifier(modifierId);
 
-                Identifier attrRegistryId = Registries.ATTRIBUTE.getId(attributeEntry.value());
-                if (attrRegistryId != null) {
-                    buff.addModifierRecord(modId, attrRegistryId);
-                }
+        try {
+            instance.addPersistentModifier(
+                    new EntityAttributeModifier(modifierId, amount, operation)
+            );
 
-            } catch (Exception e) {
-                Florafare.LOGGER.error("CRITICAL: Failed to apply attribute modifier", e);
+            Identifier registryId = Registries.ATTRIBUTE.getId(attribute.value());
+            if (registryId != null) {
+                buff.addModifierRecord(modifierId, registryId);
             }
+
+        } catch (Exception e) {
+            Florafare.LOGGER.error("Failed to apply attribute modifier", e);
         }
     }
 
-    private EntityAttributeModifier.Operation mapOperation(String opStr) {
-        return switch (opStr.toLowerCase()) {
+    private EntityAttributeModifier.Operation mapOperation(String op) {
+        return switch (op.toLowerCase()) {
             case "add_multiplied_base" -> EntityAttributeModifier.Operation.ADD_MULTIPLIED_BASE;
             case "add_multiplied_total" -> EntityAttributeModifier.Operation.ADD_MULTIPLIED_TOTAL;
             default -> EntityAttributeModifier.Operation.ADD_VALUE;
@@ -204,37 +191,31 @@ public class PlayerFoodComponent {
     }
 
     public void tick() {
-        boolean isServer = !player.getWorld().isClient;
-        boolean needsSync = false;
+        boolean server = !player.getWorld().isClient;
+        boolean changed = false;
 
         for (int i = activeBuffs.size() - 1; i >= 0; i--) {
             ActiveFoodBuff buff = activeBuffs.get(i);
             buff.tick();
 
-            if (buff.isExpired()) {
-                if (isServer) {
-                    removeBuffAttributes(buff);
-                    needsSync = true;
-                }
-                activeBuffs.remove(i);
+            if (!buff.isExpired()) continue;
+
+            if (server) {
+                removeBuffAttributes(buff);
+                changed = true;
             }
+
+            activeBuffs.remove(i);
         }
 
-        if (isServer && needsSync) sync();
+        if (server && changed) sync();
     }
 
     private void removeBuffAttributes(ActiveFoodBuff buff) {
         buff.getAppliedModifiers().forEach((modId, attrId) -> {
-            Optional<RegistryEntry.Reference<EntityAttribute>> entryOpt =
-                    Registries.ATTRIBUTE.getEntry(attrId);
-
-            entryOpt.ifPresent(entityAttributeReference -> {
-                EntityAttributeInstance instance =
-                        player.getAttributeInstance(entityAttributeReference);
-
-                if (instance != null) {
-                    instance.removeModifier(modId);
-                }
+            Registries.ATTRIBUTE.getEntry(attrId).ifPresent(entry -> {
+                EntityAttributeInstance instance = player.getAttributeInstance(entry);
+                if (instance != null) instance.removeModifier(modId);
             });
         });
 
@@ -251,26 +232,25 @@ public class PlayerFoodComponent {
         if (player instanceof ServerPlayerEntity serverPlayer) {
             ServerPlayNetworking.send(
                     serverPlayer,
-                    new FoodBuffSyncPayload(this.writeToNbt(new NbtCompound()))
+                    new FoodBuffSyncPayload(writeToNbt(new NbtCompound()))
             );
         }
     }
 
     public NbtCompound writeToNbt(NbtCompound nbt) {
-        NbtList list = new NbtList();
+        NbtList buffs = new NbtList();
         for (ActiveFoodBuff buff : activeBuffs) {
-            list.add(buff.toNbt());
+            buffs.add(buff.toNbt());
         }
-        nbt.put(NBT_BUFFS_KEY, list);
+        nbt.put(NBT_BUFFS_KEY, buffs);
 
-        NbtList discoveredList = new NbtList();
-        for (String foodId : discoveredFoods) {
-            discoveredList.add(NbtString.of(foodId));
+        NbtList discovered = new NbtList();
+        for (String id : discoveredFoods) {
+            discovered.add(NbtString.of(id));
         }
-        nbt.put(NBT_DISCOVERED_KEY, discoveredList);
+        nbt.put(NBT_DISCOVERED_KEY, discovered);
 
-        // Stores whether the journal has been received
-        nbt.putBoolean("FlorafareReceivedJournal", hasReceivedJournal);
+        nbt.putBoolean(NBT_JOURNAL_KEY, hasReceivedJournal);
 
         return nbt;
     }
@@ -294,18 +274,16 @@ public class PlayerFoodComponent {
             }
         }
 
-        // Reads whether the journal has been received
-        this.hasReceivedJournal = nbt.getBoolean("FlorafareReceivedJournal");
+        hasReceivedJournal = nbt.getBoolean(NBT_JOURNAL_KEY);
     }
 
-    public void copyFrom(PlayerFoodComponent oldComponent) {
-        this.activeBuffs.clear();
-        this.activeBuffs.addAll(oldComponent.activeBuffs);
+    public void copyFrom(PlayerFoodComponent old) {
+        activeBuffs.clear();
+        activeBuffs.addAll(old.activeBuffs);
 
-        this.discoveredFoods.clear();
-        this.discoveredFoods.addAll(oldComponent.getDiscoveredFoods());
+        discoveredFoods.clear();
+        discoveredFoods.addAll(old.discoveredFoods);
 
-        // Copies journal flag after death
-        this.hasReceivedJournal = oldComponent.hasReceivedJournal();
+        hasReceivedJournal = old.hasReceivedJournal;
     }
 }

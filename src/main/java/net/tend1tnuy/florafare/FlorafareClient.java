@@ -14,41 +14,38 @@ import net.tend1tnuy.florafare.network.OpenFoodJournalPayload;
 
 /**
  * Client-side entry point for the Florafare mod.
- * Handles network synchronization and HUD rendering.
+ * Handles networking synchronization and HUD rendering.
  */
 public class FlorafareClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-
-        // Registers food buff synchronization from server
+        // Реєстрація синхронізації бафів
         ClientPlayNetworking.registerGlobalReceiver(FoodBuffSyncPayload.ID, (payload, context) -> {
             context.client().execute(() -> {
                 ClientPlayerEntity player = context.player();
-
                 if (player != null) {
-                    ((IFoodComponentProvider) player)
-                            .florafare$getFoodComponent()
-                            .readFromNbt(payload.nbt());
+                    ((IFoodComponentProvider) player).florafare$getFoodComponent().readFromNbt(payload.nbt());
                 }
             });
         });
 
-        // Opens the Food Journal GUI
+        // === ЕТАП 3: Відкриття графічного інтерфейсу Книги ===
         ClientPlayNetworking.registerGlobalReceiver(OpenFoodJournalPayload.ID, (payload, context) -> {
             context.client().execute(() -> {
+                // Відкриваємо наш новий екран
                 context.client().setScreen(new FoodJournalScreen());
             });
         });
 
-        // Shows a toast notification when a new food is discovered
         ClientPlayNetworking.registerGlobalReceiver(FoodUnlockedPayload.ID, (payload, context) -> {
             context.client().execute(() -> {
+                // Додаємо тост у менеджер
                 context.client().getToastManager().add(new FoodDiscoveryToast());
             });
         });
 
-        // Registers HUD overlay rendering
+        // Реєстрація HUD
         HudRenderCallback.EVENT.register(new FlorafareHud());
     }
 }
