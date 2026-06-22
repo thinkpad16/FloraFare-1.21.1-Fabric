@@ -1,4 +1,4 @@
-package net.tend1tnuy.florafare;
+package net.tend1tnuy.florafare.client;
 
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
@@ -20,7 +20,7 @@ public class FlorafareClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        // Реєстрація синхронізації бафів
+        // Register buff synchronization
         ClientPlayNetworking.registerGlobalReceiver(FoodBuffSyncPayload.ID, (payload, context) -> {
             context.client().execute(() -> {
                 ClientPlayerEntity player = context.player();
@@ -30,22 +30,22 @@ public class FlorafareClient implements ClientModInitializer {
             });
         });
 
-        // === ЕТАП 3: Відкриття графічного інтерфейсу Книги ===
+        // === STAGE 3: Open the Journal GUI ===
         ClientPlayNetworking.registerGlobalReceiver(OpenFoodJournalPayload.ID, (payload, context) -> {
             context.client().execute(() -> {
-                // Відкриваємо наш новий екран
+                // Open our new screen
                 context.client().setScreen(new FoodJournalScreen());
             });
         });
 
         ClientPlayNetworking.registerGlobalReceiver(FoodUnlockedPayload.ID, (payload, context) -> {
             context.client().execute(() -> {
-                // Додаємо тост у менеджер
+                // Add toast to the manager
                 context.client().getToastManager().add(new FoodDiscoveryToast());
             });
         });
 
-        // Реєстрація HUD
+        // Register HUD
         HudRenderCallback.EVENT.register(new FlorafareHud());
     }
 }

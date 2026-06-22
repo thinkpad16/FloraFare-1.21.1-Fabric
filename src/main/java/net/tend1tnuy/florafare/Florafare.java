@@ -31,20 +31,20 @@ public class Florafare implements ModInitializer {
         ResourceManagerHelper.get(ResourceType.SERVER_DATA).registerReloadListener(new FoodReloadListener());
         net.tend1tnuy.florafare.food.FoodBuffManager.loadRuntimeConfigs();
 
-        // 1. Реєстрація мережевих пакетів
+        // 1. Register network packets
         PayloadTypeRegistry.playS2C().register(FoodUnlockedPayload.ID, FoodUnlockedPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(FoodBuffSyncPayload.ID, FoodBuffSyncPayload.CODEC);
-        PayloadTypeRegistry.playS2C().register(OpenFoodJournalPayload.ID, OpenFoodJournalPayload.CODEC); // === ЕТАП 2 ===
+        PayloadTypeRegistry.playS2C().register(OpenFoodJournalPayload.ID, OpenFoodJournalPayload.CODEC); // === STAGE 2 ===
 
         CommandRegistrationCallback.EVENT.register(SetBuffCommand::register);
 
-        // 2. Івент: Відновлення бафів після смерті
+        // 2. Event: Restore buffs after death
         ServerPlayerEvents.COPY_FROM.register((oldPlayer, newPlayer, alive) -> {
             if (alive) {
                 ((IFoodComponentProvider) newPlayer).florafare$getFoodComponent()
                         .copyFrom(((IFoodComponentProvider) oldPlayer).florafare$getFoodComponent());
             } else {
-                // Навіть після реальної смерті ми хочемо зберегти прогрес книги
+                // Even after actual death, we want to save the journal progress
                 PlayerFoodComponent oldComp = ((IFoodComponentProvider) oldPlayer).florafare$getFoodComponent();
                 PlayerFoodComponent newComp = ((IFoodComponentProvider) newPlayer).florafare$getFoodComponent();
                 newComp.getDiscoveredFoods().addAll(oldComp.getDiscoveredFoods());
@@ -52,15 +52,15 @@ public class Florafare implements ModInitializer {
             }
         });
 
-        // 3. Івент: Синхронізація при вході та === ВИДАЧА КНИГИ ===
+        // 3. Event: Synchronization on join and === GIVE JOURNAL ===
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
             PlayerFoodComponent comp = ((IFoodComponentProvider) handler.player).florafare$getFoodComponent();
             comp.sync();
 
-            // === ЕТАП 2: Видаємо книгу, якщо гравець ще її не отримував ===
+            // === STAGE 2: Give the journal if the player hasn't received it yet ===
             if (!comp.hasReceivedJournal()) {
                 ItemStack journal = new ItemStack(ItemRegistry.FOOD_JOURNAL);
-                // offerOrDrop додає в інвентар, а якщо він повний - кидає на підлогу
+                // offerOrDrop adds to inventory, if full - drops on the ground
                 handler.player.getInventory().offerOrDrop(journal);
                 comp.setHasReceivedJournal(true);
             }

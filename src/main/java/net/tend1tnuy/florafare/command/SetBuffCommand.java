@@ -40,7 +40,7 @@ public class SetBuffCommand {
                 CommandManager.literal("florafare")
 
                         // =========================================================
-                        // ГІЛКА 1: /florafare setbuff (Динамічний баф на предмет у руці)
+                        // BRANCH 1: /florafare setbuff (Dynamic buff on item in hand)
                         // =========================================================
                         .then(CommandManager.literal("setbuff")
                                 .requires(source -> source.hasPermissionLevel(2))
@@ -68,7 +68,7 @@ public class SetBuffCommand {
                         )
 
                         // =========================================================
-                        // ГІЛКА 2: /florafare buff give (Видача бафу з датапаку гравцю)
+                        // BRANCH 2: /florafare buff give (Grant buff from datapack to player)
                         // =========================================================
                         .then(CommandManager.literal("buff")
                                 .requires(source -> source.hasPermissionLevel(2))
@@ -83,7 +83,7 @@ public class SetBuffCommand {
         );
     }
 
-    // Логіка для /florafare setbuff ...
+    // Logic for /florafare setbuff ...
     private static int executeSetBuff(CommandContext<ServerCommandSource> context, Identifier attrId, Double amount, String op) {
         ServerCommandSource source = context.getSource();
         ItemStack stack = source.getPlayer().getMainHandStack();
@@ -126,12 +126,12 @@ public class SetBuffCommand {
         return 1;
     }
 
-    // Логіка для /florafare buff give <player> <targetId>
+    // Logic for /florafare buff give <player> <targetId>
     private static int executeBuffGive(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
         ServerPlayerEntity player = EntityArgumentType.getPlayer(context, "player");
         String targetId = StringArgumentType.getString(context, "targetId");
 
-        // Шукаємо конфіг
+        // Search for config
         FoodBuffData data = null;
         for (FoodBuffData config : FoodBuffManager.getAllConfigs()) {
             if (config.target().equals(targetId)) {
@@ -143,17 +143,17 @@ public class SetBuffCommand {
         if (data != null) {
             PlayerFoodComponent component = ((IFoodComponentProvider) player).florafare$getFoodComponent();
 
-            // ТУТ ВАЖЛИВО: Виклич свій метод, який додає баф на екран
-            // Наприклад, якщо у тебе є метод addBuff:
+            // IMPORTANT: Call your method that adds the buff to the screen
+            // For example, if you have an addBuff method:
             // component.addBuff(new net.tend1tnuy.florafare.component.ActiveFoodBuff(targetId, data));
 
-            // Відкриваємо їжу в книзі гравця (щоб з'явився Toast)
+            // Unlock food in the player's journal (to trigger the Toast)
             component.unlockFood(targetId);
 
-            context.getSource().sendFeedback(() -> Text.literal("§aБаф " + targetId + " успішно видано гравцю " + player.getName().getString()), true);
+            context.getSource().sendFeedback(() -> Text.literal("§aBuff " + targetId + " successfully granted to player " + player.getName().getString()), true);
             return 1;
         } else {
-            context.getSource().sendError(Text.literal("Баф з ID " + targetId + " не знайдено в датапаку!"));
+            context.getSource().sendError(Text.literal("Buff with ID " + targetId + " not found in the datapack!"));
             return 0;
         }
     }

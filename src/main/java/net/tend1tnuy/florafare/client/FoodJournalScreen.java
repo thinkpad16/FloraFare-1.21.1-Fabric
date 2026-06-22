@@ -23,9 +23,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
-/**
- * Screen for the Food Journal.
- */
 public class FoodJournalScreen extends Screen {
 
     private static final Identifier BOOK_TEXTURE = Identifier.of("minecraft", "textures/gui/book.png");
@@ -50,7 +47,7 @@ public class FoodJournalScreen extends Screen {
     private PageTurnWidget previousPageButton;
 
     public FoodJournalScreen() {
-        super(Text.literal("Culinary Journal"));
+        super(Text.literal("Кулінарна Книга"));
     }
 
     @Override
@@ -170,7 +167,7 @@ public class FoodJournalScreen extends Screen {
         int titleWidth = this.textRenderer.getWidth(this.title);
         context.drawText(this.textRenderer, this.title, bookX + (BOOK_WIDTH - titleWidth) / 2, bookY + 12, 0x000000, false);
 
-        String trackerStr = "Discovered foods: " + unlockedCount + " / " + displayItems.size();
+        String trackerStr = "Відкрито страв: " + unlockedCount + " / " + displayItems.size();
         int trackerColor = (unlockedCount == displayItems.size() && displayItems.size() > 0) ? 0xAA8800 : 0x555555;
         int trackerWidth = this.textRenderer.getWidth(trackerStr);
 
@@ -229,12 +226,12 @@ public class FoodJournalScreen extends Screen {
     private void drawDetailView(DrawContext context, int bookX, int bookY) {
         if (selectedEntry == null) return;
 
-        // Set safe paper boundaries, skipping the spring/binding on the left
+        // Встановлюємо безпечні межі паперу
         int paperLeft = bookX + 42;
         int paperWidth = 122;
         int px = paperLeft;
 
-        // Large icon
+        // Велика іконка
         context.getMatrices().push();
         context.getMatrices().translate(paperLeft + (paperWidth / 2f) - 16, bookY + 22, 0);
         context.getMatrices().scale(2.0f, 2.0f, 1.0f);
@@ -243,7 +240,7 @@ public class FoodJournalScreen extends Screen {
 
         int py = bookY + 58;
 
-        // Name with proper centering
+        // Назва
         String name = selectedEntry.stack.getName().getString();
         int nameWidth = this.textRenderer.getWidth(name);
         if (nameWidth > paperWidth - 4) {
@@ -251,59 +248,51 @@ public class FoodJournalScreen extends Screen {
             nameWidth = this.textRenderer.getWidth(name);
         }
         context.drawText(this.textRenderer, name, paperLeft + (paperWidth - nameWidth) / 2, py, 0x000000, false);
-
-        // Separator line
         context.fill(paperLeft + 6, py + 12, paperLeft + paperWidth - 6, py + 13, 0x44000000);
 
         py += 18;
 
         FoodBuffData data = selectedEntry.data;
 
-        // Duration
         int seconds = data.duration() / 20;
         String timeStr = String.format("%02d:%02d", seconds / 60, seconds % 60);
-        context.drawText(this.textRenderer, "⏱ Duration: " + timeStr, px, py, 0x222222, false);
+        context.drawText(this.textRenderer, "⏱ Час дії: " + timeStr, px, py, 0x222222, false);
         py += 12;
 
-        // Nutrition
-        context.drawText(this.textRenderer, "🍖 Nutrition: " + data.nutrition(), px, py, 0x222222, false);
+        context.drawText(this.textRenderer, "🍖 Ситість: " + data.nutrition(), px, py, 0x222222, false);
         py += 12;
 
-        // Saturation
-        context.drawText(this.textRenderer, "✨ Saturation: " + data.saturation(), px, py, 0x222222, false);
+        // Додано Насичення
+        context.drawText(this.textRenderer, "✨ Насичення: " + data.saturation(), px, py, 0x222222, false);
         py += 12;
 
-        // Health
         if (data.healthBonus() != 0) {
             String sign = data.healthBonus() > 0 ? "+" : "";
-            context.drawText(this.textRenderer, "❤ Health: " + sign + data.healthBonus(), px, py, 0x222222, false);
+            context.drawText(this.textRenderer, "❤ Здоров'я: " + sign + data.healthBonus(), px, py, 0x222222, false);
             py += 12;
         }
 
-        // --- RENDERING ATTRIBUTES ---
+        // --- ВІДМАЛЬОВКА АТРИБУТІВ ---
         if (data.attributes() != null && !data.attributes().isEmpty()) {
             py += 4;
-            context.drawText(this.textRenderer, "Attributes:", px, py, 0x000000, false);
+            context.drawText(this.textRenderer, "Атрибути:", px, py, 0x000000, false);
             py += 12;
             for (FoodBuffData.AttributeData attr : data.attributes()) {
                 String attrName = attr.attributeId().getPath().replace("generic.", "");
                 if (attrName.length() > 0) {
                     attrName = attrName.substring(0, 1).toUpperCase() + attrName.substring(1).replace("_", " ");
                 }
-
                 String sign = attr.amount() > 0 ? "+" : "";
                 String val = attr.operation().contains("multiplied") ? (int)(attr.amount() * 100) + "%" : String.valueOf(attr.amount());
-
-                // List indentation (+6)
                 context.drawText(this.textRenderer, "• " + attrName + ": " + sign + val, px + 6, py, 0x444444, false);
                 py += 10;
             }
         }
 
-        // --- RENDERING EFFECTS (Potions/Magic) ---
+        // --- ВІДМАЛЬОВКА ЕФЕКТІВ ---
         if (data.effects() != null && !data.effects().isEmpty()) {
             py += 4;
-            context.drawText(this.textRenderer, "Effects:", px, py, 0x000000, false);
+            context.drawText(this.textRenderer, "Ефекти:", px, py, 0x000000, false);
             py += 12;
             for (var effect : data.effects()) {
                 String rawId = effect.id().getPath();
@@ -311,7 +300,6 @@ public class FoodJournalScreen extends Screen {
                 if (rawId.length() > 0) {
                     effectName = rawId.substring(0, 1).toUpperCase() + rawId.substring(1).replace("_", " ");
                 }
-
                 String lvl = "";
                 if (effect.amplifier() == 1) lvl = " II";
                 else if (effect.amplifier() == 2) lvl = " III";
@@ -320,8 +308,6 @@ public class FoodJournalScreen extends Screen {
 
                 int effectSeconds = effect.duration() / 20;
                 String effectTime = String.format(" (%02d:%02d)", effectSeconds / 60, effectSeconds % 60);
-
-                // List indentation (+6)
                 context.drawText(this.textRenderer, "• " + effectName + lvl + effectTime, px + 6, py, 0x444444, false);
                 py += 10;
             }

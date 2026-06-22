@@ -21,14 +21,14 @@ public class FlorafareHud implements HudRenderCallback {
     private static final int SLOT_SPACING = 26;
     private static final int MAX_SLOTS = 3;
 
-    // НОВЕ: Клас для збереження стану кожного слота (для пам'яті анімацій)
+    // NEW: Class to store the state of each slot (for animation memory)
     private static class SlotState {
         String currentId = "";
         float x = -SLOT_WIDTH * 1.5f;
-        ActiveFoodBuff lastBuff = null; // Запам'ятовуємо "привида" бафу, щоб відмалювати його від'їзд
+        ActiveFoodBuff lastBuff = null; // Remember the "ghost" of the buff to render its exit
     }
 
-    // Створюємо 3 постійних слоти
+    // Create 3 persistent slots
     private final SlotState[] slots = new SlotState[]{new SlotState(), new SlotState(), new SlotState()};
 
     @Override
@@ -49,28 +49,28 @@ public class FlorafareHud implements HudRenderCallback {
             if (buff != null) {
                 String newId = buff.getConsumedItemId();
                 if (!state.currentId.equals(newId)) {
-                    // Новий баф! Кидаємо його далеко за екран, щоб він виїхав
+                    // New buff! Throw it far off-screen so it slides in
                     state.x = -SLOT_WIDTH * 1.5f;
                     state.currentId = newId;
                 }
                 state.lastBuff = buff;
-                // Анімація виїзду на екран (Slide-In)
+                // Animation for sliding onto the screen (Slide-In)
                 state.x = net.minecraft.util.math.MathHelper.lerp(0.15f, state.x, (float) BASE_X);
 
                 renderActiveSlot(context, client, i, buff, (int) state.x, 1.0f);
             } else {
-                state.currentId = ""; // Слот тепер порожній
+                state.currentId = ""; // Slot is now empty
 
-                // Якщо баф щойно зник (випили зілля або закінчився час), але він ще на екрані — анімуємо виїзд (Slide-Out)
+                // If the buff just disappeared (potion drank or time expired), but it's still on screen — animate the exit (Slide-Out)
                 if (state.lastBuff != null && state.x > -SLOT_WIDTH * 1.2f) {
                     state.x = net.minecraft.util.math.MathHelper.lerp(0.15f, state.x, -SLOT_WIDTH * 1.5f);
 
-                    // Розрахунок прозорості: чим ближче до краю, тим прозоріше він стає
+                    // Transparency calculation: the closer to the edge, the more transparent it becomes
                     float fadeAlpha = Math.max(0.0f, 1.0f - Math.abs(BASE_X - state.x) / (SLOT_WIDTH + BASE_X));
 
                     renderActiveSlot(context, client, i, state.lastBuff, (int) state.x, fadeAlpha);
                 } else {
-                    // Якщо слот повністю сховався за екраном — остаточно забуваємо його
+                    // If the slot is fully hidden off-screen — forget it permanently
                     state.lastBuff = null;
                     renderEmptySlot(context, client, i);
                 }
@@ -93,13 +93,13 @@ public class FlorafareHud implements HudRenderCallback {
             blinkAlpha = 0.5f + 0.5f * (float) Math.sin(System.currentTimeMillis() / 100.0);
         }
 
-        // Комбінуємо альфу блимання та альфу зникнення
+        // Combine blinking alpha and fade-out alpha
         float finalAlpha = blinkAlpha * fadeAlpha;
 
         int alphaInt = (int) (finalAlpha * 255);
         int bgAlphaInt = (int) (finalAlpha * 150);
 
-        // Якщо предмет став повністю прозорим, не малюємо його
+        // If the item has become fully transparent, do not render it
         if (alphaInt <= 5) return;
 
         int bgColor = (bgAlphaInt << 24) | 0x000000;
