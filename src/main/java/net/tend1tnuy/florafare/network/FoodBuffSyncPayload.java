@@ -8,8 +8,14 @@ import net.minecraft.network.packet.CustomPayload;
 import net.minecraft.util.Identifier;
 import net.tend1tnuy.florafare.Florafare;
 
+/**
+ * Payload used to synchronize active food buff data (in NBT format)
+ * from the server to the client.
+ */
 public record FoodBuffSyncPayload(NbtCompound nbt) implements CustomPayload {
-    public static final CustomPayload.Id<FoodBuffSyncPayload> ID = new CustomPayload.Id<>(Identifier.of(Florafare.MOD_ID, "food_buff_sync"));
+
+    public static final CustomPayload.Id<FoodBuffSyncPayload> ID =
+            new CustomPayload.Id<>(Identifier.of(Florafare.MOD_ID, "food_buff_sync"));
 
     public static final PacketCodec<RegistryByteBuf, FoodBuffSyncPayload> CODEC = PacketCodec.tuple(
             PacketCodecs.NBT_COMPOUND, FoodBuffSyncPayload::nbt,

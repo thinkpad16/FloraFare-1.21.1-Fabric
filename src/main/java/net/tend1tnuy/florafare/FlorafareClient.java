@@ -8,10 +8,15 @@ import net.tend1tnuy.florafare.client.FlorafareHud;
 import net.tend1tnuy.florafare.component.IFoodComponentProvider;
 import net.tend1tnuy.florafare.network.FoodBuffSyncPayload;
 
+/**
+ * Client-side entry point for the Florafare mod.
+ * Handles networking synchronization and HUD rendering.
+ */
 public class FlorafareClient implements ClientModInitializer {
+
     @Override
     public void onInitializeClient() {
-        // Приймаємо синхронізацію слотів з сервера
+        // Register packet receiver to handle buff slot synchronization from the server
         ClientPlayNetworking.registerGlobalReceiver(FoodBuffSyncPayload.ID, (payload, context) -> {
             context.client().execute(() -> {
                 ClientPlayerEntity player = context.player();
@@ -20,6 +25,8 @@ public class FlorafareClient implements ClientModInitializer {
                 }
             });
         });
+
+        // Register the HUD renderer
         HudRenderCallback.EVENT.register(new FlorafareHud());
     }
 }

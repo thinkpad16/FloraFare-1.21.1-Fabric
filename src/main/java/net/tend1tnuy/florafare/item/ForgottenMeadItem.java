@@ -11,32 +11,34 @@ import net.minecraft.world.World;
 import net.tend1tnuy.florafare.component.IFoodComponentProvider;
 import net.tend1tnuy.florafare.component.PlayerFoodComponent;
 
+/**
+ * An item that, when consumed, removes the most recently added food buff
+ * from the player's active buff list and returns an empty glass bottle.
+ */
 public class ForgottenMeadItem extends Item {
+
     public ForgottenMeadItem(Settings settings) {
         super(settings);
     }
 
     @Override
     public ItemStack finishUsing(ItemStack stack, World world, LivingEntity user) {
-        // Викликаємо суперклас, який зменшить стак на 1
+        // Call super to handle base food consumption logic (e.g., decrementing stack)
         ItemStack result = super.finishUsing(stack, world, user);
 
+        // Remove the last active buff on the server
         if (!world.isClient && user instanceof ServerPlayerEntity player) {
-            PlayerFoodComponent comp = ((IFoodComponentProvider) player).florafare$getFoodComponent();
-
-            // Якщо видалення успішне, можна додати звук/ефект за бажанням
-            comp.removeLastBuff();
+            PlayerFoodComponent component = ((IFoodComponentProvider) player).florafare$getFoodComponent();
+            component.removeLastBuff();
         }
 
-        // Повертаємо пусту пляшечку
+        // Return a glass bottle to the player if not in creative mode
         if (user instanceof PlayerEntity player && !player.getAbilities().creativeMode) {
             ItemStack bottle = new ItemStack(Items.GLASS_BOTTLE);
             if (result.isEmpty()) {
                 return bottle;
-            } else {
-                if (!player.getInventory().insertStack(bottle)) {
-                    player.dropItem(bottle, false);
-                }
+            } else if (!player.getInventory().insertStack(bottle)) {
+                player.dropItem(bottle, false);
             }
         }
 
@@ -45,6 +47,6 @@ public class ForgottenMeadItem extends Item {
 
     @Override
     public UseAction getUseAction(ItemStack stack) {
-        return UseAction.DRINK; // Анімація пиття
+        return UseAction.DRINK;
     }
 }

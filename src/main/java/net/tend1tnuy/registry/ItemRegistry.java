@@ -8,19 +8,30 @@ import net.minecraft.util.Identifier;
 import net.tend1tnuy.florafare.Florafare;
 import net.tend1tnuy.florafare.item.ForgottenMeadItem;
 
+/**
+ * Registry for all items added by the Florafare mod.
+ */
 public class ItemRegistry {
-
-    //public static final Item TEST_ITEM = registerItem("test_item", new Item(new Item.Settings()));
 
     public static final Item FORGOTTEN_MEAD = registerItem("forgotten_mead", new ForgottenMeadItem(new Item.Settings()
             .maxCount(16)
             .food(new FoodComponent.Builder().nutrition(0).saturationModifier(0f).alwaysEdible().build())));
 
+    /**
+     * Registers an item to the Minecraft item registry.
+     *
+     * @param name The unique name of the item.
+     * @param item The item instance to register.
+     * @return The registered item.
+     */
     private static Item registerItem(String name, Item item) {
         return Registry.register(Registries.ITEM, Identifier.of(Florafare.MOD_ID, name), item);
     }
 
+    /**
+     * Initializes the item registry.
+     */
     public static void initialize() {
-        Florafare.LOGGER.info("Registering items for " + Florafare.MOD_ID);
+        Florafare.LOGGER.info("Registering mod items for " + Florafare.MOD_ID);
     }
 }
