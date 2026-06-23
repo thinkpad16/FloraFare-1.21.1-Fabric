@@ -12,18 +12,15 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Represents an active food buff instance, tracking duration,
+ * Represents an active food buff instance on a player, tracking duration,
  * source items, and applied attribute modifiers.
  */
 public class ActiveFoodBuff {
-    private final String target;            // Configuration source (e.g., "tag:c:meats")
-    private final String consumedItemId;    // Exact consumed item (e.g., "minecraft:cooked_beef")
+    private final String target;
+    private final String consumedItemId;
     private int durationRemaining;
-
-    // Note: Not final to allow for duration updates when eating the same food again
     private int initialDuration;
 
-    // Maps Modifier Identifier to Attribute Identifier for safe removal
     private final Map<Identifier, Identifier> appliedModifiers = new HashMap<>();
 
     public ActiveFoodBuff(String target, String consumedItemId, int durationRemaining, int initialDuration) {
@@ -33,20 +30,12 @@ public class ActiveFoodBuff {
         this.initialDuration = initialDuration;
     }
 
-    /**
-     * Decrements the duration of the buff.
-     */
     public void tick() {
         if (durationRemaining > 0) {
             durationRemaining--;
         }
     }
 
-    /**
-     * Resets the buff duration and updates the initial duration base.
-     *
-     * @param newDuration the new duration in ticks.
-     */
     public void resetDuration(int newDuration) {
         this.durationRemaining = newDuration;
         this.initialDuration = newDuration;
@@ -80,9 +69,6 @@ public class ActiveFoodBuff {
         return durationRemaining <= 0;
     }
 
-    /**
-     * Helper method for FlorafareHud to retrieve the item stack icon and name.
-     */
     public ItemStack getConsumedItemStack() {
         Item item = Registries.ITEM.get(Identifier.of(this.consumedItemId));
         return item.getDefaultStack();

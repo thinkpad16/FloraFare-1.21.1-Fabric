@@ -38,12 +38,10 @@ public class SetBuffCommand {
 
         dispatcher.register(
                 CommandManager.literal("florafare")
+                        .requires(source -> source.hasPermissionLevel(2))
 
-                        // =========================================================
-                        // BRANCH 1: /florafare setbuff (Dynamic buff on item in hand)
-                        // =========================================================
+                        // Branch: /florafare setbuff (Dynamic buff on item in hand)
                         .then(CommandManager.literal("setbuff")
-                                .requires(source -> source.hasPermissionLevel(2))
                                 .then(CommandManager.argument("duration", IntegerArgumentType.integer(1))
                                         .then(CommandManager.argument("nutrition", IntegerArgumentType.integer(0))
                                                 .then(CommandManager.argument("saturation", DoubleArgumentType.doubleArg(0.0))
@@ -67,11 +65,8 @@ public class SetBuffCommand {
                                 )
                         )
 
-                        // =========================================================
-                        // BRANCH 2: /florafare buff give (Grant buff from datapack to player)
-                        // =========================================================
+                        // Branch: /florafare buff give (Grant buff from datapack to player)
                         .then(CommandManager.literal("buff")
-                                .requires(source -> source.hasPermissionLevel(2))
                                 .then(CommandManager.literal("give")
                                         .then(CommandManager.argument("player", EntityArgumentType.player())
                                                 .then(CommandManager.argument("targetId", StringArgumentType.string())
@@ -83,25 +78,23 @@ public class SetBuffCommand {
         );
     }
 
-    // Logic for /florafare setbuff ...
     private static int executeSetBuff(CommandContext<ServerCommandSource> context, Identifier attrId, Double amount, String op) {
         ServerCommandSource source = context.getSource();
+        if (source.getPlayer() == null) return 0;
+
         ItemStack stack = source.getPlayer().getMainHandStack();
 
         if (stack.isEmpty()) {
-            source.sendFeedback(() -> Text.literal("You must be holding an item in your main hand!"), false);
+            source.sendFeedback(() -> Text.translatable("command.florafare.error.empty_hand"), false);
             return 0;
         }
 
-        // 1. Create a unique ID for this specific item instance
         String uniqueId = UUID.randomUUID().toString();
 
-        // 2. Write the unique ID to the item's NBT to prevent stacking with identical items
         NbtCompound customData = stack.getOrDefault(DataComponentTypes.CUSTOM_DATA, NbtComponent.DEFAULT).copyNbt();
         customData.putString("FlorafareBuffId", uniqueId);
         stack.set(DataComponentTypes.CUSTOM_DATA, NbtComponent.of(customData));
 
-        // 3. Construct the buff data
         List<FoodBuffData.AttributeData> attrs = new ArrayList<>();
         if (attrId != null) {
             attrs.add(new FoodBuffData.AttributeData(attrId, amount, op));
@@ -115,42 +108,33 @@ public class SetBuffCommand {
                 DoubleArgumentType.getDouble(context, "health"),
                 new ArrayList<>(),
                 attrs,
-                0 // Default priority for runtime generated buffs
+                0
         );
 
-        // 4. Save the unique buff to the Manager and persist to file
         FoodBuffManager.setRuntimeStackConfig(uniqueId, data);
         FoodBuffManager.saveRuntimeConfigs();
 
-        String message = "Unique buff" + (attrId != null ? " and attribute (" + attrId.toString() + ")" : "") + " successfully applied to this item!";
-        source.sendFeedback(() -> Text.literal(message), true);
+        source.sendFeedback(() -> Text.translatable("command.florafare.setbuff.success"), true);
         return 1;
     }
 
-    // Logic for /florafare buff give <player> <targetId>
     private static int executeBuffGive(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
         ServerPlayerEntity player = EntityArgumentType.getPlayer(context, "player");
         String targetId = StringArgumentType.getString(context, "targetId");
 
-        // Search for config
-        FoodBuffData data = null;
-        for (FoodBuffData config : FoodBuffManager.getAllConfigs()) {
-            if (config.target().equals(targetId)) {
-                data = config;
-                break;
-            }
-        }
+        FoodBuffData data = FoodBuffManager.getAllConfigs().stream()
+                .filter(config -> config.target().equals(targetId))
+                .findFirst()
+                .orElse(null);
 
         if (data != null) {
             PlayerFoodComponent component = ((IFoodComponentProvider) player).florafare$getFoodComponent();
-
-            // Unlock food in the player's journal (to trigger the Toast)
             component.unlockFood(targetId);
 
-            context.getSource().sendFeedback(() -> Text.literal("§aBuff " + targetId + " successfully granted to player " + player.getName().getString()), true);
+            context.getSource().sendFeedback(() -> Text.translatable("command.florafare.buff_give.success", targetId, player.getDisplayName()), true);
             return 1;
         } else {
-            context.getSource().sendError(Text.literal("Buff with ID " + targetId + " not found in the datapack!"));
+            context.getSource().sendError(Text.translatable("command.florafare.error.buff_not_found", targetId));
             return 0;
         }
     }

@@ -10,6 +10,10 @@ import net.minecraft.util.TypedActionResult;
 import net.minecraft.world.World;
 import net.tend1tnuy.florafare.network.OpenFoodJournalPayload;
 
+/**
+ * Item representation of the Food Journal.
+ * Opens the custom GUI when used by the player.
+ */
 public class FoodJournalItem extends Item {
 
     public FoodJournalItem(Settings settings) {
@@ -20,9 +24,7 @@ public class FoodJournalItem extends Item {
     public TypedActionResult<ItemStack> use(World world, PlayerEntity user, Hand hand) {
         ItemStack stack = user.getStackInHand(hand);
 
-        // Ensure we are on the server side
         if (!world.isClient && user instanceof ServerPlayerEntity serverPlayer) {
-            // Send a packet to the client to open the GUI
             ServerPlayNetworking.send(serverPlayer, new OpenFoodJournalPayload());
         }
 

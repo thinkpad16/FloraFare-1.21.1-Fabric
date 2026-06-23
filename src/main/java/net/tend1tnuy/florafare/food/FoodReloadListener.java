@@ -17,13 +17,12 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Handles the reloading of food buff configurations from datapack JSON files.
+ * Handles the loading and parsing of food buff configurations from datapack JSON files.
  */
 public class FoodReloadListener extends JsonDataLoader implements IdentifiableResourceReloadListener {
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
 
-    // JSON Keys
     private static final String CONFIG_GEN_KEY = "config_generation";
     private static final String KEY_TARGET = "target";
     private static final String KEY_DURATION = "duration";
@@ -39,10 +38,10 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
     private static final String KEY_ATTRIBUTE = "attribute";
     private static final String KEY_AMOUNT = "amount";
     private static final String KEY_OPERATION = "operation";
-    private static final String KEY_PRIORITY = "priority"; // Ключ для пріоритету файлу
+    private static final String KEY_PRIORITY = "priority";
 
     public FoodReloadListener() {
-        super(GSON, "food_buffs"); // Looks in data/*/food_buffs/
+        super(GSON, "food_buffs");
     }
 
     @Override
@@ -52,12 +51,11 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
 
     @Override
     protected void apply(Map<Identifier, JsonElement> prepared, ResourceManager manager, Profiler profiler) {
-        // Clear only datapack configs, keeping runtime command buffs intact
         FoodBuffManager.clear();
 
         prepared.forEach((id, jsonElement) -> {
             try {
-                // --- Global Auto-generation Settings ---
+                // Parse global auto-generation settings
                 if (id.getPath().equals(CONFIG_GEN_KEY)) {
                     JsonObject json = jsonElement.getAsJsonObject();
                     if (json.has("duration_multiplier")) {
@@ -70,23 +68,20 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
                     return;
                 }
 
-                // --- Parsing Logic ---
-
-                // Format 1: Legacy JSON Array [ {...}, {...} ] (Fallback, defaults priority to 0)
+                // Format 1: Legacy JSON Array fallback (defaults priority to 0)
                 if (jsonElement.isJsonArray()) {
                     JsonArray array = jsonElement.getAsJsonArray();
                     for (JsonElement element : array) {
                         parseAndRegister(element.getAsJsonObject(), null, id, 0);
                     }
                 }
-                // Format 2: JSON Object { "priority": X, "entries": [ ... ] } (New Recommended Format)
+                // Format 2: JSON Object (Recommended Format)
                 else if (jsonElement.isJsonObject()) {
                     JsonObject obj = jsonElement.getAsJsonObject();
 
-                    // Зчитуємо глобальний пріоритет для цього файлу (якщо немає - 0)
+                    // Read global priority for this file (default is 0)
                     int filePriority = obj.has(KEY_PRIORITY) ? obj.get(KEY_PRIORITY).getAsInt() : 0;
 
-                    // Check for lists within objects
                     if (obj.has(KEY_ENTRIES) && obj.get(KEY_ENTRIES).isJsonArray()) {
                         for (JsonElement element : obj.getAsJsonArray(KEY_ENTRIES)) {
                             parseAndRegister(element.getAsJsonObject(), null, id, filePriority);
@@ -107,12 +102,16 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
             }
         });
 
-        Florafare.LOGGER.info("Loaded {} Valheim food configurations!", FoodBuffManager.getConfigCount());
+        Florafare.LOGGER.info("Loaded {} food configurations!", FoodBuffManager.getConfigCount());
     }
 
     /**
      * Parses a JSON object and registers the food buff configuration.
-     * @param filePriority The priority defined at the root of the file.
+     *
+     * @param json                  The JSON object containing the buff data.
+     * @param defaultTargetFallback Fallback target if not explicitly defined.
+     * @param fileId                The identifier of the file being processed.
+     * @param filePriority          The priority defined at the root of the file.
      */
     private void parseAndRegister(JsonObject json, String defaultTargetFallback, Identifier fileId, int filePriority) {
         if (!json.has(KEY_TARGET) && defaultTargetFallback == null) {
@@ -122,7 +121,6 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
 
         String target = json.has(KEY_TARGET) ? json.get(KEY_TARGET).getAsString() : "item:" + defaultTargetFallback;
 
-        // Validate that the item exists
         if (target.startsWith("item:")) {
             Identifier targetId = Identifier.tryParse(target.replace("item:", ""));
             if (targetId == null || !net.minecraft.registry.Registries.ITEM.containsId(targetId)) {
@@ -135,10 +133,9 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
         float saturation = json.has(KEY_SATURATION) ? json.get(KEY_SATURATION).getAsFloat() : 0.0f;
         double healthBonus = json.has(KEY_HEALTH_BONUS) ? json.get(KEY_HEALTH_BONUS).getAsDouble() : 0.0;
 
-        // Якщо всередині самої страви теж вказали priority, він переб'є глобальний (на всяк випадок)
+        // Item-specific priority overrides the file-level priority
         int priority = json.has(KEY_PRIORITY) ? json.get(KEY_PRIORITY).getAsInt() : filePriority;
 
-        // Validate Effects
         List<FoodBuffData.EffectData> effects = new ArrayList<>();
         if (json.has(KEY_EFFECTS)) {
             JsonArray effArray = json.getAsJsonArray(KEY_EFFECTS);
@@ -158,7 +155,6 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
             }
         }
 
-        // Validate Attributes
         List<FoodBuffData.AttributeData> attributes = new ArrayList<>();
         if (json.has(KEY_ATTRIBUTES)) {
             JsonArray attrArray = json.getAsJsonArray(KEY_ATTRIBUTES);

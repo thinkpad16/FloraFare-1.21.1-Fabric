@@ -5,26 +5,25 @@ import net.minecraft.component.type.NbtComponent;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
 import net.tend1tnuy.florafare.component.IFoodComponentProvider;
-import net.tend1tnuy.florafare.component.PlayerFoodComponent;
 import net.tend1tnuy.florafare.food.FoodBuffData;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
 import org.jetbrains.annotations.Nullable;
 
 /**
  * Official API for the Florafare mod.
- * Use these methods to interact with the food buff system.
+ * Provides safe methods to interact with the food buff system.
  */
 public final class FlorafareAPI {
 
     private FlorafareAPI() {
-        throw new UnsupportedOperationException("Utility class cannot be instantiated");
+        throw new UnsupportedOperationException("Utility class cannot be instantiated.");
     }
 
     /**
-     * Gets the buff configuration for a specific ItemStack.
+     * Retrieves the buff configuration for a specific ItemStack.
      *
-     * @param stack the item to check.
-     * @return the buff data, or null if no buff is configured.
+     * @param stack The item to check.
+     * @return The buff data, or null if no buff is configured.
      */
     @Nullable
     public static FoodBuffData getBuffData(ItemStack stack) {
@@ -34,28 +33,24 @@ public final class FlorafareAPI {
     /**
      * Checks if the given ItemStack has a unique buff applied via commands.
      *
-     * @param stack the item to check.
-     * @return true if the item has a custom command-based buff.
+     * @param stack The item to check.
+     * @return True if the item contains a custom command-based buff identifier.
      */
     public static boolean hasCustomCommandBuff(ItemStack stack) {
-        NbtComponent customDataComp = stack.get(DataComponentTypes.CUSTOM_DATA);
-        return customDataComp != null && customDataComp.copyNbt().contains("FlorafareBuffId");
+        NbtComponent customData = stack.get(DataComponentTypes.CUSTOM_DATA);
+        return customData != null && customData.copyNbt().contains("FlorafareBuffId");
     }
 
     /**
-     * Applies a buff to the player based on the provided configuration.
+     * Applies a food buff to the player based on the provided configuration.
      *
-     * @param player the player receiving the buff.
-     * @param stack  the source item (used for context).
-     * @param data   the buff configuration data.
+     * @param player The player receiving the buff.
+     * @param stack  The consumed item.
+     * @param data   The buff configuration data.
      */
     public static void applyBuffToPlayer(PlayerEntity player, ItemStack stack, FoodBuffData data) {
         if (data != null && !player.getWorld().isClient()) {
-            // Retrieve the component via the provider interface
-            PlayerFoodComponent component = ((IFoodComponentProvider) player).florafare$getFoodComponent();
-
-            // Execute the buff application logic
-            component.tryAddBuff(stack, data);
+            ((IFoodComponentProvider) player).florafare$getFoodComponent().tryAddBuff(stack, data);
         }
     }
 }

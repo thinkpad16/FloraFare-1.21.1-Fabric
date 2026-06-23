@@ -4,11 +4,13 @@ import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtList;
 import net.minecraft.util.Identifier;
+
 import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Data record representing the configuration for a food buff.
+ * Handles NBT serialization and deserialization for data persistence.
  */
 public record FoodBuffData(
         String target,
@@ -20,7 +22,7 @@ public record FoodBuffData(
         List<AttributeData> attributes,
         int priority
 ) {
-    // NBT Keys for serialization
+    // NBT Keys for serialization (Do not change these to maintain backward compatibility)
     private static final String KEY_TARGET = "target";
     private static final String KEY_DURATION = "duration";
     private static final String KEY_NUTRITION = "nutrition";
@@ -38,9 +40,9 @@ public record FoodBuffData(
     public record AttributeData(Identifier attributeId, double amount, String operation) {}
 
     /**
-     * Serializes this data to an NbtCompound.
+     * Serializes this data record into an NbtCompound.
      *
-     * @return the serialized NBT data.
+     * @return The serialized NBT data.
      */
     public NbtCompound toNbt() {
         NbtCompound nbt = new NbtCompound();

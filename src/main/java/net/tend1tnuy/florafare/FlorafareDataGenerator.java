@@ -5,13 +5,13 @@ import net.fabricmc.fabric.api.datagen.v1.FabricDataGenerator;
 
 /**
  * Entry point for the Fabric Data Generation system.
- * This class is used to register data providers for generating assets, tags,
- * recipes, and other data-driven content.
+ * Used to register data providers for generating assets, tags,
+ * recipes, and other data-driven content dynamically.
  */
 public class FlorafareDataGenerator implements DataGeneratorEntrypoint {
 
     @Override
     public void onInitializeDataGenerator(FabricDataGenerator fabricDataGenerator) {
-        // Register your data providers here (e.g., BlockTagProvider, RecipeProvider)
+        // Register data providers here (e.g., BlockTagProvider, RecipeProvider) as the mod expands
     }
 }

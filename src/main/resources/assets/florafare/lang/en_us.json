@@ -1,0 +1,23 @@
+{
+  "item.florafare.food_journal": "Culinary Journal",
+  "item.florafare.forgotten_mead": "Forgotten Mead",
+
+  "toast.florafare.discovery.title": "Culinary Journal",
+  "toast.florafare.discovery.description": "New dish discovered!",
+
+  "gui.florafare.hud.empty": "",
+
+  "gui.florafare.journal.title": "Culinary Journal",
+  "gui.florafare.journal.progress": "Discovered: %s / %s",
+  "gui.florafare.journal.duration": "⏱ Duration: %s",
+  "gui.florafare.journal.nutrition": "🍖 Nutrition: %s",
+  "gui.florafare.journal.saturation": "✨ Saturation: %s",
+  "gui.florafare.journal.health": "❤ Health: %s",
+  "gui.florafare.journal.attributes_title": "Attributes:",
+  "gui.florafare.journal.effects_title": "Effects:",
+
+  "command.florafare.error.empty_hand": "You must be holding an item in your main hand!",
+  "command.florafare.setbuff.success": "Unique buff successfully applied to this item!",
+  "command.florafare.buff_give.success": "§aBuff %s successfully granted to player %s",
+  "command.florafare.error.buff_not_found": "Buff with ID %s not found in the datapack!"
+}

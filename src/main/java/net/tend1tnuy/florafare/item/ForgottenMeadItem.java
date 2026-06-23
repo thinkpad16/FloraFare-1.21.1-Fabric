@@ -12,8 +12,8 @@ import net.tend1tnuy.florafare.component.IFoodComponentProvider;
 import net.tend1tnuy.florafare.component.PlayerFoodComponent;
 
 /**
- * An item that, when consumed, removes the most recently added food buff
- * from the player's active buff list and returns an empty glass bottle.
+ * A special consumable item that clears the most recently added food buff
+ * from the player's active effects and returns an empty glass bottle.
  */
 public class ForgottenMeadItem extends Item {
 
@@ -23,10 +23,10 @@ public class ForgottenMeadItem extends Item {
 
     @Override
     public ItemStack finishUsing(ItemStack stack, World world, LivingEntity user) {
-        // Call super to handle base food consumption logic (e.g., decrementing stack)
+        // Handle base food consumption logic (e.g., decrementing stack size)
         ItemStack result = super.finishUsing(stack, world, user);
 
-        // Remove the last active buff on the server
+        // Remove the last active buff on the server side
         if (!world.isClient && user instanceof ServerPlayerEntity player) {
             PlayerFoodComponent component = ((IFoodComponentProvider) player).florafare$getFoodComponent();
             component.removeLastBuff();

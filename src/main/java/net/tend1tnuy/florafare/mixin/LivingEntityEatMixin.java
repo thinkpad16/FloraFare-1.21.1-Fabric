@@ -17,6 +17,10 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
+/**
+ * Intercepts the food consumption logic to apply custom food buffs
+ * and unlock journal entries instead of relying strictly on vanilla mechanics.
+ */
 @Mixin(LivingEntity.class)
 public abstract class LivingEntityEatMixin {
 
@@ -27,22 +31,27 @@ public abstract class LivingEntityEatMixin {
             FoodBuffData data = FoodBuffManager.getConfig(stack);
 
             if (data != null) {
-                PlayerFoodComponent comp = ((IFoodComponentProvider) player).florafare$getFoodComponent();
+                PlayerFoodComponent component = ((IFoodComponentProvider) player).florafare$getFoodComponent();
 
-                // === ВИПРАВЛЕНО: Відкриваємо їжу за правильним target ID (напр. item:minecraft:apple) ===
-                comp.unlockFood(data.target());
+                // Unlock the food entry in the player's journal using the target ID
+                component.unlockFood(data.target());
 
-                // 1. Застосовуємо ситість
+                // Apply configured nutrition and saturation
                 player.getHungerManager().add(data.nutrition(), data.saturation());
 
-                // 2. Додаємо баф у слоти
-                comp.tryAddBuff(stack, data);
+                // Add the configured buff to the player's active slots
+                component.tryAddBuff(stack, data);
 
-                // 3. Ванільні звуки та зменшення предмета
+                // Replicate vanilla consumption side effects (stats, sounds, item decrement, events)
                 player.incrementStat(Stats.USED.getOrCreateStat(stack.getItem()));
-                world.playSound(null, player.getX(), player.getY(), player.getZ(),
-                        player.getEatSound(stack), SoundCategory.PLAYERS, 1.0F,
-                        1.0F + (world.random.nextFloat() - world.random.nextFloat()) * 0.4F);
+                world.playSound(
+                        null,
+                        player.getX(), player.getY(), player.getZ(),
+                        player.getEatSound(stack),
+                        SoundCategory.PLAYERS,
+                        1.0F,
+                        1.0F + (world.random.nextFloat() - world.random.nextFloat()) * 0.4F
+                );
 
                 if (!player.getAbilities().creativeMode) {
                     stack.decrement(1);
@@ -50,6 +59,7 @@ public abstract class LivingEntityEatMixin {
 
                 player.emitGameEvent(GameEvent.EAT);
 
+                // Cancel vanilla logic execution and return the modified stack
                 cir.setReturnValue(stack);
             }
         }

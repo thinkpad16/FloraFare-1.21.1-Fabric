@@ -22,7 +22,7 @@
 			"net.tend1tnuy.florafare.FlorafareDataGenerator"
 		],
       "client": [
-        "net.tend1tnuy.florafare.client.FlorafareClient"
+        "net.tend1tnuy.florafare.FlorafareClient"
       ]
 	},
 	"mixins": [

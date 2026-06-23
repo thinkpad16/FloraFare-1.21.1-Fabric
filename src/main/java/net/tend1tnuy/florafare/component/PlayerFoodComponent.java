@@ -21,6 +21,9 @@ import net.tend1tnuy.florafare.network.FoodUnlockedPayload;
 
 import java.util.*;
 
+/**
+ * Core component managing active food buffs and journal discoveries for a player.
+ */
 public class PlayerFoodComponent {
 
     public static final int MAX_BUFF_SLOTS = 3;
@@ -30,10 +33,8 @@ public class PlayerFoodComponent {
     private static final String NBT_JOURNAL_KEY = "FlorafareReceivedJournal";
 
     private final PlayerEntity player;
-
     private final List<ActiveFoodBuff> activeBuffs = new ArrayList<>();
     private final Set<String> discoveredFoods = new HashSet<>();
-
     private boolean hasReceivedJournal = false;
 
     public PlayerFoodComponent(PlayerEntity player) {
@@ -52,9 +53,6 @@ public class PlayerFoodComponent {
         return discoveredFoods;
     }
 
-    /**
-     * Unlocks a food entry for the player.
-     */
     public boolean unlockFood(String itemId) {
         if (!discoveredFoods.add(itemId)) return false;
 
@@ -63,13 +61,9 @@ public class PlayerFoodComponent {
         if (player instanceof ServerPlayerEntity serverPlayer) {
             ServerPlayNetworking.send(serverPlayer, new FoodUnlockedPayload());
         }
-
         return true;
     }
 
-    /**
-     * Attempts to apply or refresh a food buff.
-     */
     public boolean tryAddBuff(ItemStack stack, FoodBuffData data) {
         String itemId = Registries.ITEM.getId(stack.getItem()).toString();
 
@@ -87,13 +81,7 @@ public class PlayerFoodComponent {
 
         if (activeBuffs.size() >= MAX_BUFF_SLOTS) return false;
 
-        ActiveFoodBuff buff = new ActiveFoodBuff(
-                data.target(),
-                itemId,
-                data.duration(),
-                data.duration()
-        );
-
+        ActiveFoodBuff buff = new ActiveFoodBuff(data.target(), itemId, data.duration(), data.duration());
         applyBuffEffects(buff, data);
         activeBuffs.add(buff);
         sync();
@@ -111,74 +99,45 @@ public class PlayerFoodComponent {
         return true;
     }
 
-    /**
-     * Applies effects and attribute modifiers from food data.
-     */
     private void applyBuffEffects(ActiveFoodBuff buff, FoodBuffData data) {
         if (player.getWorld().isClient) return;
 
         String safeItemId = buff.getConsumedItemId().replace(":", "_");
 
-        // Apply health bonus
         if (data.healthBonus() > 0) {
             Identifier id = Identifier.of(Florafare.MOD_ID, "health_" + safeItemId);
-            applyAttribute(buff, EntityAttributes.GENERIC_MAX_HEALTH, id,
-                    data.healthBonus(), EntityAttributeModifier.Operation.ADD_VALUE);
+            applyAttribute(buff, EntityAttributes.GENERIC_MAX_HEALTH, id, data.healthBonus(), EntityAttributeModifier.Operation.ADD_VALUE);
         }
 
-        // Apply custom attributes
         for (FoodBuffData.AttributeData attr : data.attributes()) {
-            Optional<RegistryEntry.Reference<EntityAttribute>> entry =
-                    Registries.ATTRIBUTE.getEntry(attr.attributeId());
-
+            Optional<RegistryEntry.Reference<EntityAttribute>> entry = Registries.ATTRIBUTE.getEntry(attr.attributeId());
             if (entry.isEmpty()) continue;
 
-            Identifier id = Identifier.of(
-                    Florafare.MOD_ID,
-                    "attr_" + safeItemId + "_" + attr.attributeId().getPath()
-            );
-
-            applyAttribute(buff, entry.get(), id,
-                    attr.amount(), mapOperation(attr.operation()));
+            Identifier id = Identifier.of(Florafare.MOD_ID, "attr_" + safeItemId + "_" + attr.attributeId().getPath());
+            applyAttribute(buff, entry.get(), id, attr.amount(), mapOperation(attr.operation()));
         }
 
-        // Apply effects
         for (FoodBuffData.EffectData effect : data.effects()) {
-            Optional<RegistryEntry.Reference<StatusEffect>> entry =
-                    Registries.STATUS_EFFECT.getEntry(effect.id());
-
-            entry.ifPresent(status ->
-                    player.addStatusEffect(new StatusEffectInstance(
-                            status, effect.duration(), effect.amplifier()
-                    ))
+            Registries.STATUS_EFFECT.getEntry(effect.id()).ifPresent(status ->
+                    player.addStatusEffect(new StatusEffectInstance(status, effect.duration(), effect.amplifier()))
             );
         }
     }
 
-    private void applyAttribute(
-            ActiveFoodBuff buff,
-            RegistryEntry<EntityAttribute> attribute,
-            Identifier modifierId,
-            double amount,
-            EntityAttributeModifier.Operation operation
-    ) {
+    private void applyAttribute(ActiveFoodBuff buff, RegistryEntry<EntityAttribute> attribute, Identifier modifierId, double amount, EntityAttributeModifier.Operation operation) {
         EntityAttributeInstance instance = player.getAttributeInstance(attribute);
         if (instance == null) return;
 
         instance.removeModifier(modifierId);
 
         try {
-            instance.addPersistentModifier(
-                    new EntityAttributeModifier(modifierId, amount, operation)
-            );
-
+            instance.addPersistentModifier(new EntityAttributeModifier(modifierId, amount, operation));
             Identifier registryId = Registries.ATTRIBUTE.getId(attribute.value());
             if (registryId != null) {
                 buff.addModifierRecord(modifierId, registryId);
             }
-
         } catch (Exception e) {
-            Florafare.LOGGER.error("Failed to apply attribute modifier", e);
+            Florafare.LOGGER.error("Failed to apply attribute modifier: {}", modifierId, e);
         }
     }
 
@@ -191,24 +150,25 @@ public class PlayerFoodComponent {
     }
 
     public void tick() {
-        boolean server = !player.getWorld().isClient;
+        boolean isServer = !player.getWorld().isClient;
         boolean changed = false;
 
         for (int i = activeBuffs.size() - 1; i >= 0; i--) {
             ActiveFoodBuff buff = activeBuffs.get(i);
             buff.tick();
 
-            if (!buff.isExpired()) continue;
-
-            if (server) {
-                removeBuffAttributes(buff);
-                changed = true;
+            if (buff.isExpired()) {
+                if (isServer) {
+                    removeBuffAttributes(buff);
+                    changed = true;
+                }
+                activeBuffs.remove(i);
             }
-
-            activeBuffs.remove(i);
         }
 
-        if (server && changed) sync();
+        if (isServer && changed) {
+            sync();
+        }
     }
 
     private void removeBuffAttributes(ActiveFoodBuff buff) {
@@ -230,10 +190,7 @@ public class PlayerFoodComponent {
 
     public void sync() {
         if (player instanceof ServerPlayerEntity serverPlayer) {
-            ServerPlayNetworking.send(
-                    serverPlayer,
-                    new FoodBuffSyncPayload(writeToNbt(new NbtCompound()))
-            );
+            ServerPlayNetworking.send(serverPlayer, new FoodBuffSyncPayload(writeToNbt(new NbtCompound())));
         }
     }
 
@@ -251,13 +208,11 @@ public class PlayerFoodComponent {
         nbt.put(NBT_DISCOVERED_KEY, discovered);
 
         nbt.putBoolean(NBT_JOURNAL_KEY, hasReceivedJournal);
-
         return nbt;
     }
 
     public void readFromNbt(NbtCompound nbt) {
         activeBuffs.clear();
-
         if (nbt.contains(NBT_BUFFS_KEY, NbtElement.LIST_TYPE)) {
             NbtList list = nbt.getList(NBT_BUFFS_KEY, NbtElement.COMPOUND_TYPE);
             for (int i = 0; i < list.size(); i++) {
@@ -266,7 +221,6 @@ public class PlayerFoodComponent {
         }
 
         discoveredFoods.clear();
-
         if (nbt.contains(NBT_DISCOVERED_KEY, NbtElement.LIST_TYPE)) {
             NbtList list = nbt.getList(NBT_DISCOVERED_KEY, NbtElement.STRING_TYPE);
             for (int i = 0; i < list.size(); i++) {
@@ -280,10 +234,8 @@ public class PlayerFoodComponent {
     public void copyFrom(PlayerFoodComponent old) {
         activeBuffs.clear();
         activeBuffs.addAll(old.activeBuffs);
-
         discoveredFoods.clear();
         discoveredFoods.addAll(old.discoveredFoods);
-
         hasReceivedJournal = old.hasReceivedJournal;
     }
 }

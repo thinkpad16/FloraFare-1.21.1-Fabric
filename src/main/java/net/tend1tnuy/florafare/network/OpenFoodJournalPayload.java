@@ -7,7 +7,7 @@ import net.minecraft.util.Identifier;
 import net.tend1tnuy.florafare.Florafare;
 
 /**
- * Payload used to tell the client to open the Food Journal screen.
+ * Payload used to instruct the client to open the Food Journal graphical user interface.
  */
 public record OpenFoodJournalPayload() implements CustomPayload {
 

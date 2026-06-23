@@ -15,6 +15,7 @@ import net.minecraft.sound.SoundEvents;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.math.MathHelper;
 import net.tend1tnuy.florafare.component.IFoodComponentProvider;
 import net.tend1tnuy.florafare.food.FoodBuffData;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
@@ -26,19 +27,14 @@ import java.util.Set;
 public class FoodJournalScreen extends Screen {
 
     private static final Identifier BOOK_TEXTURE = Identifier.of("minecraft", "textures/gui/book.png");
-    private static final int BOOK_WIDTH = 192;
-    private static final int BOOK_HEIGHT = 192;
-
-    private static final int ITEMS_PER_ROW = 5;
-    private static final int ROWS_PER_PAGE = 5;
+    private static final int BOOK_WIDTH = 192, BOOK_HEIGHT = 192;
+    private static final int ITEMS_PER_ROW = 5, ROWS_PER_PAGE = 5;
     private static final int ITEMS_PER_PAGE = ITEMS_PER_ROW * ROWS_PER_PAGE;
     private static final int ITEM_SPACING = 23;
 
-    private int currentPage = 0;
-    private int maxPages = 1;
-    private int unlockedCount = 0;
-
+    private int currentPage = 0, maxPages = 1, unlockedCount = 0;
     private final List<FoodEntry> displayItems = new ArrayList<>();
+
     private FoodEntry selectedEntry = null;
     private FoodEntry hoveredEntry = null;
     private boolean showingDetails = false;
@@ -47,7 +43,7 @@ public class FoodJournalScreen extends Screen {
     private PageTurnWidget previousPageButton;
 
     public FoodJournalScreen() {
-        super(Text.literal("Кулінарна Книга"));
+        super(Text.translatable("gui.florafare.journal.title"));
     }
 
     @Override
@@ -55,9 +51,7 @@ public class FoodJournalScreen extends Screen {
         super.init();
         loadFoodData();
 
-        maxPages = (int) Math.ceil((double) displayItems.size() / ITEMS_PER_PAGE);
-        if (maxPages == 0) maxPages = 1;
-
+        maxPages = Math.max(1, (int) Math.ceil((double) displayItems.size() / ITEMS_PER_PAGE));
         int bookX = (this.width - BOOK_WIDTH) / 2;
         int bookY = (this.height - BOOK_HEIGHT) / 2;
 
@@ -65,11 +59,11 @@ public class FoodJournalScreen extends Screen {
             if (showingDetails) {
                 showingDetails = false;
                 selectedEntry = null;
-                this.updatePageButtons();
+                updatePageButtons();
                 playPageTurnSound();
             } else if (currentPage > 0) {
                 currentPage--;
-                this.updatePageButtons();
+                updatePageButtons();
                 playPageTurnSound();
             }
         }, true));
@@ -77,12 +71,12 @@ public class FoodJournalScreen extends Screen {
         this.nextPageButton = this.addDrawableChild(new PageTurnWidget(bookX + 116, bookY + 157, true, btn -> {
             if (!showingDetails && currentPage < maxPages - 1) {
                 currentPage++;
-                this.updatePageButtons();
+                updatePageButtons();
                 playPageTurnSound();
             }
         }, true));
 
-        this.updatePageButtons();
+        updatePageButtons();
     }
 
     private void updatePageButtons() {
@@ -101,8 +95,7 @@ public class FoodJournalScreen extends Screen {
 
         if (this.client == null || this.client.player == null) return;
 
-        Set<String> discovered = ((IFoodComponentProvider) this.client.player)
-                .florafare$getFoodComponent().getDiscoveredFoods();
+        Set<String> discovered = ((IFoodComponentProvider) this.client.player).florafare$getFoodComponent().getDiscoveredFoods();
 
         for (FoodBuffData data : FoodBuffManager.getAllConfigs()) {
             ItemStack displayStack = null;
@@ -133,6 +126,7 @@ public class FoodJournalScreen extends Screen {
 
     @Override
     public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {
+        // Transparent background
     }
 
     @Override
@@ -143,7 +137,6 @@ public class FoodJournalScreen extends Screen {
         int bookY = (this.height - BOOK_HEIGHT) / 2;
 
         context.drawTexture(BOOK_TEXTURE, bookX, bookY, 0, 0, BOOK_WIDTH, BOOK_HEIGHT, 256, 256);
-
         hoveredEntry = null;
 
         if (showingDetails) {
@@ -167,14 +160,14 @@ public class FoodJournalScreen extends Screen {
         int titleWidth = this.textRenderer.getWidth(this.title);
         context.drawText(this.textRenderer, this.title, bookX + (BOOK_WIDTH - titleWidth) / 2, bookY + 12, 0x000000, false);
 
-        String trackerStr = "Відкрито страв: " + unlockedCount + " / " + displayItems.size();
-        int trackerColor = (unlockedCount == displayItems.size() && displayItems.size() > 0) ? 0xAA8800 : 0x555555;
-        int trackerWidth = this.textRenderer.getWidth(trackerStr);
+        Text trackerText = Text.translatable("gui.florafare.journal.progress", unlockedCount, displayItems.size());
+        int trackerColor = (unlockedCount == displayItems.size() && !displayItems.isEmpty()) ? 0xAA8800 : 0x555555;
+        int trackerWidth = this.textRenderer.getWidth(trackerText);
 
         context.getMatrices().push();
         context.getMatrices().translate(bookX + (BOOK_WIDTH / 2f), bookY + 25, 0);
         context.getMatrices().scale(0.85f, 0.85f, 1.0f);
-        context.drawText(this.textRenderer, trackerStr, -trackerWidth / 2, 0, trackerColor, false);
+        context.drawText(this.textRenderer, trackerText, -trackerWidth / 2, 0, trackerColor, false);
         context.getMatrices().pop();
 
         String pageStr = (currentPage + 1) + " / " + maxPages;
@@ -183,15 +176,14 @@ public class FoodJournalScreen extends Screen {
 
         int startX = bookX + 37;
         int startY = bookY + 38;
-
         int startIndex = currentPage * ITEMS_PER_PAGE;
         int endIndex = Math.min(startIndex + ITEMS_PER_PAGE, displayItems.size());
 
         for (int i = startIndex; i < endIndex; i++) {
             FoodEntry entry = displayItems.get(i);
             int localIndex = i - startIndex;
-            int row = localIndex / ITEMS_PER_ROW;
             int col = localIndex % ITEMS_PER_ROW;
+            int row = localIndex / ITEMS_PER_ROW;
 
             int x = startX + col * ITEM_SPACING;
             int y = startY + row * ITEM_SPACING;
@@ -200,12 +192,8 @@ public class FoodJournalScreen extends Screen {
             context.drawBorder(x - 2, y - 2, 20, 20, 0x1A000000);
 
             boolean isHovered = (mouseX >= x && mouseX < x + 16 && mouseY >= y && mouseY < y + 16);
-            if (isHovered) {
-                hoveredEntry = entry;
-                entry.hoverScale = net.minecraft.util.math.MathHelper.lerp(0.25f, entry.hoverScale, 1.25f);
-            } else {
-                entry.hoverScale = net.minecraft.util.math.MathHelper.lerp(0.25f, entry.hoverScale, 1.0f);
-            }
+            entry.hoverScale = MathHelper.lerp(0.25f, entry.hoverScale, isHovered ? 1.25f : 1.0f);
+            if (isHovered) hoveredEntry = entry;
 
             context.getMatrices().push();
             context.getMatrices().translate(x + 8, y + 8, 0);
@@ -226,12 +214,10 @@ public class FoodJournalScreen extends Screen {
     private void drawDetailView(DrawContext context, int bookX, int bookY) {
         if (selectedEntry == null) return;
 
-        // Встановлюємо безпечні межі паперу
         int paperLeft = bookX + 36;
         int paperWidth = 114;
         int px = paperLeft;
 
-        // Велика іконка
         context.getMatrices().push();
         context.getMatrices().translate(paperLeft + (paperWidth / 2f) - 16, bookY + 22, 0);
         context.getMatrices().scale(2.0f, 2.0f, 1.0f);
@@ -240,7 +226,6 @@ public class FoodJournalScreen extends Screen {
 
         int py = bookY + 58;
 
-        // Назва
         String name = selectedEntry.stack.getName().getString();
         int nameWidth = this.textRenderer.getWidth(name);
         if (nameWidth > paperWidth - 4) {
@@ -251,37 +236,31 @@ public class FoodJournalScreen extends Screen {
         context.fill(paperLeft + 6, py + 12, paperLeft + paperWidth - 6, py + 13, 0x44000000);
 
         py += 18;
-
         FoodBuffData data = selectedEntry.data;
 
         int seconds = data.duration() / 20;
         String timeStr = String.format("%02d:%02d", seconds / 60, seconds % 60);
-        context.drawText(this.textRenderer, "⏱ Час дії: " + timeStr, px, py, 0x222222, false);
+        context.drawText(this.textRenderer, Text.translatable("gui.florafare.journal.duration", timeStr), px, py, 0x222222, false);
         py += 12;
 
-        context.drawText(this.textRenderer, "🍖 Ситість: " + data.nutrition(), px, py, 0x222222, false);
+        context.drawText(this.textRenderer, Text.translatable("gui.florafare.journal.nutrition", data.nutrition()), px, py, 0x222222, false);
         py += 12;
 
-        // Додано Насичення
-        context.drawText(this.textRenderer, "✨ Насичення: " + data.saturation(), px, py, 0x222222, false);
+        context.drawText(this.textRenderer, Text.translatable("gui.florafare.journal.saturation", data.saturation()), px, py, 0x222222, false);
         py += 12;
 
         if (data.healthBonus() != 0) {
             String sign = data.healthBonus() > 0 ? "+" : "";
-            context.drawText(this.textRenderer, "❤ Здоров'я: " + sign + data.healthBonus(), px, py, 0x222222, false);
+            context.drawText(this.textRenderer, Text.translatable("gui.florafare.journal.health", sign + data.healthBonus()), px, py, 0x222222, false);
             py += 12;
         }
 
-        // --- ВІДМАЛЬОВКА АТРИБУТІВ ---
         if (data.attributes() != null && !data.attributes().isEmpty()) {
             py += 4;
-            context.drawText(this.textRenderer, "Атрибути:", px, py, 0x000000, false);
+            context.drawText(this.textRenderer, Text.translatable("gui.florafare.journal.attributes_title"), px, py, 0x000000, false);
             py += 12;
             for (FoodBuffData.AttributeData attr : data.attributes()) {
-                String attrName = attr.attributeId().getPath().replace("generic.", "");
-                if (attrName.length() > 0) {
-                    attrName = attrName.substring(0, 1).toUpperCase() + attrName.substring(1).replace("_", " ");
-                }
+                String attrName = formatIdentifier(attr.attributeId().getPath().replace("generic.", ""));
                 String sign = attr.amount() > 0 ? "+" : "";
                 String val = attr.operation().contains("multiplied") ? (int)(attr.amount() * 100) + "%" : String.valueOf(attr.amount());
                 context.drawText(this.textRenderer, "• " + attrName + ": " + sign + val, px + 6, py, 0x444444, false);
@@ -289,29 +268,34 @@ public class FoodJournalScreen extends Screen {
             }
         }
 
-        // --- ВІДМАЛЬОВКА ЕФЕКТІВ ---
         if (data.effects() != null && !data.effects().isEmpty()) {
             py += 4;
-            context.drawText(this.textRenderer, "Ефекти:", px, py, 0x000000, false);
+            context.drawText(this.textRenderer, Text.translatable("gui.florafare.journal.effects_title"), px, py, 0x000000, false);
             py += 12;
             for (var effect : data.effects()) {
-                String rawId = effect.id().getPath();
-                String effectName = "";
-                if (rawId.length() > 0) {
-                    effectName = rawId.substring(0, 1).toUpperCase() + rawId.substring(1).replace("_", " ");
-                }
-                String lvl = "";
-                if (effect.amplifier() == 1) lvl = " II";
-                else if (effect.amplifier() == 2) lvl = " III";
-                else if (effect.amplifier() == 3) lvl = " IV";
-                else if (effect.amplifier() > 3) lvl = " " + (effect.amplifier() + 1);
-
+                String effectName = formatIdentifier(effect.id().getPath());
+                String lvl = getAmplifierNumeral(effect.amplifier());
                 int effectSeconds = effect.duration() / 20;
                 String effectTime = String.format(" (%02d:%02d)", effectSeconds / 60, effectSeconds % 60);
                 context.drawText(this.textRenderer, "• " + effectName + lvl + effectTime, px + 6, py, 0x444444, false);
                 py += 10;
             }
         }
+    }
+
+    private String formatIdentifier(String raw) {
+        if (raw == null || raw.isEmpty()) return "";
+        return raw.substring(0, 1).toUpperCase() + raw.substring(1).replace("_", " ");
+    }
+
+    private String getAmplifierNumeral(int amplifier) {
+        return switch (amplifier) {
+            case 0 -> "";
+            case 1 -> " II";
+            case 2 -> " III";
+            case 3 -> " IV";
+            default -> " " + (amplifier + 1);
+        };
     }
 
     @Override
@@ -327,8 +311,8 @@ public class FoodJournalScreen extends Screen {
 
             for (int i = startIndex; i < endIndex; i++) {
                 int localIndex = i - startIndex;
-                int row = localIndex / ITEMS_PER_ROW;
                 int col = localIndex % ITEMS_PER_ROW;
+                int row = localIndex / ITEMS_PER_ROW;
 
                 int x = startX + col * ITEM_SPACING;
                 int y = startY + row * ITEM_SPACING;
@@ -340,10 +324,8 @@ public class FoodJournalScreen extends Screen {
                         showingDetails = true;
                         updatePageButtons();
                         playPageTurnSound();
-                    } else {
-                        if (this.client != null) {
-                            this.client.getSoundManager().play(PositionedSoundInstance.master(SoundEvents.BLOCK_CHEST_LOCKED, 1.5F));
-                        }
+                    } else if (this.client != null) {
+                        this.client.getSoundManager().play(PositionedSoundInstance.master(SoundEvents.BLOCK_CHEST_LOCKED, 1.5F));
                     }
                     return true;
                 }

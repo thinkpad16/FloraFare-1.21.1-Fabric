@@ -22,29 +22,27 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Manager for food buff configurations, handling both datapack-loaded configs
- * and runtime-generated command buffs.
+ * Manager for food buff configurations.
+ * Handles datapack-loaded configs, runtime-generated command buffs, and fallback logic.
  */
 public class FoodBuffManager {
 
     private static final Map<String, FoodBuffData> CONFIGS = new HashMap<>();
     private static final Map<String, FoodBuffData> RUNTIME_STACK_CONFIGS = new HashMap<>();
+
     private static final String RUNTIME_FILE_NAME = "florafare_runtime.dat";
     private static final String BUFF_ID_KEY = "FlorafareBuffId";
 
-    // Global multipliers for auto-generation
+    // Global multipliers for auto-generation (configured via datapack JSON)
     public static int AUTO_GEN_DURATION_MULT = 1200;
     public static double AUTO_GEN_HEALTH_MULT = 0.5;
 
-    /**
-     * Clears all datapack-loaded configurations.
-     */
     public static void clear() {
         CONFIGS.clear();
     }
 
     /**
-     * Adds a configuration to the manager respecting priority.
+     * Registers a configuration to the manager, respecting priority levels.
      */
     public static void putConfig(String target, FoodBuffData data) {
         if (CONFIGS.containsKey(target)) {
@@ -60,32 +58,29 @@ public class FoodBuffManager {
         }
     }
 
-    /**
-     * Stores a runtime configuration linked to a unique item instance.
-     */
     public static void setRuntimeStackConfig(String uuid, FoodBuffData data) {
         RUNTIME_STACK_CONFIGS.put(uuid, data);
     }
 
     /**
-     * Persists runtime unique buffs to a file.
+     * Persists runtime unique buffs to a file in the config directory.
      */
     public static void saveRuntimeConfigs() {
         NbtCompound root = new NbtCompound();
         for (Map.Entry<String, FoodBuffData> entry : RUNTIME_STACK_CONFIGS.entrySet()) {
             root.put(entry.getKey(), entry.getValue().toNbt());
         }
+
         try {
             Path path = FabricLoader.getInstance().getConfigDir().resolve(RUNTIME_FILE_NAME);
             NbtIo.writeCompressed(root, path);
         } catch (Exception e) {
-            System.err.println("Failed to save Florafare runtime buffs!");
-            e.printStackTrace();
+            Florafare.LOGGER.error("Failed to save Florafare runtime buffs!", e);
         }
     }
 
     /**
-     * Loads runtime unique buffs from file.
+     * Loads runtime unique buffs from the config directory.
      */
     public static void loadRuntimeConfigs() {
         Path path = FabricLoader.getInstance().getConfigDir().resolve(RUNTIME_FILE_NAME);
@@ -100,14 +95,16 @@ public class FoodBuffManager {
                 RUNTIME_STACK_CONFIGS.put(key, data);
             }
         } catch (Exception e) {
-            System.err.println("Failed to load Florafare runtime buffs!");
-            e.printStackTrace();
+            Florafare.LOGGER.error("Failed to load Florafare runtime buffs!", e);
         }
     }
 
     /**
-     * Retrieves the appropriate configuration for the given ItemStack based on
-     * priority: Unique Command Buff -> Exact Item ID -> Tag -> Namespace -> Default Template -> Auto-gen.
+     * Retrieves the appropriate configuration for the given ItemStack.
+     * Priority: Unique Command Buff -> Exact Item ID -> Tag -> Namespace -> Default Template -> Auto-gen.
+     *
+     * @param stack The item stack to check.
+     * @return The determined FoodBuffData, or null if none applicable.
      */
     public static FoodBuffData getConfig(ItemStack stack) {
         if (stack.getItem() instanceof ForgottenMeadItem) {
@@ -145,7 +142,7 @@ public class FoodBuffManager {
         // 5. Template
         if (CONFIGS.containsKey("template:default")) return CONFIGS.get("template:default");
 
-        // 6. Auto-generation
+        // 6. Auto-generation fallback
         FoodComponent foodComponent = stack.get(DataComponentTypes.FOOD);
         if (foodComponent != null) {
             return generateFromVanilla(foodComponent, itemId);
@@ -166,7 +163,7 @@ public class FoodBuffManager {
                 healthBonus,
                 new ArrayList<>(),
                 new ArrayList<>(),
-                0 // Default priority for auto-generated buffs
+                0
         );
     }
 
@@ -174,9 +171,6 @@ public class FoodBuffManager {
         return CONFIGS.size();
     }
 
-    /**
-     * Returns all datapack-loaded configurations for JEI/integration purposes.
-     */
     public static List<FoodBuffData> getAllConfigs() {
         return new ArrayList<>(CONFIGS.values());
     }

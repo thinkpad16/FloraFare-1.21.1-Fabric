@@ -10,19 +10,27 @@ import net.tend1tnuy.florafare.item.FoodJournalItem;
 import net.tend1tnuy.florafare.item.ForgottenMeadItem;
 
 /**
- * Registry for all items added by the Florafare mod.
+ * Central registry for all items added by the Florafare mod.
  */
 public class ItemRegistry {
 
-    public static final Item FORGOTTEN_MEAD = registerItem("forgotten_mead", new ForgottenMeadItem(new Item.Settings()
-            .maxCount(16)
-            .food(new FoodComponent.Builder().nutrition(0).saturationModifier(0f).alwaysEdible().build())));
-    public static final Item FOOD_JOURNAL = registerItem("food_journal", new FoodJournalItem(new Item.Settings()
-            .maxCount(1)));
+    public static final Item FORGOTTEN_MEAD = registerItem(
+            "forgotten_mead",
+            new ForgottenMeadItem(new Item.Settings()
+                    .maxCount(16)
+                    .food(new FoodComponent.Builder().nutrition(0).saturationModifier(0f).alwaysEdible().build())
+            )
+    );
+
+    public static final Item FOOD_JOURNAL = registerItem(
+            "food_journal",
+            new FoodJournalItem(new Item.Settings().maxCount(1))
+    );
+
     /**
-     * Registers an item to the Minecraft item registry.
+     * Registers a new item into the Minecraft item registry.
      *
-     * @param name The unique name of the item.
+     * @param name The unique path name of the item.
      * @param item The item instance to register.
      * @return The registered item.
      */
@@ -32,8 +40,9 @@ public class ItemRegistry {
 
     /**
      * Initializes the item registry.
+     * Must be called during the mod's main initialization phase.
      */
     public static void initialize() {
-        Florafare.LOGGER.info("Registering mod items for " + Florafare.MOD_ID);
+        Florafare.LOGGER.info("Registering items for {}", Florafare.MOD_ID);
     }
 }
