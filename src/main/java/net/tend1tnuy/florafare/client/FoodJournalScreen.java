@@ -227,8 +227,8 @@ public class FoodJournalScreen extends Screen {
         if (selectedEntry == null) return;
 
         // Встановлюємо безпечні межі паперу
-        int paperLeft = bookX + 42;
-        int paperWidth = 122;
+        int paperLeft = bookX + 36;
+        int paperWidth = 114;
         int px = paperLeft;
 
         // Велика іконка

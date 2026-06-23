@@ -114,7 +114,8 @@ public class SetBuffCommand {
                 (float) DoubleArgumentType.getDouble(context, "saturation"),
                 DoubleArgumentType.getDouble(context, "health"),
                 new ArrayList<>(),
-                attrs
+                attrs,
+                0 // Default priority for runtime generated buffs
         );
 
         // 4. Save the unique buff to the Manager and persist to file
@@ -142,10 +143,6 @@ public class SetBuffCommand {
 
         if (data != null) {
             PlayerFoodComponent component = ((IFoodComponentProvider) player).florafare$getFoodComponent();
-
-            // IMPORTANT: Call your method that adds the buff to the screen
-            // For example, if you have an addBuff method:
-            // component.addBuff(new net.tend1tnuy.florafare.component.ActiveFoodBuff(targetId, data));
 
             // Unlock food in the player's journal (to trigger the Toast)
             component.unlockFood(targetId);

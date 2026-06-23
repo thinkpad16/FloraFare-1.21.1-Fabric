@@ -1,7 +1,7 @@
 {
-  "priority": 0,
+  "priority": 1,
   "entries": [
-    { "target": "item:minecraft:bread", "duration": 1200, "nutrition": 3, "saturation": 0.6, "health_bonus": 1.0 },
+    { "target": "item:minecraft:bread", "duration": 8000, "nutrition": 3, "saturation": 0.6, "health_bonus": 1.0 },
     { "target": "item:minecraft:cookie", "duration": 1200, "nutrition": 1, "saturation": 0.2, "attributes": [{"attribute": "minecraft:generic.movement_speed", "amount": 0.05, "operation": "add_multiplied_base"}] },
     { "target": "item:minecraft:cake", "duration": 1200, "nutrition": 2, "saturation": 0.4, "health_bonus": 2.0 },
     { "target": "item:minecraft:pumpkin_pie", "duration": 1200, "nutrition": 4, "saturation": 0.8, "health_bonus": 2.0 },

@@ -44,13 +44,20 @@ public class FoodBuffManager {
     }
 
     /**
-     * Adds a configuration to the manager.
+     * Adds a configuration to the manager respecting priority.
      */
     public static void putConfig(String target, FoodBuffData data) {
         if (CONFIGS.containsKey(target)) {
-            Florafare.LOGGER.warn("Warning: Buff for '{}' was overwritten by a new datapack! Check for duplicates.", target);
+            FoodBuffData existing = CONFIGS.get(target);
+            if (data.priority() >= existing.priority()) {
+                Florafare.LOGGER.info("Buff for '{}' overwritten by higher or equal priority ({} >= {})", target, data.priority(), existing.priority());
+                CONFIGS.put(target, data);
+            } else {
+                Florafare.LOGGER.debug("Skipping buff for '{}' due to lower priority ({} < {})", target, data.priority(), existing.priority());
+            }
+        } else {
+            CONFIGS.put(target, data);
         }
-        CONFIGS.put(target, data);
     }
 
     /**
@@ -158,7 +165,8 @@ public class FoodBuffManager {
                 food.saturation(),
                 healthBonus,
                 new ArrayList<>(),
-                new ArrayList<>()
+                new ArrayList<>(),
+                0 // Default priority for auto-generated buffs
         );
     }
 

@@ -39,6 +39,7 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
     private static final String KEY_ATTRIBUTE = "attribute";
     private static final String KEY_AMOUNT = "amount";
     private static final String KEY_OPERATION = "operation";
+    private static final String KEY_PRIORITY = "priority"; // Ключ для пріоритету файлу
 
     public FoodReloadListener() {
         super(GSON, "food_buffs"); // Looks in data/*/food_buffs/
@@ -71,30 +72,33 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
 
                 // --- Parsing Logic ---
 
-                // Format 1: JSON Array [ {...}, {...} ]
+                // Format 1: Legacy JSON Array [ {...}, {...} ] (Fallback, defaults priority to 0)
                 if (jsonElement.isJsonArray()) {
                     JsonArray array = jsonElement.getAsJsonArray();
                     for (JsonElement element : array) {
-                        parseAndRegister(element.getAsJsonObject(), null, id);
+                        parseAndRegister(element.getAsJsonObject(), null, id, 0);
                     }
                 }
-                // Format 2: JSON Object { ... }
+                // Format 2: JSON Object { "priority": X, "entries": [ ... ] } (New Recommended Format)
                 else if (jsonElement.isJsonObject()) {
                     JsonObject obj = jsonElement.getAsJsonObject();
+
+                    // Зчитуємо глобальний пріоритет для цього файлу (якщо немає - 0)
+                    int filePriority = obj.has(KEY_PRIORITY) ? obj.get(KEY_PRIORITY).getAsInt() : 0;
 
                     // Check for lists within objects
                     if (obj.has(KEY_ENTRIES) && obj.get(KEY_ENTRIES).isJsonArray()) {
                         for (JsonElement element : obj.getAsJsonArray(KEY_ENTRIES)) {
-                            parseAndRegister(element.getAsJsonObject(), null, id);
+                            parseAndRegister(element.getAsJsonObject(), null, id, filePriority);
                         }
                     } else if (obj.has(KEY_VALUES) && obj.get(KEY_VALUES).isJsonArray()) {
                         for (JsonElement element : obj.getAsJsonArray(KEY_VALUES)) {
-                            parseAndRegister(element.getAsJsonObject(), null, id);
+                            parseAndRegister(element.getAsJsonObject(), null, id, filePriority);
                         }
                     }
-                    // Legacy: Single item definition
-                    else {
-                        parseAndRegister(obj, id.toString().replace("/", ":"), id);
+                    // Legacy: Single item definition in object
+                    else if (obj.has(KEY_TARGET)) {
+                        parseAndRegister(obj, id.toString().replace("/", ":"), id, filePriority);
                     }
                 }
 
@@ -108,8 +112,9 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
 
     /**
      * Parses a JSON object and registers the food buff configuration.
+     * @param filePriority The priority defined at the root of the file.
      */
-    private void parseAndRegister(JsonObject json, String defaultTargetFallback, Identifier fileId) {
+    private void parseAndRegister(JsonObject json, String defaultTargetFallback, Identifier fileId, int filePriority) {
         if (!json.has(KEY_TARGET) && defaultTargetFallback == null) {
             Florafare.LOGGER.error("Error in file {}: Missing 'target' field! Buff skipped.", fileId);
             return;
@@ -129,6 +134,9 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
         int nutrition = json.has(KEY_NUTRITION) ? json.get(KEY_NUTRITION).getAsInt() : 0;
         float saturation = json.has(KEY_SATURATION) ? json.get(KEY_SATURATION).getAsFloat() : 0.0f;
         double healthBonus = json.has(KEY_HEALTH_BONUS) ? json.get(KEY_HEALTH_BONUS).getAsDouble() : 0.0;
+
+        // Якщо всередині самої страви теж вказали priority, він переб'є глобальний (на всяк випадок)
+        int priority = json.has(KEY_PRIORITY) ? json.get(KEY_PRIORITY).getAsInt() : filePriority;
 
         // Validate Effects
         List<FoodBuffData.EffectData> effects = new ArrayList<>();
@@ -170,7 +178,7 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
             }
         }
 
-        FoodBuffData data = new FoodBuffData(target, duration, nutrition, saturation, healthBonus, effects, attributes);
+        FoodBuffData data = new FoodBuffData(target, duration, nutrition, saturation, healthBonus, effects, attributes, priority);
         FoodBuffManager.putConfig(target, data);
     }
 }

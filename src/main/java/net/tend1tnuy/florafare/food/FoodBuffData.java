@@ -17,7 +17,8 @@ public record FoodBuffData(
         float saturation,
         double healthBonus,
         List<EffectData> effects,
-        List<AttributeData> attributes
+        List<AttributeData> attributes,
+        int priority
 ) {
     // NBT Keys for serialization
     private static final String KEY_TARGET = "target";
@@ -31,6 +32,7 @@ public record FoodBuffData(
     private static final String KEY_AMOUNT = "amount";
     private static final String KEY_OPERATION = "op";
     private static final String KEY_AMPLIFIER = "amplifier";
+    private static final String KEY_PRIORITY = "priority";
 
     public record EffectData(Identifier id, int duration, int amplifier) {}
     public record AttributeData(Identifier attributeId, double amount, String operation) {}
@@ -47,6 +49,7 @@ public record FoodBuffData(
         nbt.putInt(KEY_NUTRITION, nutrition);
         nbt.putFloat(KEY_SATURATION, saturation);
         nbt.putDouble(KEY_HEALTH_BONUS, healthBonus);
+        nbt.putInt(KEY_PRIORITY, priority);
 
         NbtList effList = new NbtList();
         for (EffectData eff : effects) {
@@ -104,6 +107,8 @@ public record FoodBuffData(
             }
         }
 
+        int priority = nbt.contains(KEY_PRIORITY) ? nbt.getInt(KEY_PRIORITY) : 0;
+
         return new FoodBuffData(
                 nbt.getString(KEY_TARGET),
                 nbt.getInt(KEY_DURATION),
@@ -111,7 +116,8 @@ public record FoodBuffData(
                 nbt.getFloat(KEY_SATURATION),
                 nbt.getDouble(KEY_HEALTH_BONUS),
                 effects,
-                attrs
+                attrs,
+                priority
         );
     }
 }
