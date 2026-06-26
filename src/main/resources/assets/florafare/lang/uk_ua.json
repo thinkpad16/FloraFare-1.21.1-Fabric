@@ -19,5 +19,12 @@
   "command.florafare.error.empty_hand": "Ви повинні тримати предмет у головній руці!",
   "command.florafare.setbuff.success": "Унікальний бафф успішно застосовано до цього предмета!",
   "command.florafare.buff_give.success": "§aБафф %s успішно видано гравцю %s",
-  "command.florafare.error.buff_not_found": "Бафф з ID %s не знайдено у датапаку!"
+  "command.florafare.error.buff_not_found": "Бафф з ID %s не знайдено у датапаку!",
+
+  "key.florafare.hud_config": "Відкрити налаштування HUD",
+  "category.florafare.general": "Мод Florafare",
+  "gui.florafare.hud_config.title": "Налаштування інтерфейсу (HUD)",
+  "gui.florafare.hud_config.mode": "Вигляд GUI: %s",
+  "gui.florafare.hud_config.icons": "Розмір значків: %s",
+  "gui.florafare.hud_config.position": "Позиція екрана: %s"
 }

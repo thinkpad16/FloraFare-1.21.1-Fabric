@@ -1,16 +1,22 @@
 package net.tend1tnuy.florafare;
 
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.minecraft.client.network.ClientPlayerEntity;
+import net.minecraft.client.option.KeyBinding;
+import net.minecraft.client.util.InputUtil;
 import net.tend1tnuy.florafare.client.FlorafareHud;
 import net.tend1tnuy.florafare.client.FoodJournalScreen;
+import net.tend1tnuy.florafare.client.HudConfigScreen;
 import net.tend1tnuy.florafare.client.toast.FoodDiscoveryToast;
 import net.tend1tnuy.florafare.component.IFoodComponentProvider;
 import net.tend1tnuy.florafare.network.FoodBuffSyncPayload;
 import net.tend1tnuy.florafare.network.FoodUnlockedPayload;
 import net.tend1tnuy.florafare.network.OpenFoodJournalPayload;
+import org.lwjgl.glfw.GLFW;
 
 /**
  * Client-side entry point for the Florafare mod.
@@ -20,7 +26,22 @@ public class FlorafareClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        // Register buff synchronization
+        // Реєстрація бінда клавіші (За замовчуванням клавіша H)
+        KeyBinding hudConfigKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "key.florafare.hud_config",
+                InputUtil.Type.KEYSYM,
+                GLFW.GLFW_KEY_H,
+                "category.florafare.general"
+        ));
+
+        // Обробка натискання клавіші для відкриття меню конфігурації HUD
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            while (hudConfigKey.wasPressed()) {
+                client.setScreen(new HudConfigScreen());
+            }
+        });
+
+        // Реєстрація синхронізації бафів
         ClientPlayNetworking.registerGlobalReceiver(FoodBuffSyncPayload.ID, (payload, context) -> {
             context.client().execute(() -> {
                 ClientPlayerEntity player = context.player();
@@ -30,22 +51,21 @@ public class FlorafareClient implements ClientModInitializer {
             });
         });
 
-        // === STAGE 3: Open the Journal GUI ===
+        // Відкриття екрана кулінарної книги
         ClientPlayNetworking.registerGlobalReceiver(OpenFoodJournalPayload.ID, (payload, context) -> {
             context.client().execute(() -> {
-                // Open our new screen
                 context.client().setScreen(new FoodJournalScreen());
             });
         });
 
+        // Показ тостів
         ClientPlayNetworking.registerGlobalReceiver(FoodUnlockedPayload.ID, (payload, context) -> {
             context.client().execute(() -> {
-                // Add toast to the manager
                 context.client().getToastManager().add(new FoodDiscoveryToast());
             });
         });
 
-        // Register HUD
+        // Реєстрація HUD
         HudRenderCallback.EVENT.register(new FlorafareHud());
     }
 }

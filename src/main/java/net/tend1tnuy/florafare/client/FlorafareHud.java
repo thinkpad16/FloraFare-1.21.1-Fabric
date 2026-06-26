@@ -15,13 +15,11 @@ import java.util.List;
 public class FlorafareHud implements HudRenderCallback {
 
     private static final float HUD_SCALE = 0.8f;
-    private static final int BASE_X = 10, BASE_Y = 10;
-    private static final int SLOT_WIDTH = 120, SLOT_HEIGHT = 22, SLOT_SPACING = 26;
     private static final int MAX_SLOTS = 3;
 
     private static class SlotState {
         String currentId = "";
-        float x = -SLOT_WIDTH * 1.5f;
+        float animationOffset = -150f;
         ActiveFoodBuff lastBuff = null;
     }
 
@@ -34,32 +32,67 @@ public class FlorafareHud implements HudRenderCallback {
 
         List<ActiveFoodBuff> buffs = ((IFoodComponentProvider) client.player).florafare$getFoodComponent().getActiveBuffs();
 
+        boolean isCompact = HudConfig.layoutMode == HudConfig.LayoutMode.COMPACT;
+
+        // Робимо розміри більш пропорційними. 24x24 дає ідеальний простір для іконки 16x16
+        int slotWidth = isCompact ? 24 : 120;
+        int slotHeight = 24;
+        int slotSpacing = 28; // Збільшили відступ між слотами до 4px
+
+        int screenWidth = (int) (context.getScaledWindowWidth() / HUD_SCALE);
+        int screenHeight = (int) (context.getScaledWindowHeight() / HUD_SCALE);
+
+        int baseX = 10;
+        int baseY = 10;
+
+        switch (HudConfig.position) {
+            case TOP_LEFT -> {
+                baseX = 10;
+                baseY = 10;
+            }
+            case TOP_RIGHT -> {
+                baseX = screenWidth - slotWidth - 10;
+                baseY = 10;
+            }
+            case BOTTOM_LEFT -> {
+                baseX = 10;
+                baseY = screenHeight - (MAX_SLOTS * slotSpacing) - 10;
+            }
+            case BOTTOM_RIGHT -> {
+                baseX = screenWidth - slotWidth - 10;
+                baseY = screenHeight - (MAX_SLOTS * slotSpacing) - 10;
+            }
+        }
+
         context.getMatrices().push();
         context.getMatrices().scale(HUD_SCALE, HUD_SCALE, 1.0f);
 
         for (int i = 0; i < MAX_SLOTS; i++) {
             ActiveFoodBuff buff = (i < buffs.size()) ? buffs.get(i) : null;
             SlotState state = slots[i];
+            int y = baseY + (i * slotSpacing);
 
             if (buff != null) {
                 String newId = buff.getConsumedItemId();
                 if (!state.currentId.equals(newId)) {
-                    state.x = -SLOT_WIDTH * 1.5f;
+                    state.animationOffset = -slotWidth * 1.5f;
                     state.currentId = newId;
                 }
                 state.lastBuff = buff;
-                state.x = MathHelper.lerp(0.15f, state.x, (float) BASE_X);
+                state.animationOffset = MathHelper.lerp(0.15f, state.animationOffset, 0f);
 
-                renderActiveSlot(context, client, i, buff, (int) state.x, 1.0f);
+                int renderX = calculateAnimatedX(baseX, state.animationOffset);
+                renderSlot(context, client, buff, renderX, y, 1.0f, slotWidth, slotHeight, isCompact);
             } else {
                 state.currentId = "";
-                if (state.lastBuff != null && state.x > -SLOT_WIDTH * 1.2f) {
-                    state.x = MathHelper.lerp(0.15f, state.x, -SLOT_WIDTH * 1.5f);
-                    float fadeAlpha = Math.max(0.0f, 1.0f - Math.abs(BASE_X - state.x) / (SLOT_WIDTH + BASE_X));
-                    renderActiveSlot(context, client, i, state.lastBuff, (int) state.x, fadeAlpha);
+                if (state.lastBuff != null && Math.abs(state.animationOffset) < slotWidth * 1.2f) {
+                    state.animationOffset = MathHelper.lerp(0.15f, state.animationOffset, -slotWidth * 1.5f);
+                    float fadeAlpha = Math.max(0.0f, 1.0f - Math.abs(state.animationOffset) / (slotWidth * 1.5f));
+                    int renderX = calculateAnimatedX(baseX, state.animationOffset);
+                    renderSlot(context, client, state.lastBuff, renderX, y, fadeAlpha, slotWidth, slotHeight, isCompact);
                 } else {
                     state.lastBuff = null;
-                    renderEmptySlot(context, client, i);
+                    renderEmptySlot(context, client, baseX, y, slotWidth, slotHeight, isCompact);
                 }
             }
         }
@@ -67,9 +100,14 @@ public class FlorafareHud implements HudRenderCallback {
         context.getMatrices().pop();
     }
 
-    private void renderActiveSlot(DrawContext context, MinecraftClient client, int index, ActiveFoodBuff buff, int currentX, float fadeAlpha) {
-        int y = BASE_Y + (index * SLOT_SPACING);
+    private int calculateAnimatedX(int baseX, float offset) {
+        if (HudConfig.position == HudConfig.ScreenPosition.TOP_RIGHT || HudConfig.position == HudConfig.ScreenPosition.BOTTOM_RIGHT) {
+            return baseX - (int) offset;
+        }
+        return baseX + (int) offset;
+    }
 
+    private void renderSlot(DrawContext context, MinecraftClient client, ActiveFoodBuff buff, int x, int y, float fadeAlpha, int slotWidth, int slotHeight, boolean isCompact) {
         float initialDuration = Math.max(1.0f, (float) buff.getInitialDuration());
         int remainingTicks = buff.getDurationRemaining();
         float progress = MathHelper.clamp(remainingTicks / initialDuration, 0.0f, 1.0f);
@@ -81,36 +119,64 @@ public class FlorafareHud implements HudRenderCallback {
         int alphaInt = (int) (finalAlpha * 255);
         if (alphaInt <= 5) return;
 
-        context.fill(currentX, y, currentX + SLOT_WIDTH, y + SLOT_HEIGHT, ((int) (finalAlpha * 150) << 24) | 0x000000);
-        context.drawBorder(currentX, y, SLOT_WIDTH, SLOT_HEIGHT, (alphaInt << 24) | 0x555555);
+        // Фон малюється рівно всередині рамки (+1 піксель відступ від країв)
+        context.fill(x + 1, y + 1, x + slotWidth - 1, y + slotHeight - 1, ((int) (finalAlpha * 150) << 24) | 0x000000);
+        // Сама рамка
+        context.drawBorder(x, y, slotWidth, slotHeight, (alphaInt << 24) | 0x555555);
 
-        int barWidth = (int) ((SLOT_WIDTH - 2) * progress);
+        // Смужка прогресу (вписується строго в рамку)
+        int barWidth = (int) ((slotWidth - 2) * progress);
         if (barWidth > 0) {
             int colorTop = (isBlinking ? 0xFFFF5555 : 0xFF55FF55) & 0x00FFFFFF | (alphaInt << 24);
             int colorBottom = (isBlinking ? 0xFFAA0000 : 0xFF00AA00) & 0x00FFFFFF | (alphaInt << 24);
 
-            context.fill(currentX + 1, y + 17, currentX + 1 + barWidth, y + 19, colorTop);
-            context.fill(currentX + 1, y + 19, currentX + 1 + barWidth, y + 21, colorBottom);
+            // Висота смужки 2 пікселі, лежить на дні внутрішньої рамки
+            context.fill(x + 1, y + slotHeight - 3, x + 1 + barWidth, y + slotHeight - 2, colorTop);
+            context.fill(x + 1, y + slotHeight - 2, x + 1 + barWidth, y + slotHeight - 1, colorBottom);
         }
 
+        // Рендеринг іконки
         ItemStack stack = buff.getConsumedItemStack();
-        context.drawItem(stack, currentX + 2, y + 2);
-
-        int seconds = remainingTicks / 20;
-        String timeStr = String.format("%02d:%02d", seconds / 60, seconds % 60);
-        context.drawTextWithShadow(client.textRenderer, timeStr, currentX + 22, y + 6, (alphaInt << 24) | 0xFFFFFF);
-
-        String name = stack.getName().getString();
-        if (client.textRenderer.getWidth(name) > 65) {
-            name = client.textRenderer.trimToWidth(name, 60) + "...";
+        context.getMatrices().push();
+        if (HudConfig.iconSize == HudConfig.IconSize.SMALL) {
+            // Центруємо зменшену іконку
+            float scale = 0.75f;
+            int offsetXY = (int) ((slotHeight - (16 * scale)) / 2);
+            context.getMatrices().translate(x + offsetXY, y + offsetXY - 1, 0); // -1 щоб звільнити місце для бару знизу
+            context.getMatrices().scale(scale, scale, 1.0f);
+            context.drawItem(stack, 0, 0);
+        } else {
+            // Центруємо стандартну іконку (16x16) всередині рамки (24x24)
+            int iconX = x + 4; // (24 - 16) / 2 = 4
+            int iconY = y + 2; // Зсунуто трохи вгору через смужку прогресу
+            context.drawItem(stack, iconX, iconY);
         }
-        context.drawTextWithShadow(client.textRenderer, name, currentX + 55, y + 6, (alphaInt << 24) | 0xAAAAAA);
+        context.getMatrices().pop();
+
+        // Текст для стандартного широкого режиму
+        if (!isCompact) {
+            int seconds = remainingTicks / 20;
+            String timeStr = String.format("%02d:%02d", seconds / 60, seconds % 60);
+
+            // Центруємо текст по висоті. Висота шрифту 8. (24 - 8) / 2 = 8.
+            int textY = y + 8;
+
+            context.drawTextWithShadow(client.textRenderer, timeStr, x + 24, textY, (alphaInt << 24) | 0xFFFFFF);
+
+            String name = stack.getName().getString();
+            if (client.textRenderer.getWidth(name) > 60) {
+                name = client.textRenderer.trimToWidth(name, 55) + "...";
+            }
+            context.drawTextWithShadow(client.textRenderer, name, x + 58, textY, (alphaInt << 24) | 0xAAAAAA);
+        }
     }
 
-    private void renderEmptySlot(DrawContext context, MinecraftClient client, int index) {
-        int y = BASE_Y + (index * SLOT_SPACING);
-        context.fill(BASE_X, y, BASE_X + SLOT_WIDTH, y + SLOT_HEIGHT, 0x33000000);
-        context.drawBorder(BASE_X, y, SLOT_WIDTH, SLOT_HEIGHT, 0x44555555);
-        context.drawTextWithShadow(client.textRenderer, Text.translatable("gui.florafare.hud.empty"), BASE_X + 22, y + 6, 0x44FFFFFF);
+    private void renderEmptySlot(DrawContext context, MinecraftClient client, int x, int y, int slotWidth, int slotHeight, boolean isCompact) {
+        context.fill(x + 1, y + 1, x + slotWidth - 1, y + slotHeight - 1, 0x33000000);
+        context.drawBorder(x, y, slotWidth, slotHeight, 0x44555555);
+        if (!isCompact) {
+            int textY = y + 8;
+            context.drawTextWithShadow(client.textRenderer, Text.translatable("gui.florafare.hud.empty"), x + 24, textY, 0x44FFFFFF);
+        }
     }
 }

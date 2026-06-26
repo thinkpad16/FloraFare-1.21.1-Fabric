@@ -19,5 +19,12 @@
   "command.florafare.error.empty_hand": "You must be holding an item in your main hand!",
   "command.florafare.setbuff.success": "Unique buff successfully applied to this item!",
   "command.florafare.buff_give.success": "§aBuff %s successfully granted to player %s",
-  "command.florafare.error.buff_not_found": "Buff with ID %s not found in the datapack!"
+  "command.florafare.error.buff_not_found": "Buff with ID %s not found in the datapack!",
+
+  "key.florafare.hud_config": "Open HUD Configuration",
+  "category.florafare.general": "Florafare Mod",
+  "gui.florafare.hud_config.title": "HUD settings",
+  "gui.florafare.hud_config.mode": "Layout style: %s",
+  "gui.florafare.hud_config.icons": "Icon scale: %s",
+  "gui.florafare.hud_config.position": "Screen edge: %s"
 }
