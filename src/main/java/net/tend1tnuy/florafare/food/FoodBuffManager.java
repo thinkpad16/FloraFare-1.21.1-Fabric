@@ -58,6 +58,8 @@ public class FoodBuffManager {
         }
     }
 
+
+
     public static void setRuntimeStackConfig(String uuid, FoodBuffData data) {
         RUNTIME_STACK_CONFIGS.put(uuid, data);
     }

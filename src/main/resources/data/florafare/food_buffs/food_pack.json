@@ -37,7 +37,7 @@
     {
       "target": "item:minecraft:golden_carrot",
       "duration": 9600, "nutrition": 3, "saturation": 1.0,
-      "attributes": [{"attribute": "minecraft:generic.max_health", "amount": -6.0, "operation": "add_value"}, {"attribute": "minecraft:generic.movement_speed", "amount": 0.2, "operation": "add_multiplied_base"}]
+      "attributes": [{"attribute": "minecraft:generic.max_health", "amount": -6.0, "operation": "add_value"}, {"attribute": "minecraft:generic.movement_speed", "amount": 0.2, "operation": "add_multiplied_base"},{"attribute": "minecraft:generic.attack_speed", "amount": 0.2, "operation": "add_multiplied_base"},{"attribute": "minecraft:generic.luck", "amount": 0.2, "operation": "add_multiplied_base"}]
     },
     {
       "target": "item:minecraft:enchanted_golden_apple",

@@ -42,7 +42,7 @@ public abstract class LivingEntityEatMixin {
                 // Add the configured buff to the player's active slots
                 component.tryAddBuff(stack, data);
 
-                // Replicate vanilla consumption side effects (stats, sounds, item decrement, events)
+                // Replicate vanilla consumption side effects (stats, sounds)
                 player.incrementStat(Stats.USED.getOrCreateStat(stack.getItem()));
                 world.playSound(
                         null,
@@ -53,8 +53,20 @@ public abstract class LivingEntityEatMixin {
                         1.0F + (world.random.nextFloat() - world.random.nextFloat()) * 0.4F
                 );
 
+                // Логіка віднімання стаку ТА повернення посуду (RecipeRemainder)
                 if (!player.getAbilities().creativeMode) {
+                    ItemStack remainder = stack.getItem().hasRecipeRemainder() ? new ItemStack(stack.getItem().getRecipeRemainder()) : ItemStack.EMPTY;
                     stack.decrement(1);
+
+                    if (!remainder.isEmpty()) {
+                        if (stack.isEmpty()) {
+                            player.emitGameEvent(GameEvent.EAT);
+                            cir.setReturnValue(remainder); // Повертаємо миску замість з'їденої страви
+                            return;
+                        } else if (!player.getInventory().insertStack(remainder)) {
+                            player.dropItem(remainder, false); // Викидаємо, якщо інвентар повний
+                        }
+                    }
                 }
 
                 player.emitGameEvent(GameEvent.EAT);

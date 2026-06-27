@@ -8,10 +8,6 @@ import net.minecraft.util.Identifier;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Data record representing the configuration for a food buff.
- * Handles NBT serialization and deserialization for data persistence.
- */
 public record FoodBuffData(
         String target,
         int duration,
@@ -22,7 +18,6 @@ public record FoodBuffData(
         List<AttributeData> attributes,
         int priority
 ) {
-    // NBT Keys for serialization (Do not change these to maintain backward compatibility)
     private static final String KEY_TARGET = "target";
     private static final String KEY_DURATION = "duration";
     private static final String KEY_NUTRITION = "nutrition";
@@ -39,11 +34,6 @@ public record FoodBuffData(
     public record EffectData(Identifier id, int duration, int amplifier) {}
     public record AttributeData(Identifier attributeId, double amount, String operation) {}
 
-    /**
-     * Serializes this data record into an NbtCompound.
-     *
-     * @return The serialized NBT data.
-     */
     public NbtCompound toNbt() {
         NbtCompound nbt = new NbtCompound();
         nbt.putString(KEY_TARGET, target);
@@ -76,23 +66,20 @@ public record FoodBuffData(
         return nbt;
     }
 
-    /**
-     * Deserializes data from an NbtCompound.
-     *
-     * @param nbt The NBT tag to read from.
-     * @return A new FoodBuffData instance.
-     */
     public static FoodBuffData fromNbt(NbtCompound nbt) {
         List<EffectData> effects = new ArrayList<>();
         if (nbt.contains(KEY_EFFECTS, NbtElement.LIST_TYPE)) {
             NbtList effList = nbt.getList(KEY_EFFECTS, NbtElement.COMPOUND_TYPE);
             for (int i = 0; i < effList.size(); i++) {
                 NbtCompound tag = effList.getCompound(i);
-                effects.add(new EffectData(
-                        Identifier.of(tag.getString(KEY_ID)),
-                        tag.getInt(KEY_DURATION),
-                        tag.getInt(KEY_AMPLIFIER)
-                ));
+                Identifier effId = Identifier.tryParse(tag.getString(KEY_ID));
+                if (effId != null) {
+                    effects.add(new EffectData(
+                            effId,
+                            tag.getInt(KEY_DURATION),
+                            tag.getInt(KEY_AMPLIFIER)
+                    ));
+                }
             }
         }
 
@@ -101,11 +88,14 @@ public record FoodBuffData(
             NbtList attrList = nbt.getList(KEY_ATTRIBUTES, NbtElement.COMPOUND_TYPE);
             for (int i = 0; i < attrList.size(); i++) {
                 NbtCompound tag = attrList.getCompound(i);
-                attrs.add(new AttributeData(
-                        Identifier.of(tag.getString(KEY_ID)),
-                        tag.getDouble(KEY_AMOUNT),
-                        tag.getString(KEY_OPERATION)
-                ));
+                Identifier attrId = Identifier.tryParse(tag.getString(KEY_ID));
+                if (attrId != null) {
+                    attrs.add(new AttributeData(
+                            attrId,
+                            tag.getDouble(KEY_AMOUNT),
+                            tag.getString(KEY_OPERATION)
+                    ));
+                }
             }
         }
 

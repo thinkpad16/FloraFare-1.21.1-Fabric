@@ -26,5 +26,20 @@
   "gui.florafare.hud_config.title": "HUD settings",
   "gui.florafare.hud_config.mode": "Layout style: %s",
   "gui.florafare.hud_config.icons": "Icon scale: %s",
-  "gui.florafare.hud_config.position": "Screen edge: %s"
+  "gui.florafare.hud_config.position": "Screen edge: %s",
+
+  "gui.florafare.journal.tab.foods": "Switch to Dishes",
+  "gui.florafare.journal.tab.synergies": "Switch to Synergies",
+  "gui.florafare.journal.synergies_title": "Secret Combinations",
+  "synergy.florafare.florafare.hearty_lunch": "Hearty Lunch",
+
+  "florafare.attribute.movement_speed": "Speed",
+  "florafare.attribute.attack_damage": "Damage",
+  "florafare.attribute.max_health": "Max Health",
+  "florafare.attribute.armor": "Armor",
+  "florafare.attribute.armor_toughness": "Toughness",
+  "florafare.attribute.knockback_resistance": "Resistance",
+  "florafare.attribute.jump_strength": "Jump Boost",
+  "florafare.attribute.attack_speed": "Atk. Speed"
+
 }

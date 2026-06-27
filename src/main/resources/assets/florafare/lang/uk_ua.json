@@ -26,5 +26,20 @@
   "gui.florafare.hud_config.title": "Налаштування інтерфейсу (HUD)",
   "gui.florafare.hud_config.mode": "Вигляд GUI: %s",
   "gui.florafare.hud_config.icons": "Розмір значків: %s",
-  "gui.florafare.hud_config.position": "Позиція екрана: %s"
+  "gui.florafare.hud_config.position": "Позиція екрана: %s",
+
+  "gui.florafare.journal.tab.foods": "Список страв",
+  "gui.florafare.journal.tab.synergies": "Таємні комбінації",
+  "gui.florafare.journal.synergies_title": "Секретні комбінації",
+  "synergy.florafare.florafare.hearty_lunch": "Ситний обід",
+
+  "florafare.attribute.movement_speed": "Швидкість",
+  "florafare.attribute.attack_damage": "Шкода",
+  "florafare.attribute.max_health": "Макс. здоров'я",
+  "florafare.attribute.armor": "Броня",
+  "florafare.attribute.armor_toughness": "Міцність броні",
+  "florafare.attribute.knockback_resistance": "Стійкість",
+  "florafare.attribute.jump_strength": "Сила стрибка",
+  "florafare.attribute.attack_speed": "Шв. атаки"
+
 }

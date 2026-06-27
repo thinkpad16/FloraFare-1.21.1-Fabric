@@ -9,6 +9,9 @@ import net.minecraft.text.Text;
 import net.minecraft.util.math.MathHelper;
 import net.tend1tnuy.florafare.component.ActiveFoodBuff;
 import net.tend1tnuy.florafare.component.IFoodComponentProvider;
+import net.tend1tnuy.florafare.component.PlayerFoodComponent;
+import net.tend1tnuy.florafare.food.FoodSynergyData;
+import net.tend1tnuy.florafare.food.FoodSynergyManager;
 
 import java.util.List;
 
@@ -30,14 +33,16 @@ public class FlorafareHud implements HudRenderCallback {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player == null) return;
 
-        List<ActiveFoodBuff> buffs = ((IFoodComponentProvider) client.player).florafare$getFoodComponent().getActiveBuffs();
+        // Отримуємо компонент гравця, активні бафи та активні синергії
+        PlayerFoodComponent foodComponent = ((IFoodComponentProvider) client.player).florafare$getFoodComponent();
+        List<ActiveFoodBuff> buffs = foodComponent.getActiveBuffs();
+        List<ActiveFoodBuff> activeSynergies = foodComponent.getActiveSynergies();
 
         boolean isCompact = HudConfig.layoutMode == HudConfig.LayoutMode.COMPACT;
 
-        // Робимо розміри більш пропорційними. 24x24 дає ідеальний простір для іконки 16x16
         int slotWidth = isCompact ? 24 : 120;
         int slotHeight = 24;
-        int slotSpacing = 28; // Збільшили відступ між слотами до 4px
+        int slotSpacing = 28;
 
         int screenWidth = (int) (context.getScaledWindowWidth() / HUD_SCALE);
         int screenHeight = (int) (context.getScaledWindowHeight() / HUD_SCALE);
@@ -82,14 +87,22 @@ public class FlorafareHud implements HudRenderCallback {
                 state.animationOffset = MathHelper.lerp(0.15f, state.animationOffset, 0f);
 
                 int renderX = calculateAnimatedX(baseX, state.animationOffset);
-                renderSlot(context, client, buff, renderX, y, 1.0f, slotWidth, slotHeight, isCompact);
+
+                // Перевіряємо, чи входить цей баф до активної синергії
+                boolean isSynergized = isBuffSynergized(buff, activeSynergies);
+
+                renderSlot(context, client, buff, renderX, y, 1.0f, slotWidth, slotHeight, isCompact, isSynergized);
             } else {
                 state.currentId = "";
                 if (state.lastBuff != null && Math.abs(state.animationOffset) < slotWidth * 1.2f) {
                     state.animationOffset = MathHelper.lerp(0.15f, state.animationOffset, -slotWidth * 1.5f);
                     float fadeAlpha = Math.max(0.0f, 1.0f - Math.abs(state.animationOffset) / (slotWidth * 1.5f));
                     int renderX = calculateAnimatedX(baseX, state.animationOffset);
-                    renderSlot(context, client, state.lastBuff, renderX, y, fadeAlpha, slotWidth, slotHeight, isCompact);
+
+                    // Перевіряємо синергію для бафа, що зникає
+                    boolean isSynergized = isBuffSynergized(state.lastBuff, activeSynergies);
+
+                    renderSlot(context, client, state.lastBuff, renderX, y, fadeAlpha, slotWidth, slotHeight, isCompact, isSynergized);
                 } else {
                     state.lastBuff = null;
                     renderEmptySlot(context, client, baseX, y, slotWidth, slotHeight, isCompact);
@@ -107,7 +120,23 @@ public class FlorafareHud implements HudRenderCallback {
         return baseX + (int) offset;
     }
 
-    private void renderSlot(DrawContext context, MinecraftClient client, ActiveFoodBuff buff, int x, int y, float fadeAlpha, int slotWidth, int slotHeight, boolean isCompact) {
+    /**
+     * Метод для перевірки, чи бере поточний баф участь у будь-якій активній синергії.
+     */
+    private boolean isBuffSynergized(ActiveFoodBuff buff, List<ActiveFoodBuff> activeSynergies) {
+        if (buff == null || activeSynergies == null || activeSynergies.isEmpty()) return false;
+
+        for (ActiveFoodBuff synBuff : activeSynergies) {
+            FoodSynergyData data = FoodSynergyManager.getSynergy(synBuff.getTarget());
+            // Перевіряємо, чи ID поточного бафу (напр. item:minecraft:apple) є у списку вимог синергії
+            if (data != null && data.requirements().contains(buff.getTarget())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void renderSlot(DrawContext context, MinecraftClient client, ActiveFoodBuff buff, int x, int y, float fadeAlpha, int slotWidth, int slotHeight, boolean isCompact, boolean isSynergized) {
         float initialDuration = Math.max(1.0f, (float) buff.getInitialDuration());
         int remainingTicks = buff.getDurationRemaining();
         float progress = MathHelper.clamp(remainingTicks / initialDuration, 0.0f, 1.0f);
@@ -121,8 +150,17 @@ public class FlorafareHud implements HudRenderCallback {
 
         // Фон малюється рівно всередині рамки (+1 піксель відступ від країв)
         context.fill(x + 1, y + 1, x + slotWidth - 1, y + slotHeight - 1, ((int) (finalAlpha * 150) << 24) | 0x000000);
-        // Сама рамка
-        context.drawBorder(x, y, slotWidth, slotHeight, (alphaInt << 24) | 0x555555);
+
+        // Відмальовка рамки залежно від того, чи активна синергія
+        if (isSynergized) {
+            // Ефект світіння (додаткова напівпрозора рамка навколо слота)
+            context.drawBorder(x - 1, y - 1, slotWidth + 2, slotHeight + 2, ((int)(finalAlpha * 100) << 24) | 0xFF8800);
+            // Яскрава оранжева внутрішня рамка
+            context.drawBorder(x, y, slotWidth, slotHeight, (alphaInt << 24) | 0xFFAA00);
+        } else {
+            // Стандартна сіра рамка, якщо синергії немає
+            context.drawBorder(x, y, slotWidth, slotHeight, (alphaInt << 24) | 0x555555);
+        }
 
         // Смужка прогресу (вписується строго в рамку)
         int barWidth = (int) ((slotWidth - 2) * progress);
@@ -130,35 +168,31 @@ public class FlorafareHud implements HudRenderCallback {
             int colorTop = (isBlinking ? 0xFFFF5555 : 0xFF55FF55) & 0x00FFFFFF | (alphaInt << 24);
             int colorBottom = (isBlinking ? 0xFFAA0000 : 0xFF00AA00) & 0x00FFFFFF | (alphaInt << 24);
 
-            // Висота смужки 2 пікселі, лежить на дні внутрішньої рамки
             context.fill(x + 1, y + slotHeight - 3, x + 1 + barWidth, y + slotHeight - 2, colorTop);
             context.fill(x + 1, y + slotHeight - 2, x + 1 + barWidth, y + slotHeight - 1, colorBottom);
         }
 
-        // Рендеринг іконки
+        // Рендеринг іконки предмета
         ItemStack stack = buff.getConsumedItemStack();
         context.getMatrices().push();
         if (HudConfig.iconSize == HudConfig.IconSize.SMALL) {
-            // Центруємо зменшену іконку
             float scale = 0.75f;
             int offsetXY = (int) ((slotHeight - (16 * scale)) / 2);
-            context.getMatrices().translate(x + offsetXY, y + offsetXY - 1, 0); // -1 щоб звільнити місце для бару знизу
+            context.getMatrices().translate(x + offsetXY, y + offsetXY - 1, 0);
             context.getMatrices().scale(scale, scale, 1.0f);
             context.drawItem(stack, 0, 0);
         } else {
-            // Центруємо стандартну іконку (16x16) всередині рамки (24x24)
-            int iconX = x + 4; // (24 - 16) / 2 = 4
-            int iconY = y + 2; // Зсунуто трохи вгору через смужку прогресу
+            int iconX = x + 4;
+            int iconY = y + 2;
             context.drawItem(stack, iconX, iconY);
         }
         context.getMatrices().pop();
 
-        // Текст для стандартного широкого режиму
+        // Відмальовка тексту (тільки для розширеного/стандартного режиму)
         if (!isCompact) {
             int seconds = remainingTicks / 20;
             String timeStr = String.format("%02d:%02d", seconds / 60, seconds % 60);
 
-            // Центруємо текст по висоті. Висота шрифту 8. (24 - 8) / 2 = 8.
             int textY = y + 8;
 
             context.drawTextWithShadow(client.textRenderer, timeStr, x + 24, textY, (alphaInt << 24) | 0xFFFFFF);

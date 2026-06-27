@@ -2,6 +2,7 @@ package net.tend1tnuy.florafare.component;
 
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
+import net.minecraft.item.Items;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtList;
@@ -11,10 +12,6 @@ import net.minecraft.util.Identifier;
 import java.util.HashMap;
 import java.util.Map;
 
-/**
- * Represents an active food buff instance on a player, tracking duration,
- * source items, and applied attribute modifiers.
- */
 public class ActiveFoodBuff {
     private final String target;
     private final String consumedItemId;
@@ -70,8 +67,16 @@ public class ActiveFoodBuff {
     }
 
     public ItemStack getConsumedItemStack() {
-        Item item = Registries.ITEM.get(Identifier.of(this.consumedItemId));
-        return item.getDefaultStack();
+        // БЕЗПЕЧНИЙ ПАРСИНГ: Якщо ідентифікатор неправильний, рендеримо яблуко замість крашу
+        if (this.consumedItemId == null || this.consumedItemId.isEmpty()) {
+            return Items.APPLE.getDefaultStack();
+        }
+        Identifier id = Identifier.tryParse(this.consumedItemId);
+        if (id != null && Registries.ITEM.containsId(id)) {
+            Item item = Registries.ITEM.get(id);
+            return item.getDefaultStack();
+        }
+        return Items.APPLE.getDefaultStack();
     }
 
     public NbtCompound toNbt() {
@@ -107,7 +112,14 @@ public class ActiveFoodBuff {
             NbtList list = nbt.getList("Modifiers", NbtElement.COMPOUND_TYPE);
             for (int i = 0; i < list.size(); i++) {
                 NbtCompound modTag = list.getCompound(i);
-                buff.addModifierRecord(Identifier.of(modTag.getString("ModId")), Identifier.of(modTag.getString("AttrId")));
+
+                // БЕЗПЕЧНИЙ ПАРСИНГ: tryParse ігнорує помилки замість крашу NBT
+                Identifier modId = Identifier.tryParse(modTag.getString("ModId"));
+                Identifier attrId = Identifier.tryParse(modTag.getString("AttrId"));
+
+                if (modId != null && attrId != null) {
+                    buff.addModifierRecord(modId, attrId);
+                }
             }
         }
         return buff;
