@@ -43,7 +43,6 @@ public class FoodJournalScreen extends Screen {
     private int currentPage = 0, maxPages = 1;
     private int unlockedCount = 0, unlockedSynergyCount = 0;
 
-    // Пагінація для детального опису страв
     private final List<List<RenderLine>> detailPages = new ArrayList<>();
     private int detailCurrentPage = 0;
 
@@ -187,7 +186,6 @@ public class FoodJournalScreen extends Screen {
         }
     }
 
-    // === ПЕРЕВАНТАЖЕННЯ ДЛЯ ЗВИЧАЙНОЇ ЇЖІ ===
     private void buildDetailPages(FoodBuffData data) {
         detailPages.clear();
         detailCurrentPage = 0;
@@ -203,7 +201,6 @@ public class FoodJournalScreen extends Screen {
         paginateLines(allLines, false);
     }
 
-    // === ПЕРЕВАНТАЖЕННЯ ДЛЯ СИНЕРГІЙ ===
     private void buildDetailPages(FoodSynergyData data) {
         detailPages.clear();
         detailCurrentPage = 0;
@@ -215,7 +212,6 @@ public class FoodJournalScreen extends Screen {
         paginateLines(allLines, true);
     }
 
-    // === СПІЛЬНА ЛОГІКА ФОРМУВАННЯ АТРИБУТІВ І ЕФЕКТІВ ===
     private void buildCommonDetailLines(List<RenderLine> allLines, double healthBonus, List<FoodBuffData.AttributeData> attributes, List<FoodBuffData.EffectData> effects) {
         if (healthBonus != 0) {
             String sign = healthBonus > 0 ? "+" : "";
@@ -247,7 +243,6 @@ public class FoodJournalScreen extends Screen {
         }
     }
 
-    // === ЛОГІКА РОЗБИТТЯ НА СТОРІНКИ ===
     private void paginateLines(List<RenderLine> allLines, boolean isSynergy) {
         List<RenderLine> currentPageLines = new ArrayList<>();
         int currentY = isSynergy ? 66 : 76;
@@ -270,7 +265,6 @@ public class FoodJournalScreen extends Screen {
 
     @Override
     public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {
-        // Прозорий фон
     }
 
     @Override

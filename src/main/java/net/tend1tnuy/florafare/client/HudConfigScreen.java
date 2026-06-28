@@ -16,7 +16,6 @@ public class HudConfigScreen extends Screen {
         int x = this.width / 2 - 100;
         int y = this.height / 2 - 40;
 
-        // Кнопка зміни стилю GUI (Стандартний / Компактний квадратний)
         this.addDrawableChild(ButtonWidget.builder(
                 Text.translatable("gui.florafare.hud_config.mode", HudConfig.layoutMode.name()),
                 btn -> {
@@ -24,7 +23,6 @@ public class HudConfigScreen extends Screen {
                     btn.setMessage(Text.translatable("gui.florafare.hud_config.mode", HudConfig.layoutMode.name()));
                 }).dimensions(x, y, 200, 20).build());
 
-        // Кнопка зміни розміру іконок
         this.addDrawableChild(ButtonWidget.builder(
                 Text.translatable("gui.florafare.hud_config.icons", HudConfig.iconSize.name()),
                 btn -> {
@@ -32,7 +30,6 @@ public class HudConfigScreen extends Screen {
                     btn.setMessage(Text.translatable("gui.florafare.hud_config.icons", HudConfig.iconSize.name()));
                 }).dimensions(x, y + 25, 200, 20).build());
 
-        // Кнопка переміщення по краях екрана
         this.addDrawableChild(ButtonWidget.builder(
                 Text.translatable("gui.florafare.hud_config.position", HudConfig.position.name()),
                 btn -> {

@@ -5,7 +5,6 @@ public class HudConfig {
     public enum IconSize { SMALL, LARGE }
     public enum ScreenPosition { TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT }
 
-    // Дефолтні налаштування: Квадратний (COMPACT) інтерфейс, великі значки, лівий низ
     public static LayoutMode layoutMode = LayoutMode.COMPACT;
     public static IconSize iconSize = IconSize.LARGE;
     public static ScreenPosition position = ScreenPosition.BOTTOM_LEFT;

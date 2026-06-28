@@ -67,7 +67,6 @@ public class ActiveFoodBuff {
     }
 
     public ItemStack getConsumedItemStack() {
-        // БЕЗПЕЧНИЙ ПАРСИНГ: Якщо ідентифікатор неправильний, рендеримо яблуко замість крашу
         if (this.consumedItemId == null || this.consumedItemId.isEmpty()) {
             return Items.APPLE.getDefaultStack();
         }
@@ -113,7 +112,6 @@ public class ActiveFoodBuff {
             for (int i = 0; i < list.size(); i++) {
                 NbtCompound modTag = list.getCompound(i);
 
-                // БЕЗПЕЧНИЙ ПАРСИНГ: tryParse ігнорує помилки замість крашу NBT
                 Identifier modId = Identifier.tryParse(modTag.getString("ModId"));
                 Identifier attrId = Identifier.tryParse(modTag.getString("AttrId"));
 

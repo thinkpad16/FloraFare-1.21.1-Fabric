@@ -1,12 +1,12 @@
 package net.tend1tnuy.florafare.food;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class FoodSynergyManager {
-    private static final Map<String, FoodSynergyData> SYNERGIES = new HashMap<>();
+    private static final Map<String, FoodSynergyData> SYNERGIES = new ConcurrentHashMap<>();
 
     public static void clear() {
         SYNERGIES.clear();

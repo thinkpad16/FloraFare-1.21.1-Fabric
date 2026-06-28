@@ -28,7 +28,7 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Handles the registration and execution of all /florafare commands.
+ * Handles the registration and execution of all /florafare administration commands.
  */
 public class SetBuffCommand {
 
@@ -39,6 +39,13 @@ public class SetBuffCommand {
         dispatcher.register(
                 CommandManager.literal("florafare")
                         .requires(source -> source.hasPermissionLevel(2))
+
+                        // Branch: /florafare clear <player> (Clears all active buffs and synergies)
+                        .then(CommandManager.literal("clear")
+                                .then(CommandManager.argument("player", EntityArgumentType.player())
+                                        .executes(SetBuffCommand::executeClearBuffs)
+                                )
+                        )
 
                         // Branch: /florafare setbuff (Dynamic buff on item in hand)
                         .then(CommandManager.literal("setbuff")
@@ -78,6 +85,16 @@ public class SetBuffCommand {
         );
     }
 
+    private static int executeClearBuffs(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
+        ServerPlayerEntity targetPlayer = EntityArgumentType.getPlayer(context, "player");
+        PlayerFoodComponent component = ((IFoodComponentProvider) targetPlayer).florafare$getFoodComponent();
+
+        component.clearAllBuffs();
+
+        context.getSource().sendFeedback(() -> Text.literal("Successfully cleared all Florafare buffs and synergies for " + targetPlayer.getName().getString()), true);
+        return 1;
+    }
+
     private static int executeSetBuff(CommandContext<ServerCommandSource> context, Identifier attrId, Double amount, String op) {
         ServerCommandSource source = context.getSource();
         if (source.getPlayer() == null) return 0;
@@ -85,7 +102,7 @@ public class SetBuffCommand {
         ItemStack stack = source.getPlayer().getMainHandStack();
 
         if (stack.isEmpty()) {
-            source.sendFeedback(() -> Text.translatable("command.florafare.error.empty_hand"), false);
+            source.sendFeedback(() -> Text.literal("You must hold an item in your main hand to apply a buff."), false);
             return 0;
         }
 
@@ -114,7 +131,7 @@ public class SetBuffCommand {
         FoodBuffManager.setRuntimeStackConfig(uniqueId, data);
         FoodBuffManager.saveRuntimeConfigs();
 
-        source.sendFeedback(() -> Text.translatable("command.florafare.setbuff.success"), true);
+        source.sendFeedback(() -> Text.literal("Successfully bound dynamic buff to the held item."), true);
         return 1;
     }
 
@@ -131,10 +148,10 @@ public class SetBuffCommand {
             PlayerFoodComponent component = ((IFoodComponentProvider) player).florafare$getFoodComponent();
             component.unlockFood(targetId);
 
-            context.getSource().sendFeedback(() -> Text.translatable("command.florafare.buff_give.success", targetId, player.getDisplayName()), true);
+            context.getSource().sendFeedback(() -> Text.literal("Successfully granted buff '" + targetId + "' to " + player.getName().getString()), true);
             return 1;
         } else {
-            context.getSource().sendError(Text.translatable("command.florafare.error.buff_not_found", targetId));
+            context.getSource().sendError(Text.literal("Could not find a registered buff with ID: " + targetId));
             return 0;
         }
     }

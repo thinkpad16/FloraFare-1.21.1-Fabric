@@ -32,12 +32,12 @@ public class Florafare implements ModInitializer {
     public void onInitialize() {
         LOGGER.info("Initializing Florafare!");
 
-        // Реєстрація пакету (Payload)
 
-        // Завантаження конфігу
         net.tend1tnuy.florafare.config.FlorafareConfig.load();
         // Register mod items and data components
         ItemRegistry.initialize();
+
+        net.tend1tnuy.registry.FlorafareItemGroups.registerItemGroups();
 
         // Register datapack reload listener for food buff configurations
         ResourceManagerHelper.get(ResourceType.SERVER_DATA).registerReloadListener(new FoodReloadListener());

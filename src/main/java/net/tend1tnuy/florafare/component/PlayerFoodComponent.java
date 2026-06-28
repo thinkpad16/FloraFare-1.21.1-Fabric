@@ -100,6 +100,27 @@ public class PlayerFoodComponent {
         return true;
     }
 
+    public void clearAllBuffs() {
+        if (player.getWorld().isClient) return;
+        boolean changed = false;
+
+        for (int i = activeBuffs.size() - 1; i >= 0; i--) {
+            removeBuffAttributes(activeBuffs.get(i));
+            activeBuffs.remove(i);
+            changed = true;
+        }
+
+        for (int i = activeSynergies.size() - 1; i >= 0; i--) {
+            removeBuffAttributes(activeSynergies.get(i));
+            activeSynergies.remove(i);
+            changed = true;
+        }
+
+        if (changed) {
+            sync();
+        }
+    }
+
     private void applyBuffEffects(ActiveFoodBuff buff, FoodBuffData data) {
         if (player.getWorld().isClient) return;
 
@@ -132,7 +153,6 @@ public class PlayerFoodComponent {
         instance.removeModifier(modifierId);
 
         try {
-            // ВИПРАВЛЕННЯ: Тепер використовуємо Temporary Modifier, щоб не зламати збереження гравця
             instance.addTemporaryModifier(new EntityAttributeModifier(modifierId, amount, operation));
             Identifier registryId = Registries.ATTRIBUTE.getId(attribute.value());
             if (registryId != null) {
@@ -244,7 +264,8 @@ public class PlayerFoodComponent {
 
     public void tick() {
         boolean isServer = !player.getWorld().isClient;
-        boolean changed = false;
+        boolean buffsChanged = false;
+        boolean synergiesChanged = false;
 
         for (int i = activeBuffs.size() - 1; i >= 0; i--) {
             ActiveFoodBuff buff = activeBuffs.get(i);
@@ -253,22 +274,30 @@ public class PlayerFoodComponent {
             if (buff.isExpired()) {
                 if (isServer) {
                     removeBuffAttributes(buff);
-                    changed = true;
+                    buffsChanged = true;
                 }
                 activeBuffs.remove(i);
             }
         }
 
-        if (isServer) {
-            changed |= updateSynergies();
+        if (isServer && buffsChanged) {
+            synergiesChanged = updateSynergies();
         }
 
         for (int i = activeSynergies.size() - 1; i >= 0; i--) {
             ActiveFoodBuff synergyBuff = activeSynergies.get(i);
             synergyBuff.tick();
+
+            if (synergyBuff.isExpired()) {
+                if (isServer) {
+                    removeBuffAttributes(synergyBuff);
+                    synergiesChanged = true;
+                }
+                activeSynergies.remove(i);
+            }
         }
 
-        if (isServer && changed) {
+        if (isServer && (buffsChanged || synergiesChanged)) {
             sync();
         }
     }

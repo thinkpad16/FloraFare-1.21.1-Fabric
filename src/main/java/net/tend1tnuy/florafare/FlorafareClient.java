@@ -26,7 +26,6 @@ public class FlorafareClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        // Реєстрація бінда клавіші (За замовчуванням клавіша H)
         KeyBinding hudConfigKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "key.florafare.hud_config",
                 InputUtil.Type.KEYSYM,
@@ -34,14 +33,12 @@ public class FlorafareClient implements ClientModInitializer {
                 "category.florafare.general"
         ));
 
-        // Обробка натискання клавіші для відкриття меню конфігурації HUD
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             while (hudConfigKey.wasPressed()) {
                 client.setScreen(new HudConfigScreen());
             }
         });
 
-        // Реєстрація синхронізації бафів
         ClientPlayNetworking.registerGlobalReceiver(FoodBuffSyncPayload.ID, (payload, context) -> {
             context.client().execute(() -> {
                 ClientPlayerEntity player = context.player();
@@ -51,21 +48,18 @@ public class FlorafareClient implements ClientModInitializer {
             });
         });
 
-        // Відкриття екрана кулінарної книги
         ClientPlayNetworking.registerGlobalReceiver(OpenFoodJournalPayload.ID, (payload, context) -> {
             context.client().execute(() -> {
                 context.client().setScreen(new FoodJournalScreen());
             });
         });
 
-        // Показ тостів
         ClientPlayNetworking.registerGlobalReceiver(FoodUnlockedPayload.ID, (payload, context) -> {
             context.client().execute(() -> {
                 context.client().getToastManager().add(new FoodDiscoveryToast());
             });
         });
 
-        // Реєстрація HUD
         HudRenderCallback.EVENT.register(new FlorafareHud());
     }
 }

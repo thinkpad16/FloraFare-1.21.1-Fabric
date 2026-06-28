@@ -40,6 +40,8 @@
   "florafare.attribute.armor_toughness": "Toughness",
   "florafare.attribute.knockback_resistance": "Resistance",
   "florafare.attribute.jump_strength": "Jump Boost",
-  "florafare.attribute.attack_speed": "Atk. Speed"
+  "florafare.attribute.attack_speed": "Atk. Speed",
+
+  "itemgroup.florafare.florafare_group": "Florafare"
 
 }

@@ -40,6 +40,8 @@
   "florafare.attribute.armor_toughness": "Міцність броні",
   "florafare.attribute.knockback_resistance": "Стійкість",
   "florafare.attribute.jump_strength": "Сила стрибка",
-  "florafare.attribute.attack_speed": "Шв. атаки"
+  "florafare.attribute.attack_speed": "Шв. атаки",
+
+  "itemgroup.florafare.florafare_group": "Florafare"
 
 }
