@@ -1,13 +1,19 @@
 package net.tend1tnuy.florafare.mixin;
 
+import net.minecraft.component.type.FoodComponent;
+import net.minecraft.entity.player.HungerManager;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
+import net.minecraft.world.World;
 import net.tend1tnuy.florafare.component.IFoodComponentProvider;
 import net.tend1tnuy.florafare.component.PlayerFoodComponent;
+import net.tend1tnuy.florafare.food.FoodBuffManager;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
@@ -30,6 +36,31 @@ public abstract class PlayerEntityMixin implements IFoodComponentProvider {
     @Inject(method = "tick", at = @At("HEAD"))
     private void onTick(CallbackInfo ci) {
         this.foodComponent.tick();
+    }
+
+    /**
+     * Suppresses vanilla hunger/saturation application for foods that Florafare manages.
+     *
+     * PlayerEntity#eatFood applies the vanilla FoodComponent values via HungerManager#eat
+     * BEFORE delegating to super (LivingEntity#eatFood), where {@code LivingEntityEatMixin}
+     * applies our configured nutrition/saturation. Without this redirect both values would be
+     * added, stacking the original hunger on top of ours. When a Florafare config exists we
+     * skip the vanilla call and let our mixin be the single source of truth; otherwise vanilla
+     * behaviour is preserved untouched.
+     */
+    @Redirect(
+            method = "eatFood",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/entity/player/HungerManager;eat(Lnet/minecraft/component/type/FoodComponent;)V"
+            )
+    )
+    private void florafare$skipVanillaHunger(HungerManager hungerManager, FoodComponent food,
+                                             World world, ItemStack stack, FoodComponent foodComponent) {
+        if (FoodBuffManager.getConfig(stack) != null) {
+            return;
+        }
+        hungerManager.eat(food);
     }
 
     /**

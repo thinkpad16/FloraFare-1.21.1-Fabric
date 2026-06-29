@@ -5,7 +5,6 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.component.type.FoodComponent;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.sound.SoundCategory;
-import net.minecraft.stat.Stats;
 import net.minecraft.world.World;
 import net.minecraft.world.event.GameEvent;
 import net.minecraft.registry.Registries;
@@ -67,8 +66,10 @@ public abstract class LivingEntityEatMixin {
                     }
                 }
 
-                // Replicate vanilla consumption side effects (stats, sounds)
-                player.incrementStat(Stats.USED.getOrCreateStat(stack.getItem()));
+                // Replicate the eat sound from the cancelled LivingEntity#eatFood path.
+                // NOTE: the USED stat is intentionally NOT incremented here. PlayerEntity#eatFood
+                // (the override that calls into this method via super) already increments it, and
+                // that code still runs — incrementing it again would double-count consumption.
                 world.playSound(
                         null,
                         player.getX(), player.getY(), player.getZ(),
