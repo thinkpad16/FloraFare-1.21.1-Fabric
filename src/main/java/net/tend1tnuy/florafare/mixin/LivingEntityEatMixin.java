@@ -6,8 +6,6 @@ import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.sound.SoundCategory;
-import net.minecraft.sound.SoundEvents;
-import net.minecraft.stat.Stats;
 import net.minecraft.world.World;
 import net.minecraft.world.event.GameEvent;
 import net.minecraft.registry.Registries;
@@ -59,12 +57,20 @@ public abstract class LivingEntityEatMixin {
                     }
                 }
 
-                player.incrementStat(Stats.USED.getOrCreateStat(stack.getItem()));
-                Criteria.CONSUME_ITEM.trigger(player, stack);
+                // Replicate the eat sound from the cancelled LivingEntity#eatFood path.
+                // NOTE: the USED stat is intentionally NOT incremented here. PlayerEntity#eatFood
+                // (the override that calls into this method via super) already increments it, and
+                // that code still runs — incrementing it again would double-count consumption.
+                world.playSound(
+                        null,
+                        player.getX(), player.getY(), player.getZ(),
+                        player.getEatSound(stack),
+                        SoundCategory.PLAYERS,
+                        1.0F,
+                        1.0F + (world.random.nextFloat() - world.random.nextFloat()) * 0.4F
+                );
 
-                world.playSound(null, player.getX(), player.getY(), player.getZ(), SoundEvents.ENTITY_PLAYER_BURP, SoundCategory.PLAYERS, 0.5F, world.random.nextFloat() * 0.1F + 0.9F);
-                world.playSound(null, player.getX(), player.getY(), player.getZ(), player.getEatSound(stack), SoundCategory.PLAYERS, 1.0F, 1.0F + (world.random.nextFloat() - world.random.nextFloat()) * 0.4F);
-
+                // Handle item stack decrementing AND recipe remainder (e.g., returning wooden bowls)
                 if (!player.getAbilities().creativeMode) {
                     ItemStack remainder = stack.getItem().hasRecipeRemainder() ? new ItemStack(stack.getItem().getRecipeRemainder()) : ItemStack.EMPTY;
                     stack.decrement(1);
