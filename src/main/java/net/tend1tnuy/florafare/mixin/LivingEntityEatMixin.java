@@ -1,8 +1,9 @@
 package net.tend1tnuy.florafare.mixin;
 
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.item.ItemStack;
+import net.minecraft.advancement.criterion.Criteria;
 import net.minecraft.component.type.FoodComponent;
+import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.item.ItemStack;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.sound.SoundCategory;
 import net.minecraft.world.World;
@@ -19,11 +20,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
-/**
- * Intercepts the food consumption logic to apply custom food buffs,
- * unlock journal entries, and handle server logging.
- */
-@Mixin(LivingEntity.class)
+@Mixin(PlayerEntity.class)
 public abstract class LivingEntityEatMixin {
 
     @Inject(method = "eatFood", at = @At("HEAD"), cancellable = true)
@@ -35,28 +32,22 @@ public abstract class LivingEntityEatMixin {
             if (data != null) {
                 PlayerFoodComponent component = ((IFoodComponentProvider) player).florafare$getFoodComponent();
 
-                // Unlock the food entry in the player's journal using the target ID
                 component.unlockFood(data.target());
 
-                // Apply configured nutrition and saturation
                 player.getHungerManager().add(data.nutrition(), data.saturation());
 
-                // Add the configured buff to the player's active slots
                 component.tryAddBuff(stack, data);
 
-                // --- SERVER ADMIN LOGGING SYSTEM ---
                 if (FlorafareConfig.consumptionLogging != FlorafareConfig.LogLevel.NONE) {
                     String playerName = player.getName().getString();
                     String itemId = Registries.ITEM.getId(stack.getItem()).toString();
 
                     if (FlorafareConfig.consumptionLogging == FlorafareConfig.LogLevel.ALL) {
-                        // Level 1: Log absolutely everything (every consumed food with a buff)
                         Florafare.LOGGER.info(
                                 "[Florafare Consume] Player {} consumed {}. Buff: {} | Health: +{} | Saturation: {} | Nutrition: {} | Duration: {}t",
                                 playerName, itemId, data.target(), data.healthBonus(), data.saturation(), data.nutrition(), data.duration()
                         );
                     } else if (FlorafareConfig.consumptionLogging == FlorafareConfig.LogLevel.REDUCED) {
-                        // Level 2: Reduced logging (only track foods that heal to monitor exploits)
                         if (data.healthBonus() > 0) {
                             Florafare.LOGGER.info(
                                     "[Florafare Exploit Tracker] Player {} recovered health (+{}) by consuming {}",
@@ -87,17 +78,16 @@ public abstract class LivingEntityEatMixin {
                     if (!remainder.isEmpty()) {
                         if (stack.isEmpty()) {
                             player.emitGameEvent(GameEvent.EAT);
-                            cir.setReturnValue(remainder); // Return the empty bowl/container instead of the consumed item
+                            cir.setReturnValue(remainder);
                             return;
                         } else if (!player.getInventory().insertStack(remainder)) {
-                            player.dropItem(remainder, false); // Drop it if the inventory is full
+                            player.dropItem(remainder, false);
                         }
                     }
                 }
 
                 player.emitGameEvent(GameEvent.EAT);
 
-                // Cancel vanilla logic execution and return the modified stack
                 cir.setReturnValue(stack);
             }
         }
