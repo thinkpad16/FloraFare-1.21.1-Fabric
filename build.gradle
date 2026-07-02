@@ -7,7 +7,8 @@ version = project.mod_version
 group = project.maven_group
 
 repositories {
-
+	// AppleSkin (optional integration)
+	maven { url "https://maven.ryanliptak.com/" }
 }
 
 fabricApi {
@@ -22,7 +23,11 @@ dependencies {
 	modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
 
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
-	
+
+	// AppleSkin: compiled against for the integration, present at dev runtime for testing.
+	// At distribution time it stays optional — our integration class is only loaded via
+	// AppleSkin's own "appleskin" entrypoint, which only fires when AppleSkin is installed.
+	modImplementation "squeek.appleskin:appleskin-fabric:${project.appleskin_version}"
 }
 
 processResources {

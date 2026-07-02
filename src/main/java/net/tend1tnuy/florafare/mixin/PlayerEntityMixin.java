@@ -41,12 +41,13 @@ public abstract class PlayerEntityMixin implements IFoodComponentProvider {
     /**
      * Suppresses vanilla hunger/saturation application for foods that Florafare manages.
      *
-     * PlayerEntity#eatFood applies the vanilla FoodComponent values via HungerManager#eat
-     * BEFORE delegating to super (LivingEntity#eatFood), where {@code LivingEntityEatMixin}
-     * applies our configured nutrition/saturation. Without this redirect both values would be
-     * added, stacking the original hunger on top of ours. When a Florafare config exists we
-     * skip the vanilla call and let our mixin be the single source of truth; otherwise vanilla
-     * behaviour is preserved untouched.
+     * On the SERVER, {@code PlayerEntityEatMixin} cancels PlayerEntity#eatFood at HEAD and
+     * applies our configured values, so this redirect is never reached there. On the CLIENT,
+     * however, eatFood still runs for local prediction and would apply the vanilla
+     * FoodComponent values, making the hunger bar flicker to the wrong value until the next
+     * server sync. Since the configs are replicated to the client (FoodConfigSyncPayload),
+     * we skip the vanilla call here whenever a Florafare config exists; foods without a
+     * config keep vanilla behaviour untouched.
      */
     @Redirect(
             method = "eatFood",
@@ -57,7 +58,11 @@ public abstract class PlayerEntityMixin implements IFoodComponentProvider {
     )
     private void florafare$skipVanillaHunger(HungerManager hungerManager, FoodComponent food,
                                              World world, ItemStack stack, FoodComponent foodComponent) {
-        if (FoodBuffManager.getConfig(stack) != null) {
+        net.tend1tnuy.florafare.food.FoodBuffData data = FoodBuffManager.getConfig(stack);
+        if (data != null) {
+            // Predict the configured values locally; the authoritative state
+            // still arrives with the next server hunger sync.
+            hungerManager.add(data.nutrition(), data.saturation());
             return;
         }
         hungerManager.eat(food);

@@ -13,12 +13,20 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class ActiveFoodBuff {
+
+    /**
+     * Full description of an applied attribute modifier so it can be removed
+     * on expiry AND reapplied when the player entity is recreated
+     * (e.g., returning from the End).
+     */
+    public record AppliedModifier(Identifier attributeId, double amount, String operation) {}
+
     private final String target;
     private final String consumedItemId;
     private int durationRemaining;
     private int initialDuration;
 
-    private final Map<Identifier, Identifier> appliedModifiers = new HashMap<>();
+    private final Map<Identifier, AppliedModifier> appliedModifiers = new HashMap<>();
 
     public ActiveFoodBuff(String target, String consumedItemId, int durationRemaining, int initialDuration) {
         this.target = target;
@@ -38,11 +46,11 @@ public class ActiveFoodBuff {
         this.initialDuration = newDuration;
     }
 
-    public void addModifierRecord(Identifier modifierId, Identifier attributeId) {
-        this.appliedModifiers.put(modifierId, attributeId);
+    public void addModifierRecord(Identifier modifierId, Identifier attributeId, double amount, String operation) {
+        this.appliedModifiers.put(modifierId, new AppliedModifier(attributeId, amount, operation));
     }
 
-    public Map<Identifier, Identifier> getAppliedModifiers() {
+    public Map<Identifier, AppliedModifier> getAppliedModifiers() {
         return appliedModifiers;
     }
 
@@ -86,10 +94,12 @@ public class ActiveFoodBuff {
         nbt.putInt("InitialDuration", initialDuration);
 
         NbtList modList = new NbtList();
-        appliedModifiers.forEach((modId, attrId) -> {
+        appliedModifiers.forEach((modId, modifier) -> {
             NbtCompound modTag = new NbtCompound();
             modTag.putString("ModId", modId.toString());
-            modTag.putString("AttrId", attrId.toString());
+            modTag.putString("AttrId", modifier.attributeId().toString());
+            modTag.putDouble("Amount", modifier.amount());
+            modTag.putString("Op", modifier.operation());
             modList.add(modTag);
         });
         nbt.put("Modifiers", modList);
@@ -116,7 +126,11 @@ public class ActiveFoodBuff {
                 Identifier attrId = Identifier.tryParse(modTag.getString("AttrId"));
 
                 if (modId != null && attrId != null) {
-                    buff.addModifierRecord(modId, attrId);
+                    // "Amount"/"Op" default to 0.0/"add_value" for records saved by
+                    // older versions that only stored the modifier and attribute ids.
+                    buff.addModifierRecord(modId, attrId,
+                            modTag.getDouble("Amount"),
+                            modTag.contains("Op") ? modTag.getString("Op") : "add_value");
                 }
             }
         }

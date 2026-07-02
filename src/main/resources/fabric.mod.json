@@ -23,6 +23,9 @@
 		],
       "client": [
         "net.tend1tnuy.florafare.FlorafareClient"
+      ],
+      "appleskin": [
+        "net.tend1tnuy.florafare.compat.appleskin.AppleSkinIntegration"
       ]
 	},
 	"mixins": [
@@ -33,5 +36,8 @@
 		"minecraft": "~1.21.1",
 		"java": ">=21",
 		"fabric-api": "*"
+	},
+	"suggests": {
+		"appleskin": "*"
 	}
 }

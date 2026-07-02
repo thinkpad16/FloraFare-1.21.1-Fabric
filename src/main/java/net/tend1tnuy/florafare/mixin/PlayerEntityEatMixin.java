@@ -6,6 +6,8 @@ import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.sound.SoundCategory;
+import net.minecraft.sound.SoundEvents;
+import net.minecraft.stat.Stats;
 import net.minecraft.world.World;
 import net.minecraft.world.event.GameEvent;
 import net.minecraft.registry.Registries;
@@ -20,8 +22,18 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
+/**
+ * Replaces the vanilla food consumption logic for foods managed by Florafare.
+ *
+ * The injection cancels PlayerEntity#eatFood at HEAD, so this mixin must replicate
+ * every side effect of the cancelled vanilla path (PlayerEntity#eatFood and the
+ * LivingEntity#eatFood super call): USED stat, burp sound, CONSUME_ITEM criterion,
+ * FoodComponent status effects, eat sound, stack decrement, container returns
+ * (usingConvertsTo / recipe remainder), and the EAT game event — while substituting
+ * our configured nutrition/saturation for the vanilla hunger application.
+ */
 @Mixin(PlayerEntity.class)
-public abstract class LivingEntityEatMixin {
+public abstract class PlayerEntityEatMixin {
 
     @Inject(method = "eatFood", at = @At("HEAD"), cancellable = true)
     private void onEatFood(World world, ItemStack stack, FoodComponent food, CallbackInfoReturnable<ItemStack> cir) {
@@ -34,6 +46,9 @@ public abstract class LivingEntityEatMixin {
 
                 component.unlockFood(data.target());
 
+                // Apply configured nutrition and saturation instead of the vanilla values.
+                // NOTE: HungerManager#add treats the float as a saturation MODIFIER
+                // (added saturation = nutrition * modifier * 2), matching the datapack semantics.
                 player.getHungerManager().add(data.nutrition(), data.saturation());
 
                 component.tryAddBuff(stack, data);
@@ -57,22 +72,39 @@ public abstract class LivingEntityEatMixin {
                     }
                 }
 
-                // Replicate the eat sound from the cancelled LivingEntity#eatFood path.
-                // NOTE: the USED stat is intentionally NOT incremented here. PlayerEntity#eatFood
-                // (the override that calls into this method via super) already increments it, and
-                // that code still runs — incrementing it again would double-count consumption.
+                // --- Replicate the cancelled PlayerEntity#eatFood side effects ---
+                player.incrementStat(Stats.USED.getOrCreateStat(stack.getItem()));
+                world.playSound(
+                        null,
+                        player.getX(), player.getY(), player.getZ(),
+                        SoundEvents.ENTITY_PLAYER_BURP,
+                        SoundCategory.PLAYERS,
+                        0.5F,
+                        world.random.nextFloat() * 0.1F + 0.9F
+                );
+                Criteria.CONSUME_ITEM.trigger(player, stack);
+
+                // --- Replicate the cancelled LivingEntity#eatFood (super) side effects ---
+                // NOTE: the FoodComponent's own status effects (applyFoodEffects) are
+                // intentionally NOT replicated — for Florafare-managed foods, all effects
+                // are defined exclusively via datapack configs.
                 world.playSound(
                         null,
                         player.getX(), player.getY(), player.getZ(),
                         player.getEatSound(stack),
-                        SoundCategory.PLAYERS,
+                        SoundCategory.NEUTRAL,
                         1.0F,
                         1.0F + (world.random.nextFloat() - world.random.nextFloat()) * 0.4F
                 );
 
-                // Handle item stack decrementing AND recipe remainder (e.g., returning wooden bowls)
+                // Handle stack decrementing and container returns: the FoodComponent's
+                // usingConvertsTo (e.g., stew bowls, honey bottles) or the item's
+                // recipe remainder as a fallback.
                 if (!player.getAbilities().creativeMode) {
-                    ItemStack remainder = stack.getItem().hasRecipeRemainder() ? new ItemStack(stack.getItem().getRecipeRemainder()) : ItemStack.EMPTY;
+                    ItemStack remainder = food.usingConvertsTo().map(ItemStack::copy)
+                            .orElseGet(() -> stack.getItem().hasRecipeRemainder()
+                                    ? new ItemStack(stack.getItem().getRecipeRemainder())
+                                    : ItemStack.EMPTY);
                     stack.decrement(1);
 
                     if (!remainder.isEmpty()) {

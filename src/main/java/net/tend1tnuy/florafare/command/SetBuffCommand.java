@@ -12,7 +12,9 @@ import net.minecraft.command.argument.IdentifierArgumentType;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.NbtComponent;
 import net.minecraft.item.ItemStack;
+import net.minecraft.item.Items;
 import net.minecraft.nbt.NbtCompound;
+import net.minecraft.registry.Registries;
 import net.minecraft.server.command.CommandManager;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
@@ -91,7 +93,7 @@ public class SetBuffCommand {
 
         component.clearAllBuffs();
 
-        context.getSource().sendFeedback(() -> Text.literal("Successfully cleared all Florafare buffs and synergies for " + targetPlayer.getName().getString()), true);
+        context.getSource().sendFeedback(() -> Text.translatable("command.florafare.clear.success", targetPlayer.getName().getString()), true);
         return 1;
     }
 
@@ -102,7 +104,7 @@ public class SetBuffCommand {
         ItemStack stack = source.getPlayer().getMainHandStack();
 
         if (stack.isEmpty()) {
-            source.sendFeedback(() -> Text.literal("You must hold an item in your main hand to apply a buff."), false);
+            source.sendError(Text.translatable("command.florafare.error.empty_hand"));
             return 0;
         }
 
@@ -131,7 +133,7 @@ public class SetBuffCommand {
         FoodBuffManager.setRuntimeStackConfig(uniqueId, data);
         FoodBuffManager.saveRuntimeConfigs();
 
-        source.sendFeedback(() -> Text.literal("Successfully bound dynamic buff to the held item."), true);
+        source.sendFeedback(() -> Text.translatable("command.florafare.setbuff.success"), true);
         return 1;
     }
 
@@ -148,10 +150,25 @@ public class SetBuffCommand {
             PlayerFoodComponent component = ((IFoodComponentProvider) player).florafare$getFoodComponent();
             component.unlockFood(targetId);
 
-            context.getSource().sendFeedback(() -> Text.literal("Successfully granted buff '" + targetId + "' to " + player.getName().getString()), true);
+            // Actually apply the buff (previously this only unlocked the journal entry).
+            // Resolve a display stack for "item:" targets so the HUD shows the right icon.
+            ItemStack displayStack = Items.APPLE.getDefaultStack();
+            if (targetId.startsWith("item:")) {
+                Identifier itemId = Identifier.tryParse(targetId.substring("item:".length()));
+                if (itemId != null && Registries.ITEM.containsId(itemId)) {
+                    displayStack = Registries.ITEM.get(itemId).getDefaultStack();
+                }
+            }
+
+            if (!component.tryAddBuff(displayStack, data)) {
+                context.getSource().sendError(Text.translatable("command.florafare.error.slots_full", player.getName().getString()));
+                return 0;
+            }
+
+            context.getSource().sendFeedback(() -> Text.translatable("command.florafare.buff_give.success", targetId, player.getName().getString()), true);
             return 1;
         } else {
-            context.getSource().sendError(Text.literal("Could not find a registered buff with ID: " + targetId));
+            context.getSource().sendError(Text.translatable("command.florafare.error.buff_not_found", targetId));
             return 0;
         }
     }

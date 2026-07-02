@@ -153,14 +153,46 @@ public class PlayerFoodComponent {
         instance.removeModifier(modifierId);
 
         try {
-            instance.addTemporaryModifier(new EntityAttributeModifier(modifierId, amount, operation));
+            // Persistent (not temporary) so vanilla saves the modifier in the player NBT
+            // and it survives relogging while the buff is still active. Removal on
+            // expiry is handled by removeBuffAttributes via the recorded ids.
+            instance.addPersistentModifier(new EntityAttributeModifier(modifierId, amount, operation));
             Identifier registryId = Registries.ATTRIBUTE.getId(attribute.value());
             if (registryId != null) {
-                buff.addModifierRecord(modifierId, registryId);
+                buff.addModifierRecord(modifierId, registryId, amount, operationToString(operation));
             }
         } catch (Exception e) {
             Florafare.LOGGER.error("Failed to apply attribute modifier: {}", modifierId, e);
         }
+    }
+
+    /**
+     * Reapplies the recorded attribute modifiers of every active buff and synergy.
+     * Needed after the player entity is recreated with the component copied over
+     * (returning from the End), because vanilla only copies BASE attribute values.
+     */
+    public void reapplyAttributes() {
+        if (player.getWorld().isClient) return;
+        for (ActiveFoodBuff buff : activeBuffs) reapplyBuffModifiers(buff);
+        for (ActiveFoodBuff buff : activeSynergies) reapplyBuffModifiers(buff);
+    }
+
+    private void reapplyBuffModifiers(ActiveFoodBuff buff) {
+        buff.getAppliedModifiers().forEach((modId, modifier) -> {
+            // Legacy records (saved before amounts were tracked) have amount 0 — skip them.
+            if (modifier.amount() == 0) return;
+            Registries.ATTRIBUTE.getEntry(modifier.attributeId()).ifPresent(entry -> {
+                EntityAttributeInstance instance = player.getAttributeInstance(entry);
+                if (instance == null) return;
+                instance.removeModifier(modId);
+                try {
+                    instance.addPersistentModifier(new EntityAttributeModifier(
+                            modId, modifier.amount(), mapOperation(modifier.operation())));
+                } catch (Exception e) {
+                    Florafare.LOGGER.error("Failed to reapply attribute modifier: {}", modId, e);
+                }
+            });
+        });
     }
 
     private EntityAttributeModifier.Operation mapOperation(String op) {
@@ -168,6 +200,14 @@ public class PlayerFoodComponent {
             case "add_multiplied_base" -> EntityAttributeModifier.Operation.ADD_MULTIPLIED_BASE;
             case "add_multiplied_total" -> EntityAttributeModifier.Operation.ADD_MULTIPLIED_TOTAL;
             default -> EntityAttributeModifier.Operation.ADD_VALUE;
+        };
+    }
+
+    private static String operationToString(EntityAttributeModifier.Operation operation) {
+        return switch (operation) {
+            case ADD_MULTIPLIED_BASE -> "add_multiplied_base";
+            case ADD_MULTIPLIED_TOTAL -> "add_multiplied_total";
+            default -> "add_value";
         };
     }
 
@@ -303,8 +343,8 @@ public class PlayerFoodComponent {
     }
 
     private void removeBuffAttributes(ActiveFoodBuff buff) {
-        buff.getAppliedModifiers().forEach((modId, attrId) -> {
-            Registries.ATTRIBUTE.getEntry(attrId).ifPresent(entry -> {
+        buff.getAppliedModifiers().forEach((modId, modifier) -> {
+            Registries.ATTRIBUTE.getEntry(modifier.attributeId()).ifPresent(entry -> {
                 EntityAttributeInstance instance = player.getAttributeInstance(entry);
                 if (instance != null) instance.removeModifier(modId);
             });

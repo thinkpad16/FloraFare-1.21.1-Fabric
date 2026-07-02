@@ -10,6 +10,7 @@
   "gui.florafare.journal.title": "Culinary Journal",
   "gui.florafare.journal.progress": "Discovered: %s / %s",
   "gui.florafare.journal.duration": "⏱ Duration: %s",
+  "gui.florafare.journal.duration_dynamic": "Dynamic",
   "gui.florafare.journal.nutrition": "🍖 Nutrition: %s",
   "gui.florafare.journal.saturation": "✨ Saturation: %s",
   "gui.florafare.journal.health": "❤ Health: %s",
@@ -20,6 +21,8 @@
   "command.florafare.setbuff.success": "Unique buff successfully applied to this item!",
   "command.florafare.buff_give.success": "§aBuff %s successfully granted to player %s",
   "command.florafare.error.buff_not_found": "Buff with ID %s not found in the datapack!",
+  "command.florafare.error.slots_full": "%s has no free buff slots!",
+  "command.florafare.clear.success": "Cleared all Florafare buffs and synergies for %s",
 
   "key.florafare.hud_config": "Open HUD Configuration",
   "category.florafare.general": "Florafare Mod",

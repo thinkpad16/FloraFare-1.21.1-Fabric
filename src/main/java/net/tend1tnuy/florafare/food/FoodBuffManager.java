@@ -17,6 +17,7 @@ import net.tend1tnuy.florafare.item.ForgottenMeadItem;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -128,11 +129,18 @@ public class FoodBuffManager {
         int durationTicks = food.nutrition() * AUTO_GEN_DURATION_MULT;
         double healthBonus = food.nutrition() * AUTO_GEN_HEALTH_MULT;
 
+        // FoodComponent#saturation() is the FINAL saturation value (nutrition * modifier * 2),
+        // but FoodBuffData stores a saturation MODIFIER (what HungerManager#add and
+        // FoodComponent.Builder#saturationModifier expect), so convert it back.
+        float saturationModifier = food.nutrition() > 0
+                ? food.saturation() / (food.nutrition() * 2.0f)
+                : 0.0f;
+
         return new FoodBuffData(
                 "item:" + itemId.toString(),
                 durationTicks,
                 food.nutrition(),
-                food.saturation(),
+                saturationModifier,
                 healthBonus,
                 new ArrayList<>(),
                 new ArrayList<>(),
@@ -146,5 +154,35 @@ public class FoodBuffManager {
 
     public static List<FoodBuffData> getAllConfigs() {
         return new ArrayList<>(CONFIGS.values());
+    }
+
+    /**
+     * Serializes the entire resolved config map (keyed by target string) into NBT
+     * for server-to-client synchronization.
+     */
+    public static NbtCompound serializeConfigs() {
+        NbtCompound root = new NbtCompound();
+        for (Map.Entry<String, FoodBuffData> entry : CONFIGS.entrySet()) {
+            root.put(entry.getKey(), entry.getValue().toNbt());
+        }
+        return root;
+    }
+
+    /**
+     * Replaces the client-side config map with data received from the server.
+     * Mirrors {@link #serializeConfigs()} so that {@link #getConfig(ItemStack)}
+     * resolves identically on the client.
+     *
+     * Updates in place (put new entries, then drop stale keys) instead of
+     * clear-then-put, so the integrated server thread never observes a
+     * momentarily empty map in singleplayer.
+     */
+    public static void loadConfigsFromNbt(NbtCompound root) {
+        Map<String, FoodBuffData> incoming = new HashMap<>();
+        for (String key : root.getKeys()) {
+            incoming.put(key, FoodBuffData.fromNbt(root.getCompound(key)));
+        }
+        CONFIGS.putAll(incoming);
+        CONFIGS.keySet().retainAll(incoming.keySet());
     }
 }

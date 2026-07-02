@@ -206,7 +206,8 @@ public class FoodJournalScreen extends Screen {
         detailCurrentPage = 0;
         List<RenderLine> allLines = new ArrayList<>();
 
-        allLines.add(new RenderLine(Text.translatable("gui.florafare.journal.duration", "Динамічний").getString(), 0x222222, 12, 0));
+        allLines.add(new RenderLine(Text.translatable("gui.florafare.journal.duration",
+                Text.translatable("gui.florafare.journal.duration_dynamic").getString()).getString(), 0x222222, 12, 0));
 
         buildCommonDetailLines(allLines, data.healthBonus(), data.attributes(), data.effects());
         paginateLines(allLines, true);
