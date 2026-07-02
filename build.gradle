@@ -9,6 +9,8 @@ group = project.maven_group
 repositories {
 	// AppleSkin (optional integration)
 	maven { url "https://maven.ryanliptak.com/" }
+	// Cloth Config (only needed for the commented-out AppleSkin dev-runtime testing below)
+	maven { url "https://maven.shedaniel.me/" }
 }
 
 fabricApi {
@@ -24,10 +26,14 @@ dependencies {
 
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 
-	// AppleSkin: compiled against for the integration, present at dev runtime for testing.
-	// At distribution time it stays optional — our integration class is only loaded via
-	// AppleSkin's own "appleskin" entrypoint, which only fires when AppleSkin is installed.
-	modImplementation "squeek.appleskin:appleskin-fabric:${project.appleskin_version}"
+	// AppleSkin: compile-only so the dev client doesn't try to load it (it needs
+	// Cloth Config at runtime, which we don't provide). At distribution time it stays
+	// optional — our integration class is only loaded via AppleSkin's own "appleskin"
+	// entrypoint, which only fires when AppleSkin is installed.
+	modCompileOnly "squeek.appleskin:appleskin-fabric:${project.appleskin_version}"
+	// To test the AppleSkin integration in the dev client, uncomment these two lines:
+	//modLocalRuntime "squeek.appleskin:appleskin-fabric:${project.appleskin_version}"
+	//modLocalRuntime "me.shedaniel.cloth:cloth-config-fabric:15.0.140"
 }
 
 processResources {
