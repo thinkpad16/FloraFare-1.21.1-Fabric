@@ -1,9 +1,0 @@
-{
-  "target": "template:default",
-  "duration": 2400,
-  "nutrition": 1,
-  "saturation": 0.1,
-  "health_bonus": 1.0,
-  "effects": [],
-  "attributes": []
-}
