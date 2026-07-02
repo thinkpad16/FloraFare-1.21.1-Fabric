@@ -17,6 +17,7 @@ import net.tend1tnuy.florafare.item.ForgottenMeadItem;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -146,5 +147,35 @@ public class FoodBuffManager {
 
     public static List<FoodBuffData> getAllConfigs() {
         return new ArrayList<>(CONFIGS.values());
+    }
+
+    /**
+     * Serializes the entire resolved config map (keyed by target string) into NBT
+     * for server-to-client synchronization.
+     */
+    public static NbtCompound serializeConfigs() {
+        NbtCompound root = new NbtCompound();
+        for (Map.Entry<String, FoodBuffData> entry : CONFIGS.entrySet()) {
+            root.put(entry.getKey(), entry.getValue().toNbt());
+        }
+        return root;
+    }
+
+    /**
+     * Replaces the client-side config map with data received from the server.
+     * Mirrors {@link #serializeConfigs()} so that {@link #getConfig(ItemStack)}
+     * resolves identically on the client.
+     *
+     * Updates in place (put new entries, then drop stale keys) instead of
+     * clear-then-put, so the integrated server thread never observes a
+     * momentarily empty map in singleplayer.
+     */
+    public static void loadConfigsFromNbt(NbtCompound root) {
+        Map<String, FoodBuffData> incoming = new HashMap<>();
+        for (String key : root.getKeys()) {
+            incoming.put(key, FoodBuffData.fromNbt(root.getCompound(key)));
+        }
+        CONFIGS.putAll(incoming);
+        CONFIGS.keySet().retainAll(incoming.keySet());
     }
 }
