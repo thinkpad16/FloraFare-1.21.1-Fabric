@@ -47,6 +47,13 @@ public class HudConfigScreen extends Screen {
     }
 
     @Override
+    public void removed() {
+        // Persist the HUD settings so they survive game restarts
+        HudConfig.saveToConfig();
+        super.removed();
+    }
+
+    @Override
     public boolean shouldPause() {
         return false;
     }

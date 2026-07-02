@@ -129,11 +129,18 @@ public class FoodBuffManager {
         int durationTicks = food.nutrition() * AUTO_GEN_DURATION_MULT;
         double healthBonus = food.nutrition() * AUTO_GEN_HEALTH_MULT;
 
+        // FoodComponent#saturation() is the FINAL saturation value (nutrition * modifier * 2),
+        // but FoodBuffData stores a saturation MODIFIER (what HungerManager#add and
+        // FoodComponent.Builder#saturationModifier expect), so convert it back.
+        float saturationModifier = food.nutrition() > 0
+                ? food.saturation() / (food.nutrition() * 2.0f)
+                : 0.0f;
+
         return new FoodBuffData(
                 "item:" + itemId.toString(),
                 durationTicks,
                 food.nutrition(),
-                food.saturation(),
+                saturationModifier,
                 healthBonus,
                 new ArrayList<>(),
                 new ArrayList<>(),

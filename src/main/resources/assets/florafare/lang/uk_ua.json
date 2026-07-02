@@ -10,6 +10,7 @@
   "gui.florafare.journal.title": "Кулінарна Книга",
   "gui.florafare.journal.progress": "Відкрито страв: %s / %s",
   "gui.florafare.journal.duration": "⏱ Час дії: %s",
+  "gui.florafare.journal.duration_dynamic": "Динамічний",
   "gui.florafare.journal.nutrition": "🍖 Ситість: %s",
   "gui.florafare.journal.saturation": "✨ Насичення: %s",
   "gui.florafare.journal.health": "❤ Здоров'я: %s",
@@ -20,6 +21,8 @@
   "command.florafare.setbuff.success": "Унікальний бафф успішно застосовано до цього предмета!",
   "command.florafare.buff_give.success": "§aБафф %s успішно видано гравцю %s",
   "command.florafare.error.buff_not_found": "Бафф з ID %s не знайдено у датапаку!",
+  "command.florafare.error.slots_full": "У %s немає вільних слотів для баффів!",
+  "command.florafare.clear.success": "Усі баффи та синергії Florafare для %s очищено",
 
   "key.florafare.hud_config": "Відкрити налаштування HUD",
   "category.florafare.general": "Мод Florafare",

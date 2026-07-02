@@ -28,6 +28,9 @@ public class FlorafareClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        // Restore persisted HUD settings (the config file itself is loaded in the main entrypoint)
+        net.tend1tnuy.florafare.client.HudConfig.loadFromConfig();
+
         KeyBinding hudConfigKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "key.florafare.hud_config",
                 InputUtil.Type.KEYSYM,

@@ -20,6 +20,11 @@ public class FlorafareConfig {
     public static boolean enableSynergies = true;
     public static LogLevel consumptionLogging = LogLevel.ALL; // Default set to ALL
 
+    // Client HUD settings (stored as enum names; parsed by the client HudConfig)
+    public static String hudLayout = "COMPACT";
+    public static String hudIconSize = "LARGE";
+    public static String hudPosition = "BOTTOM_LEFT";
+
     public static void load() {
         if (FILE.exists()) {
             try (FileReader reader = new FileReader(FILE)) {
@@ -29,6 +34,9 @@ public class FlorafareConfig {
                     if (data.consumptionLogging != null) {
                         consumptionLogging = data.consumptionLogging;
                     }
+                    if (data.hudLayout != null) hudLayout = data.hudLayout;
+                    if (data.hudIconSize != null) hudIconSize = data.hudIconSize;
+                    if (data.hudPosition != null) hudPosition = data.hudPosition;
                 }
             } catch (Exception e) {
                 Florafare.LOGGER.error("Failed to load config", e);
@@ -44,6 +52,9 @@ public class FlorafareConfig {
             ConfigData data = new ConfigData();
             data.enableSynergies = enableSynergies;
             data.consumptionLogging = consumptionLogging;
+            data.hudLayout = hudLayout;
+            data.hudIconSize = hudIconSize;
+            data.hudPosition = hudPosition;
             GSON.toJson(data, writer);
         } catch (Exception e) {
             Florafare.LOGGER.error("Failed to save config", e);
@@ -53,5 +64,8 @@ public class FlorafareConfig {
     private static class ConfigData {
         public boolean enableSynergies = true;
         public LogLevel consumptionLogging = LogLevel.ALL;
+        public String hudLayout = "COMPACT";
+        public String hudIconSize = "LARGE";
+        public String hudPosition = "BOTTOM_LEFT";
     }
 }

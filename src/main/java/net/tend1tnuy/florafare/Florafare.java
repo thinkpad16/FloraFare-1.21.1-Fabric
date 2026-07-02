@@ -77,6 +77,9 @@ public class Florafare implements ModInitializer {
 
             if (alive) {
                 newComp.copyFrom(oldComp);
+                // Vanilla only copies BASE attribute values to the new player entity,
+                // so the buff-granted attribute modifiers must be reapplied explicitly.
+                newComp.reapplyAttributes();
             } else {
                 // Ensure journal progress, discovered foods, and secret synergies persist through death
                 newComp.getDiscoveredFoods().addAll(oldComp.getDiscoveredFoods());
