@@ -140,19 +140,23 @@ public class FoodJournalScreen extends Screen {
 
         for (FoodBuffData data : FoodBuffManager.getAllConfigs()) {
             ItemStack displayStack = null;
-            if (data.target().startsWith("item:")) {
-                Identifier id = Identifier.tryParse(data.target().replace("item:", ""));
-                if (id != null && Registries.ITEM.containsId(id)) {
-                    displayStack = Registries.ITEM.get(id).getDefaultStack();
-                }
-            } else if (data.target().startsWith("potion:")) {
-                Identifier id = Identifier.tryParse(data.target().replace("potion:", ""));
+            String target = data.target();
+            // Canonical targets: bare item ids, "#" tag ids, and special prefixes.
+            // Only item and potion targets resolve to a journal icon; tag/namespace/
+            // template targets have no single representative item and are skipped.
+            if (target.startsWith("potion:")) {
+                Identifier id = Identifier.tryParse(target.substring("potion:".length()));
                 if (id != null) {
                     RegistryEntry.Reference<Potion> potionEntry = Registries.POTION.getEntry(id).orElse(null);
                     if (potionEntry != null) {
                         displayStack = new ItemStack(Items.POTION);
                         displayStack.set(DataComponentTypes.POTION_CONTENTS, new PotionContentsComponent(potionEntry));
                     }
+                }
+            } else if (!target.startsWith("#")) {
+                Identifier id = Identifier.tryParse(target);
+                if (id != null && Registries.ITEM.containsId(id)) {
+                    displayStack = Registries.ITEM.get(id).getDefaultStack();
                 }
             }
 
@@ -175,8 +179,9 @@ public class FoodJournalScreen extends Screen {
             if (isUnlocked) unlockedSynergyCount++;
             List<ItemStack> reqStacks = new ArrayList<>();
             for (String req : syn.requirements()) {
-                if (req.startsWith("item:")) {
-                    Identifier id = Identifier.tryParse(req.replace("item:", ""));
+                // Requirements are canonical targets; only bare item ids get an icon.
+                if (!req.startsWith("#")) {
+                    Identifier id = Identifier.tryParse(req);
                     if (id != null && Registries.ITEM.containsId(id)) {
                         reqStacks.add(Registries.ITEM.get(id).getDefaultStack());
                     }

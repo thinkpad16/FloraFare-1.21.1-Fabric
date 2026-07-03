@@ -58,7 +58,9 @@ public class FoodSynergyReloadListener extends JsonDataLoader implements Identif
         List<String> requirements = new ArrayList<>();
         JsonArray reqArray = json.getAsJsonArray("requirements");
         for (JsonElement re : reqArray) {
-            requirements.add(re.getAsString());
+            // Normalize so requirements match the canonical food target keys
+            // (bare item ids / "#" tag ids).
+            requirements.add(FoodBuffManager.normalizeTarget(re.getAsString()));
         }
 
         int duration = json.has("duration") ? json.get("duration").getAsInt() : 2400;

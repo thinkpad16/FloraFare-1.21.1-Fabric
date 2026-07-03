@@ -24,7 +24,6 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
 
     private static final String CONFIG_GEN_KEY = "config_generation";
-    private static final String KEY_TARGET = "target";
     private static final String KEY_DURATION = "duration";
     private static final String KEY_NUTRITION = "nutrition";
     private static final String KEY_SATURATION = "saturation";
@@ -91,8 +90,8 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
                             parseAndRegister(element.getAsJsonObject(), null, id, filePriority);
                         }
                     }
-                    // Legacy: Single item definition in object
-                    else if (obj.has(KEY_TARGET)) {
+                    // Single item definition in object
+                    else if (obj.has(KEY_ID)) {
                         parseAndRegister(obj, id.toString().replace("/", ":"), id, filePriority);
                     }
                 }
@@ -114,15 +113,21 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
      * @param filePriority          The priority defined at the root of the file.
      */
     private void parseAndRegister(JsonObject json, String defaultTargetFallback, Identifier fileId, int filePriority) {
-        if (!json.has(KEY_TARGET) && defaultTargetFallback == null) {
-            Florafare.LOGGER.error("Error in file {}: Missing 'target' field! Buff skipped.", fileId);
+        if (!json.has(KEY_ID) && defaultTargetFallback == null) {
+            Florafare.LOGGER.error("Error in file {}: Missing 'id' field! Buff skipped.", fileId);
             return;
         }
 
-        String target = json.has(KEY_TARGET) ? json.get(KEY_TARGET).getAsString() : "item:" + defaultTargetFallback;
+        // Bare ids target items ("minecraft:bread"), "#"-prefixed ids target tags ("#c:foods").
+        String rawTarget = json.has(KEY_ID) ? json.get(KEY_ID).getAsString() : defaultTargetFallback;
+        String target = FoodBuffManager.normalizeTarget(rawTarget);
 
-        if (target.startsWith("item:")) {
-            Identifier targetId = Identifier.tryParse(target.replace("item:", ""));
+        boolean isPlainItemTarget = !target.startsWith("#")
+                && !target.startsWith("namespace:")
+                && !target.startsWith("template:")
+                && !target.startsWith("potion:");
+        if (isPlainItemTarget) {
+            Identifier targetId = Identifier.tryParse(target);
             if (targetId == null || !net.minecraft.registry.Registries.ITEM.containsId(targetId)) {
                 Florafare.LOGGER.warn("Warning in file {}: Item '{}' does not exist! Buff may never trigger.", fileId, target);
             }

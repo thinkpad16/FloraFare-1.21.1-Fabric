@@ -124,7 +124,8 @@ public class PlayerFoodComponent {
     private void applyBuffEffects(ActiveFoodBuff buff, FoodBuffData data) {
         if (player.getWorld().isClient) return;
 
-        String safeId = buff.getTarget().replace(":", "_");
+        // "#" (tag targets) is not a valid Identifier character.
+        String safeId = buff.getTarget().replace("#", "tag_").replace(":", "_");
 
         if (data.healthBonus() > 0) {
             Identifier id = Identifier.of(Florafare.MOD_ID, "health_" + safeId);
@@ -274,7 +275,10 @@ public class PlayerFoodComponent {
                         changed = true;
                     }
                 } else {
-                    String fallbackIconItem = synergy.requirements().isEmpty() ? "minecraft:apple" : synergy.requirements().get(0).replace("item:", "");
+                    // Requirements are canonical targets: bare item ids or "#" tag ids.
+                    // Tag requirements can't resolve to a single icon, so fall back.
+                    String firstReq = synergy.requirements().isEmpty() ? "minecraft:apple" : synergy.requirements().get(0);
+                    String fallbackIconItem = firstReq.startsWith("#") ? "minecraft:apple" : firstReq;
                     ActiveFoodBuff synergyBuff = new ActiveFoodBuff(synergy.id(), fallbackIconItem, minDuration, minInitial);
 
                     List<FoodBuffData.EffectData> dynamicEffects = new ArrayList<>();

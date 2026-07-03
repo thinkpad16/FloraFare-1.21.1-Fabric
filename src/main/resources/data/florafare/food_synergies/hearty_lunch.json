@@ -1,9 +1,9 @@
 {
   "id": "florafare:hearty_lunch",
   "requirements": [
-    "item:minecraft:baked_potato",
-    "item:minecraft:cooked_beef",
-    "item:minecraft:mushroom_stew"
+    "minecraft:baked_potato",
+    "minecraft:cooked_beef",
+    "minecraft:mushroom_stew"
   ],
   "duration": 4800,
   "health_bonus": 2.0,

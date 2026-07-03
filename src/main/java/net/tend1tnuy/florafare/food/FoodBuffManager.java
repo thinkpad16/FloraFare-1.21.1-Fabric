@@ -40,6 +40,27 @@ public class FoodBuffManager {
         CONFIGS.clear();
     }
 
+    /**
+     * Normalizes a datapack/command target string into the canonical internal form:
+     * bare item ids ("minecraft:bread") and "#"-prefixed tag ids ("#c:foods").
+     * Ids without a namespace get "minecraft:" prepended, and the special prefixes
+     * ("namespace:", "template:", "potion:", "stack:") pass through unchanged.
+     */
+    public static String normalizeTarget(String raw) {
+        if (raw == null) return null;
+        String target = raw.trim();
+        if (target.startsWith("#")) {
+            Identifier tagId = Identifier.tryParse(target.substring(1));
+            return tagId != null ? "#" + tagId : target;
+        }
+        if (target.startsWith("namespace:") || target.startsWith("template:")
+                || target.startsWith("potion:") || target.startsWith("stack:")) {
+            return target;
+        }
+        Identifier id = Identifier.tryParse(target);
+        return id != null ? id.toString() : target;
+    }
+
     public static void putConfig(String target, FoodBuffData data) {
         if (CONFIGS.containsKey(target)) {
             FoodBuffData existing = CONFIGS.get(target);
@@ -104,11 +125,11 @@ public class FoodBuffManager {
 
         Identifier itemId = Registries.ITEM.getId(stack.getItem());
 
-        String itemTarget = "item:" + itemId.toString();
+        String itemTarget = itemId.toString();
         if (CONFIGS.containsKey(itemTarget)) return CONFIGS.get(itemTarget);
 
         for (TagKey<?> tag : stack.streamTags().toList()) {
-            String tagTarget = "tag:" + tag.id().toString();
+            String tagTarget = "#" + tag.id().toString();
             if (CONFIGS.containsKey(tagTarget)) return CONFIGS.get(tagTarget);
         }
 
@@ -137,7 +158,7 @@ public class FoodBuffManager {
                 : 0.0f;
 
         return new FoodBuffData(
-                "item:" + itemId.toString(),
+                itemId.toString(),
                 durationTicks,
                 food.nutrition(),
                 saturationModifier,

@@ -139,7 +139,8 @@ public class SetBuffCommand {
 
     private static int executeBuffGive(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
         ServerPlayerEntity player = EntityArgumentType.getPlayer(context, "player");
-        String targetId = StringArgumentType.getString(context, "targetId");
+        // Normalize (trim, default namespace) so the input matches the registered config keys.
+        String targetId = FoodBuffManager.normalizeTarget(StringArgumentType.getString(context, "targetId"));
 
         FoodBuffData data = FoodBuffManager.getAllConfigs().stream()
                 .filter(config -> config.target().equals(targetId))
@@ -151,10 +152,10 @@ public class SetBuffCommand {
             component.unlockFood(targetId);
 
             // Actually apply the buff (previously this only unlocked the journal entry).
-            // Resolve a display stack for "item:" targets so the HUD shows the right icon.
+            // Resolve a display stack for plain item targets so the HUD shows the right icon.
             ItemStack displayStack = Items.APPLE.getDefaultStack();
-            if (targetId.startsWith("item:")) {
-                Identifier itemId = Identifier.tryParse(targetId.substring("item:".length()));
+            if (!targetId.startsWith("#")) {
+                Identifier itemId = Identifier.tryParse(targetId);
                 if (itemId != null && Registries.ITEM.containsId(itemId)) {
                     displayStack = Registries.ITEM.get(itemId).getDefaultStack();
                 }
