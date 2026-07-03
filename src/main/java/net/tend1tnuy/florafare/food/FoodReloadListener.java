@@ -39,6 +39,9 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
     private static final String KEY_OPERATION = "operation";
     private static final String KEY_PRIORITY = "priority";
 
+    /** Entries whose target belongs to a mod that isn't installed (counted per reload). */
+    private int absentModTargets;
+
     public FoodReloadListener() {
         super(GSON, "food_buffs");
     }
@@ -51,6 +54,7 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
     @Override
     protected void apply(Map<Identifier, JsonElement> prepared, ResourceManager manager, Profiler profiler) {
         FoodBuffManager.clear();
+        absentModTargets = 0;
 
         prepared.forEach((id, jsonElement) -> {
             try {
@@ -102,6 +106,9 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
         });
 
         Florafare.LOGGER.info("Loaded {} food configurations!", FoodBuffManager.getConfigCount());
+        if (absentModTargets > 0) {
+            Florafare.LOGGER.info("{} entries target items from mods that are not installed; they stay inactive until those mods are present.", absentModTargets);
+        }
     }
 
     /**
@@ -128,8 +135,16 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
                 && !target.startsWith("potion:");
         if (isPlainItemTarget) {
             Identifier targetId = Identifier.tryParse(target);
-            if (targetId == null || !net.minecraft.registry.Registries.ITEM.containsId(targetId)) {
-                Florafare.LOGGER.warn("Warning in file {}: Item '{}' does not exist! Buff may never trigger.", fileId, target);
+            if (targetId == null) {
+                Florafare.LOGGER.warn("Warning in file {}: '{}' is not a valid item id! Buff may never trigger.", fileId, target);
+            } else if (!net.minecraft.registry.Registries.ITEM.containsId(targetId)) {
+                if (net.fabricmc.loader.api.FabricLoader.getInstance().isModLoaded(targetId.getNamespace())) {
+                    // The mod is present but the item isn't — almost certainly a typo.
+                    Florafare.LOGGER.warn("Warning in file {}: Item '{}' does not exist! Buff may never trigger.", fileId, target);
+                } else {
+                    // The whole mod is absent; expected for cross-mod packs, so don't spam.
+                    absentModTargets++;
+                }
             }
         }
 

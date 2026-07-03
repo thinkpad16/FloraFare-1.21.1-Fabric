@@ -50,6 +50,13 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 java {
+	// Pin the toolchain so compilation AND the dev client (runClient) use a real
+	// JDK 21 — the version MC 1.21.1 targets — even when the PATH/Gradle JVM is
+	// newer. Java 24+ triggers JNA native-access warnings, sun.misc.Unsafe
+	// deprecation warnings, and LWJGL "Unsupported JNI version" errors.
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(21)
+	}
 
 	withSourcesJar()
 
