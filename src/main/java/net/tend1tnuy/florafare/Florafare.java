@@ -17,6 +17,7 @@ import net.tend1tnuy.florafare.component.IFoodComponentProvider;
 import net.tend1tnuy.florafare.component.PlayerFoodComponent;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
 import net.tend1tnuy.florafare.food.FoodReloadListener;
+import net.tend1tnuy.florafare.food.FoodSynergyManager;
 import net.tend1tnuy.florafare.food.FoodSynergyReloadListener;
 import net.tend1tnuy.florafare.network.*;
 import net.tend1tnuy.registry.ItemRegistry;
@@ -35,6 +36,7 @@ public class Florafare implements ModInitializer {
     public void onInitialize() {
         LOGGER.info("Initializing Florafare!");
 
+        PayloadTypeRegistry.playS2C().register(SynergyConfigSyncPayload.ID, SynergyConfigSyncPayload.CODEC);
 
         net.tend1tnuy.florafare.config.FlorafareConfig.load();
         // Register mod items and data components
@@ -61,9 +63,11 @@ public class Florafare implements ModInitializer {
         // Re-sync food configs to every player whenever datapacks are (re)loaded,
         // so client-side features keep showing the up-to-date nutrition/saturation.
         ServerLifecycleEvents.END_DATA_PACK_RELOAD.register((server, resourceManager, success) -> {
-            FoodConfigSyncPayload payload = new FoodConfigSyncPayload(FoodBuffManager.serializeConfigs());
+            FoodConfigSyncPayload foodPayload = new FoodConfigSyncPayload(FoodBuffManager.serializeConfigs());
+            SynergyConfigSyncPayload synPayload = new SynergyConfigSyncPayload(FoodSynergyManager.serializeSynergies());
             for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
-                ServerPlayNetworking.send(player, payload);
+                ServerPlayNetworking.send(player, foodPayload);
+                ServerPlayNetworking.send(player, synPayload);
             }
         });
 
@@ -92,7 +96,7 @@ public class Florafare implements ModInitializer {
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
             PlayerFoodComponent comp = ((IFoodComponentProvider) handler.player).florafare$getFoodComponent();
             comp.sync();
-
+            ServerPlayNetworking.send(handler.player, new SynergyConfigSyncPayload(FoodSynergyManager.serializeSynergies()));
             // Replicate the resolved food configs so client-side features (food journal,
             // AppleSkin tooltip/HUD) can show Florafare's custom nutrition/saturation.
             ServerPlayNetworking.send(handler.player, new FoodConfigSyncPayload(FoodBuffManager.serializeConfigs()));
