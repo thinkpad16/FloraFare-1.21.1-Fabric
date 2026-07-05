@@ -14,8 +14,10 @@ import net.tend1tnuy.florafare.client.HudConfigScreen;
 import net.tend1tnuy.florafare.client.toast.FoodDiscoveryToast;
 import net.tend1tnuy.florafare.component.IFoodComponentProvider;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
+import net.tend1tnuy.florafare.food.FoodSynergyManager;
 import net.tend1tnuy.florafare.network.FoodBuffSyncPayload;
 import net.tend1tnuy.florafare.network.FoodConfigSyncPayload;
+import net.tend1tnuy.florafare.network.FoodSynergySyncPayload;
 import net.tend1tnuy.florafare.network.FoodUnlockedPayload;
 import net.tend1tnuy.florafare.network.OpenFoodJournalPayload;
 import org.lwjgl.glfw.GLFW;
@@ -55,6 +57,10 @@ public class FlorafareClient implements ClientModInitializer {
 
         ClientPlayNetworking.registerGlobalReceiver(FoodConfigSyncPayload.ID, (payload, context) -> {
             context.client().execute(() -> FoodBuffManager.loadConfigsFromNbt(payload.nbt()));
+        });
+
+        ClientPlayNetworking.registerGlobalReceiver(FoodSynergySyncPayload.ID, (payload, context) -> {
+            context.client().execute(() -> FoodSynergyManager.loadSynergiesFromNbt(payload.nbt()));
         });
 
         ClientPlayNetworking.registerGlobalReceiver(OpenFoodJournalPayload.ID, (payload, context) -> {
