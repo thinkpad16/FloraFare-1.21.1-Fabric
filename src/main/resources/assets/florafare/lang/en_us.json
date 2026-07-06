@@ -44,7 +44,26 @@
   "florafare.attribute.knockback_resistance": "Resistance",
   "florafare.attribute.jump_strength": "Jump Boost",
   "florafare.attribute.attack_speed": "Atk. Speed",
+  "florafare.attribute.ranged_damage": "Ranged Damage",
+  "florafare.attribute.spell_air": "Air Spell Power",
+  "florafare.attribute.spell_arcane": "Arcane Spell Power",
+  "florafare.attribute.spell_earth": "Earth Spell Power",
+  "florafare.attribute.spell_fire": "Fire Spell Power",
+  "florafare.attribute.spell_frost": "Frost Spell Power",
+  "florafare.attribute.spell_haste": "Spell Haste",
+  "florafare.attribute.spell_healing": "Healing Power",
+  "florafare.attribute.spell_lightning": "Lightning Spell Power",
+  "florafare.attribute.spell_nature": "Nature Spell Power",
+  "florafare.attribute.spell_resistance": "Spell Resistance",
+  "florafare.attribute.spell_soul": "Soul Spell Power",
+  "florafare.attribute.spell_healing_taken": "Healing Received",
+  "florafare.attribute.critical_chance": "Crit Chance",
+  "florafare.attribute.critical_damage": "Crit Damage",
 
-  "itemgroup.florafare.florafare_group": "Florafare"
+  "itemgroup.florafare.florafare_group": "Florafare",
 
+  "command.florafare.dumpfoods.success": "Successfully exported %s items to file: ",
+  "command.florafare.dumpfoods.error": "Error writing file: %s",
+  "command.florafare.dumpfoods.hover.open": "Click to open this text file",
+  "command.florafare.dumpfoods.hover.copy": "Click to copy server file path"
 }

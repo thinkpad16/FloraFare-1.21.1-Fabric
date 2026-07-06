@@ -44,7 +44,25 @@
   "florafare.attribute.knockback_resistance": "Стійкість",
   "florafare.attribute.jump_strength": "Сила стрибка",
   "florafare.attribute.attack_speed": "Шв. атаки",
+  "florafare.attribute.ranged_damage": "Шкода з лука",
+  "florafare.attribute.spell_air": "Магія повітря",
+  "florafare.attribute.spell_arcane": "Магія аркани",
+  "florafare.attribute.spell_earth": "Магія землі",
+  "florafare.attribute.spell_fire": "Магія вогню",
+  "florafare.attribute.spell_frost": "Магія льоду",
+  "florafare.attribute.spell_haste": "Прискорення магії",
+  "florafare.attribute.spell_healing": "Сила зцілення",
+  "florafare.attribute.spell_lightning": "Магія блискавки",
+  "florafare.attribute.spell_nature": "Магія природи",
+  "florafare.attribute.spell_resistance": "Опір магії",
+  "florafare.attribute.spell_soul": "Магія душі",
+  "florafare.attribute.spell_healing_taken": "Отримане зцілення",
+  "florafare.attribute.critical_chance": "Шанс криту",
+  "florafare.attribute.critical_damage": "Критична шкода",
+  "itemgroup.florafare.florafare_group": "Florafare",
 
-  "itemgroup.florafare.florafare_group": "Florafare"
-
+  "command.florafare.dumpfoods.success": "Успішно експортовано %s предметів у файл: ",
+  "command.florafare.dumpfoods.error": "Помилка запису файлу: %s",
+  "command.florafare.dumpfoods.hover.open": "Натисніть, щоб відкрити цей текстовий файл",
+  "command.florafare.dumpfoods.hover.copy": "Натисніть, щоб скопіювати шлях до файлу на сервері"
 }

@@ -12,6 +12,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.resource.ResourceType;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.util.Identifier;
+import net.tend1tnuy.florafare.command.DumpFoodsCommand;
 import net.tend1tnuy.florafare.command.SetBuffCommand;
 import net.tend1tnuy.florafare.component.IFoodComponentProvider;
 import net.tend1tnuy.florafare.component.PlayerFoodComponent;
@@ -41,6 +42,8 @@ public class Florafare implements ModInitializer {
         net.tend1tnuy.florafare.config.FlorafareConfig.load();
         // Register mod items and data components
         ItemRegistry.initialize();
+
+        CommandRegistrationCallback.EVENT.register(DumpFoodsCommand::register);
 
         net.tend1tnuy.registry.FlorafareItemGroups.registerItemGroups();
 
