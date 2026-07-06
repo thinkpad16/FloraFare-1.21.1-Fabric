@@ -14,6 +14,7 @@ import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.util.Identifier;
 import net.tend1tnuy.florafare.Florafare;
+import net.tend1tnuy.florafare.config.FlorafareConfig;
 import net.tend1tnuy.florafare.food.FoodBuffData;
 import net.tend1tnuy.florafare.food.FoodSynergyData;
 import net.tend1tnuy.florafare.food.FoodSynergyManager;
@@ -215,7 +216,7 @@ public class PlayerFoodComponent {
     private boolean updateSynergies() {
         if (player.getWorld().isClient) return false;
 
-        if (!net.tend1tnuy.florafare.config.FlorafareConfig.enableSynergies) {
+        if (!FlorafareConfig.enableSynergies) {
             boolean changed = false;
             if (!activeSynergies.isEmpty()) {
                 for (int i = activeSynergies.size() - 1; i >= 0; i--) {
@@ -294,6 +295,8 @@ public class PlayerFoodComponent {
                     applyBuffEffects(synergyBuff, dummyData);
                     activeSynergies.add(synergyBuff);
 
+                    logSynergyActivation(synergy, minDuration);
+
                     if (discoveredSynergies.add(synergy.id())) {
                         if (player instanceof ServerPlayerEntity serverPlayer) {
                             ServerPlayNetworking.send(serverPlayer, new SynergyUnlockedPayload());
@@ -304,6 +307,32 @@ public class PlayerFoodComponent {
             }
         }
         return changed;
+    }
+
+    /**
+     * Logs a newly activated synergy according to the configured consumption log level.
+     * Activations are rare, so REDUCED logs them too (one short line); ALL adds details.
+     */
+    private void logSynergyActivation(FoodSynergyData synergy, int duration) {
+        // The component also ticks client-side in singleplayer; only the server logs.
+        if (player.getWorld().isClient()
+                || FlorafareConfig.consumptionLogging == FlorafareConfig.LogLevel.NONE) {
+            return;
+        }
+
+        String playerName = player.getName().getString();
+        if (FlorafareConfig.consumptionLogging == FlorafareConfig.LogLevel.ALL) {
+            Florafare.LOGGER.info(
+                    "[Florafare Synergy] Player {} activated synergy '{}' (foods: {}) | Health: +{} | Duration: {}t",
+                    playerName, synergy.id(), String.join(", ", synergy.requirements()),
+                    synergy.healthBonus(), duration
+            );
+        } else {
+            Florafare.LOGGER.info(
+                    "[Florafare Synergy] Player {} activated synergy '{}'",
+                    playerName, synergy.id()
+            );
+        }
     }
 
     public void tick() {

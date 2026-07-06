@@ -15,7 +15,11 @@ import net.tend1tnuy.florafare.client.toast.FoodDiscoveryToast;
 import net.tend1tnuy.florafare.component.IFoodComponentProvider;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
 import net.tend1tnuy.florafare.food.FoodSynergyManager;
-import net.tend1tnuy.florafare.network.*;
+import net.tend1tnuy.florafare.network.FoodBuffSyncPayload;
+import net.tend1tnuy.florafare.network.FoodConfigSyncPayload;
+import net.tend1tnuy.florafare.network.FoodSynergySyncPayload;
+import net.tend1tnuy.florafare.network.FoodUnlockedPayload;
+import net.tend1tnuy.florafare.network.OpenFoodJournalPayload;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -55,8 +59,7 @@ public class FlorafareClient implements ClientModInitializer {
             context.client().execute(() -> FoodBuffManager.loadConfigsFromNbt(payload.nbt()));
         });
 
-        // Registration for the synergy config sync payload from the server
-        ClientPlayNetworking.registerGlobalReceiver(SynergyConfigSyncPayload.ID, (payload, context) -> {
+        ClientPlayNetworking.registerGlobalReceiver(FoodSynergySyncPayload.ID, (payload, context) -> {
             context.client().execute(() -> FoodSynergyManager.loadSynergiesFromNbt(payload.nbt()));
         });
 
@@ -67,13 +70,6 @@ public class FlorafareClient implements ClientModInitializer {
         });
 
         ClientPlayNetworking.registerGlobalReceiver(FoodUnlockedPayload.ID, (payload, context) -> {
-            context.client().execute(() -> {
-                context.client().getToastManager().add(new FoodDiscoveryToast());
-            });
-        });
-
-        // Added registration for SynergyUnlockedPayload to trigger the toast notification
-        ClientPlayNetworking.registerGlobalReceiver(SynergyUnlockedPayload.ID, (payload, context) -> {
             context.client().execute(() -> {
                 context.client().getToastManager().add(new FoodDiscoveryToast());
             });

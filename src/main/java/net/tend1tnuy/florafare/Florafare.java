@@ -37,7 +37,6 @@ public class Florafare implements ModInitializer {
     public void onInitialize() {
         LOGGER.info("Initializing Florafare!");
 
-        PayloadTypeRegistry.playS2C().register(SynergyConfigSyncPayload.ID, SynergyConfigSyncPayload.CODEC);
 
         net.tend1tnuy.florafare.config.FlorafareConfig.load();
         // Register mod items and data components
@@ -62,15 +61,16 @@ public class Florafare implements ModInitializer {
         PayloadTypeRegistry.playS2C().register(OpenFoodJournalPayload.ID, OpenFoodJournalPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(SynergyUnlockedPayload.ID, SynergyUnlockedPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(FoodConfigSyncPayload.ID, FoodConfigSyncPayload.CODEC);
+        PayloadTypeRegistry.playS2C().register(FoodSynergySyncPayload.ID, FoodSynergySyncPayload.CODEC);
 
-        // Re-sync food configs to every player whenever datapacks are (re)loaded,
-        // so client-side features keep showing the up-to-date nutrition/saturation.
+        // Re-sync food configs and synergies to every player whenever datapacks are
+        // (re)loaded, so client-side features keep showing up-to-date data.
         ServerLifecycleEvents.END_DATA_PACK_RELOAD.register((server, resourceManager, success) -> {
-            FoodConfigSyncPayload foodPayload = new FoodConfigSyncPayload(FoodBuffManager.serializeConfigs());
-            SynergyConfigSyncPayload synPayload = new SynergyConfigSyncPayload(FoodSynergyManager.serializeSynergies());
+            FoodConfigSyncPayload configPayload = new FoodConfigSyncPayload(FoodBuffManager.serializeConfigs());
+            FoodSynergySyncPayload synergyPayload = new FoodSynergySyncPayload(FoodSynergyManager.serializeSynergies());
             for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
-                ServerPlayNetworking.send(player, foodPayload);
-                ServerPlayNetworking.send(player, synPayload);
+                ServerPlayNetworking.send(player, configPayload);
+                ServerPlayNetworking.send(player, synergyPayload);
             }
         });
 
@@ -99,10 +99,11 @@ public class Florafare implements ModInitializer {
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
             PlayerFoodComponent comp = ((IFoodComponentProvider) handler.player).florafare$getFoodComponent();
             comp.sync();
-            ServerPlayNetworking.send(handler.player, new SynergyConfigSyncPayload(FoodSynergyManager.serializeSynergies()));
-            // Replicate the resolved food configs so client-side features (food journal,
-            // AppleSkin tooltip/HUD) can show Florafare's custom nutrition/saturation.
+
+            // Replicate the resolved food configs and synergies so client-side features
+            // (food journal, HUD, AppleSkin tooltip) can show them on dedicated servers.
             ServerPlayNetworking.send(handler.player, new FoodConfigSyncPayload(FoodBuffManager.serializeConfigs()));
+            ServerPlayNetworking.send(handler.player, new FoodSynergySyncPayload(FoodSynergyManager.serializeSynergies()));
 
             // Grant the culinary journal if the player has not received it yet
             if (!comp.hasReceivedJournal()) {
