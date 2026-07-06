@@ -62,7 +62,6 @@ public class Florafare implements ModInitializer {
         PayloadTypeRegistry.playS2C().register(SynergyUnlockedPayload.ID, SynergyUnlockedPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(FoodConfigSyncPayload.ID, FoodConfigSyncPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(FoodSynergySyncPayload.ID, FoodSynergySyncPayload.CODEC);
-        PayloadTypeRegistry.playS2C().register(SuppressHurtAnimationPayload.ID, SuppressHurtAnimationPayload.CODEC);
 
         // Re-sync food configs and synergies to every player whenever datapacks are
         // (re)loaded, so client-side features keep showing up-to-date data.
