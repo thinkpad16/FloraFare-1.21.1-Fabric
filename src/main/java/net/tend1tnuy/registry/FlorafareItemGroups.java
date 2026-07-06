@@ -9,9 +9,7 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 import net.tend1tnuy.florafare.Florafare;
 
-/**
- * Реєстрація вкладки креативного інвентарю для моду Florafare.
- */
+
 public class FlorafareItemGroups {
 
     public static final ItemGroup FLORAFARE_GROUP = Registry.register(
