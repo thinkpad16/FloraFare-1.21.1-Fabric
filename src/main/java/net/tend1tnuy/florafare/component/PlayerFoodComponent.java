@@ -10,7 +10,9 @@ import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.*;
 import net.minecraft.registry.Registries;
+import net.minecraft.registry.RegistryKeys;
 import net.minecraft.registry.entry.RegistryEntry;
+import net.minecraft.registry.tag.TagKey;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.util.Identifier;
 import net.tend1tnuy.florafare.Florafare;
@@ -213,6 +215,44 @@ public class PlayerFoodComponent {
         };
     }
 
+    /**
+     * Checks whether an active buff satisfies one synergy requirement.
+     * A requirement matches the buff's config target literally, or the item that
+     * was actually eaten: bare-id requirements ("minecraft:cod") match the consumed
+     * item id, and "#" tag requirements ("#minecraft:fishes") match any consumed
+     * item in that tag. Matching the consumed item is what makes tag requirements
+     * work — a fish eaten through its own item config still counts for the tag —
+     * and it also covers buffs from "namespace:"/"template:" configs, whose targets
+     * are not item ids.
+     */
+    private boolean satisfiesRequirement(ActiveFoodBuff buff, String requirement) {
+        if (buff.getTarget().equals(requirement)) return true;
+
+        Identifier consumedId = Identifier.tryParse(buff.getConsumedItemId());
+        if (consumedId == null || !Registries.ITEM.containsId(consumedId)) return false;
+
+        if (requirement.startsWith("#")) {
+            Identifier tagId = Identifier.tryParse(requirement.substring(1));
+            return tagId != null && Registries.ITEM.get(consumedId).getDefaultStack()
+                    .isIn(TagKey.of(RegistryKeys.ITEM, tagId));
+        }
+        return requirement.equals(consumedId.toString());
+    }
+
+    private boolean requirementsMet(List<String> requirements) {
+        for (String req : requirements) {
+            boolean met = false;
+            for (ActiveFoodBuff buff : activeBuffs) {
+                if (satisfiesRequirement(buff, req)) {
+                    met = true;
+                    break;
+                }
+            }
+            if (!met) return false;
+        }
+        return true;
+    }
+
     private boolean updateSynergies() {
         if (player.getWorld().isClient) return false;
 
@@ -228,14 +268,13 @@ public class PlayerFoodComponent {
             return changed;
         }
 
-        List<String> activeTargets = activeBuffs.stream().map(ActiveFoodBuff::getTarget).toList();
         boolean changed = false;
 
         for (int i = activeSynergies.size() - 1; i >= 0; i--) {
             ActiveFoodBuff synergyBuff = activeSynergies.get(i);
             FoodSynergyData synergyData = FoodSynergyManager.getSynergy(synergyBuff.getTarget());
 
-            if (synergyData == null || !activeTargets.containsAll(synergyData.requirements()) || synergyBuff.isExpired()) {
+            if (synergyData == null || !requirementsMet(synergyData.requirements()) || synergyBuff.isExpired()) {
                 removeBuffAttributes(synergyBuff);
                 activeSynergies.remove(i);
                 changed = true;
@@ -243,12 +282,12 @@ public class PlayerFoodComponent {
         }
 
         for (FoodSynergyData synergy : FoodSynergyManager.getAllSynergies()) {
-            if (activeTargets.containsAll(synergy.requirements())) {
+            if (requirementsMet(synergy.requirements())) {
                 int minDuration = Integer.MAX_VALUE;
                 int minInitial = Integer.MAX_VALUE;
                 for (String req : synergy.requirements()) {
                     for (ActiveFoodBuff buff : activeBuffs) {
-                        if (buff.getTarget().equals(req)) {
+                        if (satisfiesRequirement(buff, req)) {
                             if (buff.getDurationRemaining() < minDuration) {
                                 minDuration = buff.getDurationRemaining();
                                 minInitial = buff.getInitialDuration();
@@ -276,11 +315,19 @@ public class PlayerFoodComponent {
                         changed = true;
                     }
                 } else {
-                    // Requirements are canonical targets: bare item ids or "#" tag ids.
-                    // Tag requirements can't resolve to a single icon, so fall back.
-                    String firstReq = synergy.requirements().isEmpty() ? "minecraft:apple" : synergy.requirements().get(0);
-                    String fallbackIconItem = firstReq.startsWith("#") ? "minecraft:apple" : firstReq;
-                    ActiveFoodBuff synergyBuff = new ActiveFoodBuff(synergy.id(), fallbackIconItem, minDuration, minInitial);
+                    // The synergy's HUD icon is the item that actually satisfied the first
+                    // requirement (works for "#" tag requirements too, unlike the raw id).
+                    String iconItem = "minecraft:apple";
+                    if (!synergy.requirements().isEmpty()) {
+                        String firstReq = synergy.requirements().get(0);
+                        for (ActiveFoodBuff buff : activeBuffs) {
+                            if (satisfiesRequirement(buff, firstReq)) {
+                                iconItem = buff.getConsumedItemId();
+                                break;
+                            }
+                        }
+                    }
+                    ActiveFoodBuff synergyBuff = new ActiveFoodBuff(synergy.id(), iconItem, minDuration, minInitial);
 
                     List<FoodBuffData.EffectData> dynamicEffects = new ArrayList<>();
                     for (FoodBuffData.EffectData eff : synergy.effects()) {

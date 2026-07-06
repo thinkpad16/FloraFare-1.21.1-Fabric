@@ -10,11 +10,14 @@ import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.PotionContentsComponent;
 import net.minecraft.potion.Potion;
 import net.minecraft.registry.Registries;
+import net.minecraft.registry.RegistryKeys;
 import net.minecraft.registry.entry.RegistryEntry;
+import net.minecraft.registry.tag.TagKey;
 import net.minecraft.sound.SoundEvents;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.Util;
 import net.minecraft.util.math.MathHelper;
 import net.tend1tnuy.florafare.component.IFoodComponentProvider;
 import net.tend1tnuy.florafare.config.FlorafareConfig;
@@ -177,18 +180,47 @@ public class FoodJournalScreen extends Screen {
         for (FoodSynergyData syn : FoodSynergyManager.getAllSynergies()) {
             boolean isUnlocked = discovered.contains(syn.id());
             if (isUnlocked) unlockedSynergyCount++;
-            List<ItemStack> reqStacks = new ArrayList<>();
+            List<List<ItemStack>> reqStacks = new ArrayList<>();
             for (String req : syn.requirements()) {
-                // Requirements are canonical targets; only bare item ids get an icon.
-                if (!req.startsWith("#")) {
-                    Identifier id = Identifier.tryParse(req);
-                    if (id != null && Registries.ITEM.containsId(id)) {
-                        reqStacks.add(Registries.ITEM.get(id).getDefaultStack());
-                    }
+                List<ItemStack> stacks = resolveRequirementStacks(req);
+                if (!stacks.isEmpty()) {
+                    reqStacks.add(stacks);
                 }
             }
             synergyDisplayItems.add(new SynergyEntry(syn, reqStacks, isUnlocked));
         }
+    }
+
+    /**
+     * Resolves one synergy requirement to its displayable item stacks:
+     * a bare item id gives a single stack, a "#" tag id gives every item in the tag
+     * (rendered as a cycling icon, JEI-style).
+     */
+    private static List<ItemStack> resolveRequirementStacks(String req) {
+        List<ItemStack> stacks = new ArrayList<>();
+        if (req.startsWith("#")) {
+            Identifier tagId = Identifier.tryParse(req.substring(1));
+            if (tagId != null) {
+                for (RegistryEntry<net.minecraft.item.Item> entry
+                        : Registries.ITEM.iterateEntries(TagKey.of(RegistryKeys.ITEM, tagId))) {
+                    stacks.add(entry.value().getDefaultStack());
+                }
+            }
+        } else {
+            Identifier id = Identifier.tryParse(req);
+            if (id != null && Registries.ITEM.containsId(id)) {
+                stacks.add(Registries.ITEM.get(id).getDefaultStack());
+            }
+        }
+        return stacks;
+    }
+
+    /** Picks the stack to show for a requirement, cycling through tag items once per second. */
+    private static ItemStack cycledStack(List<ItemStack> stacks) {
+        if (stacks.isEmpty()) return new ItemStack(Items.APPLE);
+        if (stacks.size() == 1) return stacks.get(0);
+        int index = (int) ((Util.getMeasuringTimeMs() / 1000L) % stacks.size());
+        return stacks.get(index);
     }
 
     private void buildDetailPages(FoodBuffData data) {
@@ -406,7 +438,7 @@ public class FoodJournalScreen extends Screen {
                 entry.hoverScale = MathHelper.lerp(0.25f, entry.hoverScale, isHovered ? 1.25f : 1.0f);
                 scale = entry.hoverScale;
                 isUnlocked = entry.isUnlocked;
-                stackToDraw = entry.reqStacks.isEmpty() ? new ItemStack(Items.APPLE) : entry.reqStacks.get(0);
+                stackToDraw = entry.reqStacks.isEmpty() ? new ItemStack(Items.APPLE) : cycledStack(entry.reqStacks.get(0));
                 if (isHovered) hoveredSynergy = entry;
             } else {
                 FoodEntry entry = displayItems.get(i);
@@ -483,7 +515,7 @@ public class FoodJournalScreen extends Screen {
             int startX = paperLeft + (paperWidth - totalReqWidth) / 2;
 
             for (int i = 0; i < reqCount; i++) {
-                context.drawItem(selectedSynergy.reqStacks.get(i), startX + i * 20, py);
+                context.drawItem(cycledStack(selectedSynergy.reqStacks.get(i)), startX + i * 20, py);
             }
             py += 24;
 
@@ -626,11 +658,12 @@ public class FoodJournalScreen extends Screen {
 
     private static class SynergyEntry {
         final FoodSynergyData data;
-        final List<ItemStack> reqStacks;
+        /** One list per requirement; tag requirements hold every item in the tag. */
+        final List<List<ItemStack>> reqStacks;
         final boolean isUnlocked;
         float hoverScale = 1.0f;
 
-        SynergyEntry(FoodSynergyData data, List<ItemStack> reqStacks, boolean isUnlocked) {
+        SynergyEntry(FoodSynergyData data, List<List<ItemStack>> reqStacks, boolean isUnlocked) {
             this.data = data;
             this.reqStacks = reqStacks;
             this.isUnlocked = isUnlocked;
