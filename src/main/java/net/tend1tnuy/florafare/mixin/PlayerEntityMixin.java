@@ -6,6 +6,7 @@ import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.world.World;
+import net.tend1tnuy.florafare.component.HurtAnimationSuppressor;
 import net.tend1tnuy.florafare.component.IFoodComponentProvider;
 import net.tend1tnuy.florafare.component.PlayerFoodComponent;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
@@ -66,6 +67,21 @@ public abstract class PlayerEntityMixin implements IFoodComponentProvider {
             return;
         }
         hungerManager.eat(food);
+    }
+
+    /**
+     * updateHealth runs on the client when a health packet arrives; a decrease
+     * sets hurtTime, which drives the red flash and camera tilt. When the server
+     * announced that the drop is just a max-health clamp (buff expiry), undo that
+     * so losing bonus hearts doesn't look like taking a hit.
+     */
+    @Inject(method = "updateHealth", at = @At("TAIL"))
+    private void florafare$suppressClampHurtAnimation(float health, CallbackInfo ci) {
+        PlayerEntity self = (PlayerEntity) (Object) this;
+        if (self.getWorld().isClient && self.hurtTime > 0 && HurtAnimationSuppressor.tryConsume()) {
+            self.hurtTime = 0;
+            self.maxHurtTime = 0;
+        }
     }
 
     /**

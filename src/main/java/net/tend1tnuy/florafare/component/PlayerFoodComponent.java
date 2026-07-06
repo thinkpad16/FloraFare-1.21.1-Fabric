@@ -22,6 +22,7 @@ import net.tend1tnuy.florafare.food.FoodSynergyData;
 import net.tend1tnuy.florafare.food.FoodSynergyManager;
 import net.tend1tnuy.florafare.network.FoodBuffSyncPayload;
 import net.tend1tnuy.florafare.network.FoodUnlockedPayload;
+import net.tend1tnuy.florafare.network.SuppressHurtAnimationPayload;
 import net.tend1tnuy.florafare.network.SynergyUnlockedPayload;
 
 import java.util.*;
@@ -145,9 +146,7 @@ public class PlayerFoodComponent {
 
         // A negative max-health modifier can leave current health above the new
         // maximum; vanilla only clamps on the next setHealth call, so do it now.
-        if (player.getHealth() > player.getMaxHealth()) {
-            player.setHealth(player.getMaxHealth());
-        }
+        clampHealthToMax();
 
         for (FoodBuffData.EffectData effect : data.effects()) {
             Registries.STATUS_EFFECT.getEntry(effect.id()).ifPresent(status ->
@@ -428,6 +427,21 @@ public class PlayerFoodComponent {
         }
     }
 
+    /**
+     * Clamps current health down to max health after a max-health drop.
+     * The drop is administrative, not damage, so the client is told first to
+     * skip the hurt flash/camera tilt for the health update that follows
+     * (packets arrive in order, so the flag is always set before the clamp syncs).
+     */
+    private void clampHealthToMax() {
+        if (player.getHealth() <= player.getMaxHealth()) return;
+
+        if (player instanceof ServerPlayerEntity serverPlayer) {
+            ServerPlayNetworking.send(serverPlayer, new SuppressHurtAnimationPayload());
+        }
+        player.setHealth(player.getMaxHealth());
+    }
+
     private void removeBuffAttributes(ActiveFoodBuff buff) {
         buff.getAppliedModifiers().forEach((modId, modifier) -> {
             Registries.ATTRIBUTE.getEntry(modifier.attributeId()).ifPresent(entry -> {
@@ -436,9 +450,7 @@ public class PlayerFoodComponent {
             });
         });
 
-        if (player.getHealth() > player.getMaxHealth()) {
-            player.setHealth(player.getMaxHealth());
-        }
+        clampHealthToMax();
 
         FoodSynergyData synergy = FoodSynergyManager.getSynergy(buff.getTarget());
         if (synergy != null) {
