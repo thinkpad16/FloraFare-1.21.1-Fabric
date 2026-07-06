@@ -128,10 +128,14 @@ public class FoodBuffManager {
         String itemTarget = itemId.toString();
         if (CONFIGS.containsKey(itemTarget)) return CONFIGS.get(itemTarget);
 
+        FoodBuffData bestTagMatch = null;
         for (TagKey<?> tag : stack.streamTags().toList()) {
-            String tagTarget = "#" + tag.id().toString();
-            if (CONFIGS.containsKey(tagTarget)) return CONFIGS.get(tagTarget);
+            FoodBuffData candidate = CONFIGS.get("#" + tag.id().toString());
+            if (candidate != null && isBetterTagMatch(candidate, bestTagMatch)) {
+                bestTagMatch = candidate;
+            }
         }
+        if (bestTagMatch != null) return bestTagMatch;
 
         String nsTarget = "namespace:" + itemId.getNamespace();
         if (CONFIGS.containsKey(nsTarget)) return CONFIGS.get(nsTarget);
@@ -144,6 +148,29 @@ public class FoodBuffManager {
         }
 
         return null;
+    }
+
+    /**
+     * Ranks configured tag entries when an item belongs to several of them
+     * (streamTags() yields tags in arbitrary order, so "first hit wins" is random).
+     * Higher priority wins; on ties the more specific tag does, so
+     * "#c:foods/vegetable" beats "#c:foods" and broad tags act as fallbacks.
+     */
+    private static boolean isBetterTagMatch(FoodBuffData candidate, FoodBuffData current) {
+        if (current == null) return true;
+        if (candidate.priority() != current.priority()) {
+            return candidate.priority() > current.priority();
+        }
+        int candidateDepth = candidate.target().split("/").length;
+        int currentDepth = current.target().split("/").length;
+        if (candidateDepth != currentDepth) {
+            return candidateDepth > currentDepth;
+        }
+        if (candidate.target().length() != current.target().length()) {
+            return candidate.target().length() > current.target().length();
+        }
+        // Identical depth and length: alphabetical order keeps the pick deterministic.
+        return candidate.target().compareTo(current.target()) < 0;
     }
 
     private static FoodBuffData generateFromVanilla(FoodComponent food, Identifier itemId) {
