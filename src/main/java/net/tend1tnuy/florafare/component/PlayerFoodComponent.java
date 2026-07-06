@@ -130,7 +130,7 @@ public class PlayerFoodComponent {
         // "#" (tag targets) is not a valid Identifier character.
         String safeId = buff.getTarget().replace("#", "tag_").replace(":", "_");
 
-        if (data.healthBonus() > 0) {
+        if (data.healthBonus() != 0) {
             Identifier id = Identifier.of(Florafare.MOD_ID, "health_" + safeId);
             applyAttribute(buff, EntityAttributes.GENERIC_MAX_HEALTH, id, data.healthBonus(), EntityAttributeModifier.Operation.ADD_VALUE);
         }
@@ -141,6 +141,12 @@ public class PlayerFoodComponent {
 
             Identifier id = Identifier.of(Florafare.MOD_ID, "attr_" + safeId + "_" + attr.attributeId().getPath());
             applyAttribute(buff, entry.get(), id, attr.amount(), mapOperation(attr.operation()));
+        }
+
+        // A negative max-health modifier can leave current health above the new
+        // maximum; vanilla only clamps on the next setHealth call, so do it now.
+        if (player.getHealth() > player.getMaxHealth()) {
+            player.setHealth(player.getMaxHealth());
         }
 
         for (FoodBuffData.EffectData effect : data.effects()) {
