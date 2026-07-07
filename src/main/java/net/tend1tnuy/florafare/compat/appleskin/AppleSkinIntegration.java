@@ -1,11 +1,18 @@
 package net.tend1tnuy.florafare.compat.appleskin;
 
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.component.type.FoodComponent;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
+import net.minecraft.registry.Registries;
+import net.tend1tnuy.florafare.component.IFoodComponentProvider;
 import net.tend1tnuy.florafare.food.FoodBuffData;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
 import squeek.appleskin.api.AppleSkinApi;
 import squeek.appleskin.api.event.FoodValuesEvent;
+import squeek.appleskin.api.event.TooltipOverlayEvent;
+
+import java.util.Set;
 
 /**
  * AppleSkin compatibility. Registered through AppleSkin's own "appleskin" entrypoint,
@@ -22,6 +29,32 @@ public class AppleSkinIntegration implements AppleSkinApi {
     @Override
     public void registerEvents() {
         FoodValuesEvent.EVENT.register(AppleSkinIntegration::onFoodValues);
+        TooltipOverlayEvent.Pre.EVENT.register(AppleSkinIntegration::onTooltipOverlayPre);
+    }
+
+    /**
+     * Hides AppleSkin's hunger/saturation tooltip icons for Florafare-managed
+     * foods until the player has discovered them (eaten them once) — the same
+     * gating as the food journal, so the values stay a surprise beforehand.
+     * Only fires client-side (tooltip rendering), so the client access is safe.
+     */
+    private static void onTooltipOverlayPre(TooltipOverlayEvent.Pre event) {
+        FoodBuffData data = FoodBuffManager.getConfig(event.itemStack);
+        if (data == null) {
+            return; // not Florafare-managed: leave AppleSkin's default behaviour
+        }
+
+        PlayerEntity player = MinecraftClient.getInstance().player;
+        if (player == null) {
+            return;
+        }
+
+        Set<String> discovered = ((IFoodComponentProvider) player).florafare$getFoodComponent().getDiscoveredFoods();
+        String itemId = Registries.ITEM.getId(event.itemStack.getItem()).toString();
+        // The target check covers discoveries recorded before they were keyed by item id.
+        if (!discovered.contains(itemId) && !discovered.contains(data.target())) {
+            event.isCanceled = true;
+        }
     }
 
     private static void onFoodValues(FoodValuesEvent event) {

@@ -270,7 +270,7 @@ All commands require permission level 2 (op).
 
 ## AppleSkin integration
 
-With AppleSkin installed, hovering a food shows the **configured** nutrition/saturation values (not vanilla ones), so the preview matches what FloraFare will actually apply.
+With AppleSkin installed, hovering a food shows the **configured** nutrition/saturation values (not vanilla ones), so the preview matches what FloraFare will actually apply. The icons only appear once the player has **discovered** the food (eaten it at least once) — before that, its values stay hidden, matching the food journal.
 
 ---
 
