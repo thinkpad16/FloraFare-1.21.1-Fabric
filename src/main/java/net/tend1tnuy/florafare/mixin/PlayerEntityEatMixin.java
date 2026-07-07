@@ -44,7 +44,10 @@ public abstract class PlayerEntityEatMixin {
             if (data != null) {
                 PlayerFoodComponent component = ((IFoodComponentProvider) player).florafare$getFoodComponent();
 
-                component.unlockFood(data.target());
+                // Record the concrete item, not data.target(): tag/namespace/template
+                // targets have no journal entry of their own — the journal lists foods
+                // per item, so each one must be discovered individually.
+                component.unlockFood(Registries.ITEM.getId(stack.getItem()).toString());
 
                 // Apply configured nutrition and saturation instead of the vanilla values.
                 // NOTE: HungerManager#add treats the float as a saturation MODIFIER

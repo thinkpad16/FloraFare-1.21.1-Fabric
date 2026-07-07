@@ -141,33 +141,36 @@ public class FoodJournalScreen extends Screen {
         if (this.client == null || this.client.player == null) return;
         Set<String> discovered = ((IFoodComponentProvider) this.client.player).florafare$getFoodComponent().getDiscoveredFoods();
 
+        // Potion targets never resolve through getConfig(stack), so list them
+        // straight from the configs, keyed (and unlocked) by their target string.
         for (FoodBuffData data : FoodBuffManager.getAllConfigs()) {
-            ItemStack displayStack = null;
             String target = data.target();
-            // Canonical targets: bare item ids, "#" tag ids, and special prefixes.
-            // Only item and potion targets resolve to a journal icon; tag/namespace/
-            // template targets have no single representative item and are skipped.
-            if (target.startsWith("potion:")) {
-                Identifier id = Identifier.tryParse(target.substring("potion:".length()));
-                if (id != null) {
-                    RegistryEntry.Reference<Potion> potionEntry = Registries.POTION.getEntry(id).orElse(null);
-                    if (potionEntry != null) {
-                        displayStack = new ItemStack(Items.POTION);
-                        displayStack.set(DataComponentTypes.POTION_CONTENTS, new PotionContentsComponent(potionEntry));
-                    }
-                }
-            } else if (!target.startsWith("#")) {
-                Identifier id = Identifier.tryParse(target);
-                if (id != null && Registries.ITEM.containsId(id)) {
-                    displayStack = Registries.ITEM.get(id).getDefaultStack();
-                }
-            }
+            if (!target.startsWith("potion:")) continue;
+            Identifier id = Identifier.tryParse(target.substring("potion:".length()));
+            if (id == null) continue;
+            RegistryEntry.Reference<Potion> potionEntry = Registries.POTION.getEntry(id).orElse(null);
+            if (potionEntry == null) continue;
+            ItemStack displayStack = new ItemStack(Items.POTION);
+            displayStack.set(DataComponentTypes.POTION_CONTENTS, new PotionContentsComponent(potionEntry));
+            boolean isUnlocked = discovered.contains(target);
+            if (isUnlocked) unlockedCount++;
+            displayItems.add(new FoodEntry(displayStack, data, isUnlocked));
+        }
 
-            if (displayStack != null) {
-                boolean isUnlocked = discovered.contains(data.target());
-                if (isUnlocked) unlockedCount++;
-                displayItems.add(new FoodEntry(displayStack, data, isUnlocked));
-            }
+        // One entry per concrete item, resolved with the same lookup used when
+        // eating (exact id -> best tag -> namespace -> template -> vanilla
+        // auto-generation), so foods configured via "#tag" or fallback targets
+        // show up individually instead of being skipped.
+        for (net.minecraft.item.Item item : Registries.ITEM) {
+            ItemStack stack = item.getDefaultStack();
+            FoodBuffData data = FoodBuffManager.getConfig(stack);
+            if (data == null || data.target().startsWith("potion:")) continue;
+            String itemId = Registries.ITEM.getId(item).toString();
+            // Discoveries are recorded per item id; the target check keeps foods
+            // unlocked on old saves that recorded the config target instead.
+            boolean isUnlocked = discovered.contains(itemId) || discovered.contains(data.target());
+            if (isUnlocked) unlockedCount++;
+            displayItems.add(new FoodEntry(stack, data, isUnlocked));
         }
     }
 
