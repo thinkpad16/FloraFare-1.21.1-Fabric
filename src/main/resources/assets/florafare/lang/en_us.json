@@ -8,6 +8,7 @@
   "gui.florafare.hud.empty": "",
 
   "gui.florafare.journal.title": "Culinary Journal",
+  "gui.florafare.journal.subtitle": "%s of %s recipes unearthed",
   "gui.florafare.journal.progress": "Discovered: %s / %s",
   "gui.florafare.journal.duration": "⏱ Duration: %s",
   "gui.florafare.journal.duration_dynamic": "Dynamic",
@@ -16,6 +17,13 @@
   "gui.florafare.journal.health": "❤ Health: %s",
   "gui.florafare.journal.attributes_title": "Attributes:",
   "gui.florafare.journal.effects_title": "Effects:",
+  "gui.florafare.journal.tab.foods": "Switch to Dishes",
+  "gui.florafare.journal.tab.foods_short": "Dishes",
+  "gui.florafare.journal.tab.synergies": "Switch to Synergies",
+  "gui.florafare.journal.tab.synergies_short": "Pairings",
+  "gui.florafare.journal.synergies_title": "Secret Combinations",
+
+  "synergy.florafare.florafare.hearty_lunch": "Hearty Lunch",
 
   "command.florafare.error.empty_hand": "You must be holding an item in your main hand!",
   "command.florafare.setbuff.success": "Unique buff successfully applied to this item!",
@@ -30,11 +38,6 @@
   "gui.florafare.hud_config.mode": "Layout style: %s",
   "gui.florafare.hud_config.icons": "Icon scale: %s",
   "gui.florafare.hud_config.position": "Screen edge: %s",
-
-  "gui.florafare.journal.tab.foods": "Switch to Dishes",
-  "gui.florafare.journal.tab.synergies": "Switch to Synergies",
-  "gui.florafare.journal.synergies_title": "Secret Combinations",
-  "synergy.florafare.florafare.hearty_lunch": "Hearty Lunch",
 
   "florafare.attribute.movement_speed": "Speed",
   "florafare.attribute.attack_damage": "Damage",
