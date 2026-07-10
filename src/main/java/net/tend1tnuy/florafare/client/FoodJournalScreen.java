@@ -65,26 +65,26 @@ public class FoodJournalScreen extends Screen {
     private static final int BOOK_CENTER_X_OFFSET   = 93; // half of BOOK_WIDTH
 
     // Detail view offsets
-    private static final int DETAIL_ICON_Y_OFFSET       = 20;
-    private static final int DETAIL_NAME_Y_OFFSET       = 56;
-    private static final int DETAIL_LINES_Y_PAGE0       = 74;
-    private static final int DETAIL_LINES_Y_SUBSEQUENT  = 22;
-    private static final int SYNERGY_LINES_Y_PAGE0      = 64;
-    private static final int PAPER_LEFT_OFFSET          = 36;
-    private static final int PAPER_WIDTH                = 114;
+    private static final int DETAIL_ICON_Y_OFFSET      = 20;
+    private static final int DETAIL_NAME_Y_OFFSET      = 56;
+    private static final int DETAIL_LINES_Y_PAGE0      = 74;
+    private static final int DETAIL_LINES_Y_SUBSEQUENT = 22;
+    private static final int SYNERGY_LINES_Y_PAGE0     = 64;
+    private static final int PAPER_LEFT_OFFSET         = 36;
+    private static final int PAPER_WIDTH               = 114;
 
     // -------------------------------------------------------------------------
     // COLOUR PALETTE
     // -------------------------------------------------------------------------
 
-    private static final int COLOR_INK_DARK      = 0x1A1008;
-    private static final int COLOR_INK_MID       = 0x3B2A14;
-    private static final int COLOR_INK_LIGHT     = 0x5C4A2A;
-    private static final int COLOR_INK_FAINT     = 0x7A6040;
-    private static final int COLOR_GOLD          = 0xAA8800;
-    private static final int COLOR_GOLD_BRIGHT   = 0xFFDD00;
-    private static final int COLOR_RED_DARK      = 0x7A1010;
-    private static final int COLOR_DIVIDER       = 0x55503010;
+    private static final int COLOR_INK_DARK       = 0x1A1008;
+    private static final int COLOR_INK_MID        = 0x3B2A14;
+    private static final int COLOR_INK_LIGHT      = 0x5C4A2A;
+    private static final int COLOR_INK_FAINT      = 0x7A6040;
+    private static final int COLOR_GOLD           = 0xAA8800;
+    private static final int COLOR_GOLD_BRIGHT    = 0xFFDD00;
+    private static final int COLOR_RED_DARK       = 0x7A1010;
+    private static final int COLOR_DIVIDER        = 0x55503010;
     private static final int COLOR_LOCKED_OVERLAY = 0x99000000;
 
     // -------------------------------------------------------------------------
@@ -102,9 +102,9 @@ public class FoodJournalScreen extends Screen {
     private final List<List<RenderLine>> detailPages = new ArrayList<>();
     private int detailCurrentPage = 0;
 
-    private FoodEntry   selectedEntry   = null;
+    private FoodEntry    selectedEntry   = null;
     private SynergyEntry selectedSynergy = null;
-    private FoodEntry   hoveredEntry    = null;
+    private FoodEntry    hoveredEntry    = null;
     private SynergyEntry hoveredSynergy  = null;
     private boolean hoverFoodsIndex     = false;
     private boolean hoverSynergiesIndex = false;
@@ -113,7 +113,7 @@ public class FoodJournalScreen extends Screen {
     private PageTurnWidget previousPageButton;
 
     // -------------------------------------------------------------------------
-    // DATA CACHE  (#7 — avoid re-walking the registry on every screen open)
+    // DATA CACHE
     // -------------------------------------------------------------------------
 
     /**
@@ -140,8 +140,8 @@ public class FoodJournalScreen extends Screen {
     // Convenience accessors into the cache
     private List<FoodEntry>    displayItems        () { return CACHE.foods; }
     private List<SynergyEntry> synergyDisplayItems () { return CACHE.synergies; }
-    private int unlockedCount       () { return CACHE.unlockedFoods; }
-    private int unlockedSynergyCount() { return CACHE.unlockedSynergies; }
+    private int unlockedCount        () { return CACHE.unlockedFoods; }
+    private int unlockedSynergyCount () { return CACHE.unlockedSynergies; }
 
     // -------------------------------------------------------------------------
     // CONSTRUCTOR & INIT
@@ -206,7 +206,7 @@ public class FoodJournalScreen extends Screen {
     }
 
     // -------------------------------------------------------------------------
-    // CACHE POPULATION  (#7)
+    // CACHE POPULATION
     // -------------------------------------------------------------------------
 
     private void rebuildCache() {
@@ -430,21 +430,20 @@ public class FoodJournalScreen extends Screen {
         int bookX = bookX();
         int bookY = bookY();
 
+        // Draw the vanilla book texture — no overlays or vignettes on top of it.
         context.drawTexture(BOOK_TEXTURE, bookX, bookY, 0, 0,
                 BOOK_WIDTH, BOOK_HEIGHT, 256, 256);
 
-        drawBookVignette(context, bookX, bookY);
-
-        hoveredEntry    = null;
-        hoveredSynergy  = null;
+        hoveredEntry        = null;
+        hoveredSynergy      = null;
         hoverFoodsIndex     = false;
         hoverSynergiesIndex = false;
 
         switch (currentState) {
-            case INDEX         -> drawIndexPage(context, mouseX, mouseY, bookX, bookY);
-            case FOOD_GRID     -> drawGridContent(context, mouseX, mouseY, bookX, bookY, false, delta);
-            case SYNERGY_GRID  -> drawGridContent(context, mouseX, mouseY, bookX, bookY, true,  delta);
-            case FOOD_DETAIL   -> drawFoodDetailView(context, bookX, bookY);
+            case INDEX          -> drawIndexPage(context, mouseX, mouseY, bookX, bookY);
+            case FOOD_GRID      -> drawGridContent(context, mouseX, mouseY, bookX, bookY, false, delta);
+            case SYNERGY_GRID   -> drawGridContent(context, mouseX, mouseY, bookX, bookY, true,  delta);
+            case FOOD_DETAIL    -> drawFoodDetailView(context, bookX, bookY);
             case SYNERGY_DETAIL -> drawSynergyDetailView(context, bookX, bookY);
         }
 
@@ -481,23 +480,6 @@ public class FoodJournalScreen extends Screen {
                 }
             }
         }
-    }
-
-    /**
-     * Draws a very faint warm inner shadow around the book's paper area to give
-     * it a slight depth / aged-paper feel without obscuring content.
-     */
-    private void drawBookVignette(DrawContext context, int bookX, int bookY) {
-        int left   = bookX + 18;
-        int top    = bookY + 10;
-        int right  = bookX + BOOK_WIDTH - 18;
-        int bottom = bookY + BOOK_HEIGHT - 14;
-        int shadow = 0x18200800;
-
-        context.fill(left,     top,      right,     top + 3,    shadow);
-        context.fill(left,     bottom - 3, right,   bottom,     shadow);
-        context.fill(left,     top,      left + 3,  bottom,     shadow);
-        context.fill(right - 3, top,    right,      bottom,     shadow);
     }
 
     // -------------------------------------------------------------------------
@@ -607,7 +589,7 @@ public class FoodJournalScreen extends Screen {
     // -------------------------------------------------------------------------
 
     /**
-     * @param delta partial tick — used for frame-rate-independent hover scale lerp (#9).
+     * @param delta partial tick — used for frame-rate-independent hover scale lerp.
      */
     private void drawGridContent(DrawContext context, int mouseX, int mouseY,
                                  int bookX, int bookY, boolean isSynergy, float delta) {
@@ -652,7 +634,7 @@ public class FoodJournalScreen extends Screen {
         int totalItems = isSynergy ? synergyDisplayItems().size() : displayItems().size();
         int endIndex   = Math.min(startIndex + ITEMS_PER_PAGE, totalItems);
 
-        // Frame-rate-independent lerp factor (#9)
+        // Frame-rate-independent lerp factor
         float lerpFactor = 1.0f - (float) Math.pow(0.05, delta);
 
         for (int i = startIndex; i < endIndex; i++) {
@@ -684,8 +666,8 @@ public class FoodJournalScreen extends Screen {
                 SynergyEntry entry = synergyDisplayItems().get(i);
                 entry.hoverScale = MathHelper.lerp(lerpFactor, entry.hoverScale,
                         isHovered ? 1.25f : 1.0f);
-                scale      = entry.hoverScale;
-                isUnlocked = entry.isUnlocked;
+                scale       = entry.hoverScale;
+                isUnlocked  = entry.isUnlocked;
                 stackToDraw = entry.reqStacks.isEmpty()
                         ? new ItemStack(Items.APPLE)
                         : cycledStack(entry.reqStacks.get(0));
@@ -694,8 +676,8 @@ public class FoodJournalScreen extends Screen {
                 FoodEntry entry = displayItems().get(i);
                 entry.hoverScale = MathHelper.lerp(lerpFactor, entry.hoverScale,
                         isHovered ? 1.25f : 1.0f);
-                scale      = entry.hoverScale;
-                isUnlocked = entry.isUnlocked;
+                scale       = entry.hoverScale;
+                isUnlocked  = entry.isUnlocked;
                 stackToDraw = entry.stack;
                 if (isHovered) hoveredEntry = entry;
             }
@@ -743,9 +725,9 @@ public class FoodJournalScreen extends Screen {
             context.drawItem(selectedEntry.stack, 0, 0);
             context.getMatrices().pop();
 
-            int    nameY      = bookY + DETAIL_NAME_Y_OFFSET;
-            String name       = selectedEntry.stack.getName().getString();
-            int    nameWidth  = this.textRenderer.getWidth(name);
+            int    nameY     = bookY + DETAIL_NAME_Y_OFFSET;
+            String name      = selectedEntry.stack.getName().getString();
+            int    nameWidth = this.textRenderer.getWidth(name);
             if (nameWidth > PAPER_WIDTH - 4) {
                 name      = this.textRenderer.trimToWidth(name, PAPER_WIDTH - 14) + "…";
                 nameWidth = this.textRenderer.getWidth(name);
@@ -886,7 +868,6 @@ public class FoodJournalScreen extends Screen {
 
     /**
      * Cycles through a list of ItemStacks once per ~1.2 seconds.
-     * Uses integer division of wall-clock milliseconds divided by 1200 (#8).
      */
     private static ItemStack cycledStack(List<ItemStack> stacks) {
         if (stacks.isEmpty()) return new ItemStack(Items.APPLE);
@@ -1002,9 +983,9 @@ public class FoodJournalScreen extends Screen {
     }
 
     private static class FoodEntry {
-        final ItemStack   stack;
+        final ItemStack    stack;
         final FoodBuffData data;
-        final boolean     isUnlocked;
+        final boolean      isUnlocked;
         float hoverScale = 1.0f;
 
         FoodEntry(ItemStack stack, FoodBuffData data, boolean isUnlocked) {
@@ -1015,9 +996,9 @@ public class FoodJournalScreen extends Screen {
     }
 
     private static class SynergyEntry {
-        final FoodSynergyData      data;
+        final FoodSynergyData       data;
         final List<List<ItemStack>> reqStacks;
-        final boolean              isUnlocked;
+        final boolean               isUnlocked;
         float hoverScale = 1.0f;
 
         SynergyEntry(FoodSynergyData data, List<List<ItemStack>> reqStacks, boolean isUnlocked) {
