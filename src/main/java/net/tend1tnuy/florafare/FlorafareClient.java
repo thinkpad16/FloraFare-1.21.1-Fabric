@@ -30,7 +30,7 @@ public class FlorafareClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        // Restore persisted HUD settings (the config file itself is loaded in the main entrypoint)
+        // Restore persisted HUD settings.
         net.tend1tnuy.florafare.client.HudConfig.loadFromConfig();
 
         KeyBinding hudConfigKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
@@ -46,34 +46,41 @@ public class FlorafareClient implements ClientModInitializer {
             }
         });
 
-        ClientPlayNetworking.registerGlobalReceiver(FoodBuffSyncPayload.ID, (payload, context) -> {
-            context.client().execute(() -> {
-                ClientPlayerEntity player = context.player();
-                if (player != null) {
-                    ((IFoodComponentProvider) player).florafare$getFoodComponent().readFromNbt(payload.nbt());
-                }
-            });
-        });
+        ClientPlayNetworking.registerGlobalReceiver(FoodBuffSyncPayload.ID, (payload, context) ->
+                context.client().execute(() -> {
+                    ClientPlayerEntity player = context.player();
+                    if (player != null) {
+                        ((IFoodComponentProvider) player)
+                                .florafare$getFoodComponent().readFromNbt(payload.nbt());
+                    }
+                }));
 
-        ClientPlayNetworking.registerGlobalReceiver(FoodConfigSyncPayload.ID, (payload, context) -> {
-            context.client().execute(() -> FoodBuffManager.loadConfigsFromNbt(payload.nbt()));
-        });
+        ClientPlayNetworking.registerGlobalReceiver(FoodConfigSyncPayload.ID, (payload, context) ->
+                context.client().execute(() -> {
+                    FoodBuffManager.loadConfigsFromNbt(payload.nbt());
+                    // Invalidate the journal cache so the next screen open re-reads
+                    // the updated configs (#7).
+                    FoodJournalScreen.invalidateCache();
+                }));
 
-        ClientPlayNetworking.registerGlobalReceiver(FoodSynergySyncPayload.ID, (payload, context) -> {
-            context.client().execute(() -> FoodSynergyManager.loadSynergiesFromNbt(payload.nbt()));
-        });
+        ClientPlayNetworking.registerGlobalReceiver(FoodSynergySyncPayload.ID, (payload, context) ->
+                context.client().execute(() -> {
+                    FoodSynergyManager.loadSynergiesFromNbt(payload.nbt());
+                    // Invalidate the journal cache so synergy data is also refreshed (#7).
+                    FoodJournalScreen.invalidateCache();
+                }));
 
-        ClientPlayNetworking.registerGlobalReceiver(OpenFoodJournalPayload.ID, (payload, context) -> {
-            context.client().execute(() -> {
-                context.client().setScreen(new FoodJournalScreen());
-            });
-        });
+        ClientPlayNetworking.registerGlobalReceiver(OpenFoodJournalPayload.ID, (payload, context) ->
+                context.client().execute(() ->
+                        context.client().setScreen(new FoodJournalScreen())));
 
-        ClientPlayNetworking.registerGlobalReceiver(FoodUnlockedPayload.ID, (payload, context) -> {
-            context.client().execute(() -> {
-                context.client().getToastManager().add(new FoodDiscoveryToast());
-            });
-        });
+        ClientPlayNetworking.registerGlobalReceiver(FoodUnlockedPayload.ID, (payload, context) ->
+                context.client().execute(() -> {
+                    // A new food was discovered — invalidate the cache so the journal
+                    // shows the updated unlock state on next open (#7).
+                    FoodJournalScreen.invalidateCache();
+                    context.client().getToastManager().add(new FoodDiscoveryToast());
+                }));
 
         HudRenderCallback.EVENT.register(new FlorafareHud());
     }

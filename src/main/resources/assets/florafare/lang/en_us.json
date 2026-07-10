@@ -67,6 +67,5 @@
 
   "command.florafare.dumpfoods.success": "Successfully exported %s items to file: ",
   "command.florafare.dumpfoods.error": "Error writing file: %s",
-  "command.florafare.dumpfoods.hover.open": "Click to open this text file",
   "command.florafare.dumpfoods.hover.copy": "Click to copy server file path"
 }

@@ -29,42 +29,59 @@ import java.util.*;
 public class PlayerFoodComponent {
 
     public static final int MAX_BUFF_SLOTS = 3;
-    private static final String NBT_DISCOVERED_LEGENDARIES_KEY = "FlorafareDiscoveredLegendaries";
-    private final Set<String> discoveredLegendaries = new HashSet<>();
-    public Set<String> getDiscoveredLegendaries() { return discoveredLegendaries; }
-    private static final String NBT_BUFFS_KEY = "FlorafareActiveBuffs";
-    private static final String NBT_DISCOVERED_KEY = "FlorafareDiscoveredFoods";
-    private static final String NBT_JOURNAL_KEY = "FlorafareReceivedJournal";
+
+    private static final String NBT_BUFFS_KEY               = "FlorafareActiveBuffs";
+    private static final String NBT_DISCOVERED_KEY          = "FlorafareDiscoveredFoods";
+    private static final String NBT_JOURNAL_KEY             = "FlorafareReceivedJournal";
     private static final String NBT_DISCOVERED_SYNERGIES_KEY = "FlorafareDiscoveredSynergies";
-    private static final String NBT_ACTIVE_SYNERGIES_KEY = "FlorafareActiveSynergies";
+    private static final String NBT_ACTIVE_SYNERGIES_KEY    = "FlorafareActiveSynergies";
 
     private final PlayerEntity player;
-    private final List<ActiveFoodBuff> activeBuffs = new ArrayList<>();
-    private final Set<String> discoveredFoods = new HashSet<>();
+    private final List<ActiveFoodBuff> activeBuffs    = new ArrayList<>();
+    private final Set<String>          discoveredFoods = new HashSet<>();
     private boolean hasReceivedJournal = false;
 
-    private final Set<String> discoveredSynergies = new HashSet<>();
-    private final List<ActiveFoodBuff> activeSynergies = new ArrayList<>();
+    private final Set<String>          discoveredSynergies = new HashSet<>();
+    private final List<ActiveFoodBuff> activeSynergies     = new ArrayList<>();
+
+    // #11 — Map keyed by synergy id for O(1) "is this synergy already active?" lookup.
+    private final Map<String, ActiveFoodBuff> activeSynergyMap = new HashMap<>();
+
+    // #15 — Dirty flag: only rebuild NBT when state has actually changed.
+    private boolean dirty = false;
 
     public PlayerFoodComponent(PlayerEntity player) {
         this.player = player;
     }
 
-    public boolean hasReceivedJournal() { return hasReceivedJournal; }
-    public void setHasReceivedJournal(boolean value) { this.hasReceivedJournal = value; }
-    public Set<String> getDiscoveredFoods() { return discoveredFoods; }
-    public Set<String> getDiscoveredSynergies() { return discoveredSynergies; }
-    public List<ActiveFoodBuff> getActiveBuffs() { return activeBuffs; }
-    public List<ActiveFoodBuff> getActiveSynergies() { return activeSynergies; }
+    // -------------------------------------------------------------------------
+    // ACCESSORS
+    // -------------------------------------------------------------------------
+
+    public boolean hasReceivedJournal()              { return hasReceivedJournal; }
+    public void    setHasReceivedJournal(boolean v)  { this.hasReceivedJournal = v; }
+    public Set<String>          getDiscoveredFoods()      { return discoveredFoods; }
+    public Set<String>          getDiscoveredSynergies()  { return discoveredSynergies; }
+    public List<ActiveFoodBuff> getActiveBuffs()          { return activeBuffs; }
+    public List<ActiveFoodBuff> getActiveSynergies()      { return activeSynergies; }
+
+    // -------------------------------------------------------------------------
+    // FOOD DISCOVERY
+    // -------------------------------------------------------------------------
 
     public boolean unlockFood(String itemId) {
         if (!discoveredFoods.add(itemId)) return false;
-        sync();
+        dirty = true;
+        syncIfDirty();
         if (player instanceof ServerPlayerEntity serverPlayer) {
             ServerPlayNetworking.send(serverPlayer, new FoodUnlockedPayload());
         }
         return true;
     }
+
+    // -------------------------------------------------------------------------
+    // BUFF MANAGEMENT
+    // -------------------------------------------------------------------------
 
     public boolean tryAddBuff(ItemStack stack, FoodBuffData data) {
         String itemId = Registries.ITEM.getId(stack.getItem()).toString();
@@ -77,17 +94,20 @@ public class PlayerFoodComponent {
             buff.resetDuration(data.duration());
             applyBuffEffects(buff, data);
             if (!player.getWorld().isClient) updateSynergies();
-            sync();
+            dirty = true;
+            syncIfDirty();
             return true;
         }
 
         if (activeBuffs.size() >= MAX_BUFF_SLOTS) return false;
 
-        ActiveFoodBuff buff = new ActiveFoodBuff(data.target(), itemId, data.duration(), data.duration());
+        ActiveFoodBuff buff = new ActiveFoodBuff(
+                data.target(), itemId, data.duration(), data.duration());
         applyBuffEffects(buff, data);
         activeBuffs.add(buff);
         if (!player.getWorld().isClient) updateSynergies();
-        sync();
+        dirty = true;
+        syncIfDirty();
         return true;
     }
 
@@ -95,11 +115,9 @@ public class PlayerFoodComponent {
         if (activeBuffs.isEmpty()) return false;
         ActiveFoodBuff buff = activeBuffs.remove(activeBuffs.size() - 1);
         removeBuffAttributes(buff);
-
-        if (!player.getWorld().isClient) {
-            updateSynergies();
-        }
-        sync();
+        if (!player.getWorld().isClient) updateSynergies();
+        dirty = true;
+        syncIfDirty();
         return true;
     }
 
@@ -118,58 +136,68 @@ public class PlayerFoodComponent {
             activeSynergies.remove(i);
             changed = true;
         }
+        activeSynergyMap.clear();
 
         if (changed) {
-            sync();
+            dirty = true;
+            syncIfDirty();
         }
     }
+
+    // -------------------------------------------------------------------------
+    // ATTRIBUTE / EFFECT APPLICATION
+    // -------------------------------------------------------------------------
 
     private void applyBuffEffects(ActiveFoodBuff buff, FoodBuffData data) {
         if (player.getWorld().isClient) return;
 
-        // "#" (tag targets) is not a valid Identifier character.
+        // "#" is not a valid Identifier character — sanitize the target for use as a modifier id.
         String safeId = buff.getTarget().replace("#", "tag_").replace(":", "_");
 
         if (data.healthBonus() != 0) {
             Identifier id = Identifier.of(Florafare.MOD_ID, "health_" + safeId);
-            applyAttribute(buff, EntityAttributes.GENERIC_MAX_HEALTH, id, data.healthBonus(), EntityAttributeModifier.Operation.ADD_VALUE);
+            applyAttribute(buff, EntityAttributes.GENERIC_MAX_HEALTH, id,
+                    data.healthBonus(), EntityAttributeModifier.Operation.ADD_VALUE);
         }
 
         for (FoodBuffData.AttributeData attr : data.attributes()) {
-            Optional<RegistryEntry.Reference<EntityAttribute>> entry = Registries.ATTRIBUTE.getEntry(attr.attributeId());
+            Optional<RegistryEntry.Reference<net.minecraft.entity.attribute.EntityAttribute>> entry =
+                    Registries.ATTRIBUTE.getEntry(attr.attributeId());
             if (entry.isEmpty()) continue;
 
-            Identifier id = Identifier.of(Florafare.MOD_ID, "attr_" + safeId + "_" + attr.attributeId().getPath());
+            Identifier id = Identifier.of(Florafare.MOD_ID,
+                    "attr_" + safeId + "_" + attr.attributeId().getPath());
             applyAttribute(buff, entry.get(), id, attr.amount(), mapOperation(attr.operation()));
         }
 
-        // A negative max-health modifier can leave current health above the new
-        // maximum; vanilla only clamps on the next setHealth call, so do it now.
+        // A negative max-health modifier can leave current health above the new maximum.
         if (player.getHealth() > player.getMaxHealth()) {
             player.setHealth(player.getMaxHealth());
         }
 
         for (FoodBuffData.EffectData effect : data.effects()) {
             Registries.STATUS_EFFECT.getEntry(effect.id()).ifPresent(status ->
-                    player.addStatusEffect(new StatusEffectInstance(status, effect.duration(), effect.amplifier()))
+                    player.addStatusEffect(
+                            new StatusEffectInstance(status, effect.duration(), effect.amplifier()))
             );
         }
     }
 
-    private void applyAttribute(ActiveFoodBuff buff, RegistryEntry<EntityAttribute> attribute, Identifier modifierId, double amount, EntityAttributeModifier.Operation operation) {
+    private void applyAttribute(ActiveFoodBuff buff,
+                                RegistryEntry<net.minecraft.entity.attribute.EntityAttribute> attribute,
+                                Identifier modifierId, double amount,
+                                EntityAttributeModifier.Operation operation) {
         EntityAttributeInstance instance = player.getAttributeInstance(attribute);
         if (instance == null) return;
 
         instance.removeModifier(modifierId);
-
         try {
-            // Persistent (not temporary) so vanilla saves the modifier in the player NBT
-            // and it survives relogging while the buff is still active. Removal on
-            // expiry is handled by removeBuffAttributes via the recorded ids.
-            instance.addPersistentModifier(new EntityAttributeModifier(modifierId, amount, operation));
+            instance.addPersistentModifier(
+                    new EntityAttributeModifier(modifierId, amount, operation));
             Identifier registryId = Registries.ATTRIBUTE.getId(attribute.value());
             if (registryId != null) {
-                buff.addModifierRecord(modifierId, registryId, amount, operationToString(operation));
+                buff.addModifierRecord(modifierId, registryId, amount,
+                        operationToString(operation));
             }
         } catch (Exception e) {
             Florafare.LOGGER.error("Failed to apply attribute modifier: {}", modifierId, e);
@@ -178,18 +206,17 @@ public class PlayerFoodComponent {
 
     /**
      * Reapplies the recorded attribute modifiers of every active buff and synergy.
-     * Needed after the player entity is recreated with the component copied over
-     * (returning from the End), because vanilla only copies BASE attribute values.
+     * Needed after the player entity is recreated (returning from the End), because
+     * vanilla only copies BASE attribute values.
      */
     public void reapplyAttributes() {
         if (player.getWorld().isClient) return;
-        for (ActiveFoodBuff buff : activeBuffs) reapplyBuffModifiers(buff);
+        for (ActiveFoodBuff buff : activeBuffs)    reapplyBuffModifiers(buff);
         for (ActiveFoodBuff buff : activeSynergies) reapplyBuffModifiers(buff);
     }
 
     private void reapplyBuffModifiers(ActiveFoodBuff buff) {
         buff.getAppliedModifiers().forEach((modId, modifier) -> {
-            // Legacy records (saved before amounts were tracked) have amount 0 — skip them.
             if (modifier.amount() == 0) return;
             Registries.ATTRIBUTE.getEntry(modifier.attributeId()).ifPresent(entry -> {
                 EntityAttributeInstance instance = player.getAttributeInstance(entry);
@@ -207,29 +234,27 @@ public class PlayerFoodComponent {
 
     private EntityAttributeModifier.Operation mapOperation(String op) {
         return switch (op.toLowerCase()) {
-            case "add_multiplied_base" -> EntityAttributeModifier.Operation.ADD_MULTIPLIED_BASE;
+            case "add_multiplied_base"  -> EntityAttributeModifier.Operation.ADD_MULTIPLIED_BASE;
             case "add_multiplied_total" -> EntityAttributeModifier.Operation.ADD_MULTIPLIED_TOTAL;
-            default -> EntityAttributeModifier.Operation.ADD_VALUE;
+            default                     -> EntityAttributeModifier.Operation.ADD_VALUE;
         };
     }
 
     private static String operationToString(EntityAttributeModifier.Operation operation) {
         return switch (operation) {
-            case ADD_MULTIPLIED_BASE -> "add_multiplied_base";
+            case ADD_MULTIPLIED_BASE  -> "add_multiplied_base";
             case ADD_MULTIPLIED_TOTAL -> "add_multiplied_total";
-            default -> "add_value";
+            default                   -> "add_value";
         };
     }
 
+    // -------------------------------------------------------------------------
+    // SYNERGY EVALUATION  (#11 — O(1) map lookup instead of linear stream scan)
+    // -------------------------------------------------------------------------
+
     /**
-     * Checks whether an active buff satisfies one synergy requirement.
-     * A requirement matches the buff's config target literally, or the item that
-     * was actually eaten: bare-id requirements ("minecraft:cod") match the consumed
-     * item id, and "#" tag requirements ("#minecraft:fishes") match any consumed
-     * item in that tag. Matching the consumed item is what makes tag requirements
-     * work — a fish eaten through its own item config still counts for the tag —
-     * and it also covers buffs from "namespace:"/"template:" configs, whose targets
-     * are not item ids.
+     * Returns true if {@code buff} satisfies the given synergy requirement string.
+     * Supports bare item-id requirements and "#"-prefixed tag requirements.
      */
     private boolean satisfiesRequirement(ActiveFoodBuff buff, String requirement) {
         if (buff.getTarget().equals(requirement)) return true;
@@ -249,10 +274,7 @@ public class PlayerFoodComponent {
         for (String req : requirements) {
             boolean met = false;
             for (ActiveFoodBuff buff : activeBuffs) {
-                if (satisfiesRequirement(buff, req)) {
-                    met = true;
-                    break;
-                }
+                if (satisfiesRequirement(buff, req)) { met = true; break; }
             }
             if (!met) return false;
         }
@@ -263,145 +285,145 @@ public class PlayerFoodComponent {
         if (player.getWorld().isClient) return false;
 
         if (!FlorafareConfig.enableSynergies) {
-            boolean changed = false;
-            if (!activeSynergies.isEmpty()) {
+            boolean changed = !activeSynergies.isEmpty();
+            if (changed) {
                 for (int i = activeSynergies.size() - 1; i >= 0; i--) {
                     removeBuffAttributes(activeSynergies.get(i));
                 }
                 activeSynergies.clear();
-                changed = true;
+                activeSynergyMap.clear();
             }
             return changed;
         }
 
         boolean changed = false;
 
+        // Remove synergies whose requirements are no longer met or that have expired.
         for (int i = activeSynergies.size() - 1; i >= 0; i--) {
             ActiveFoodBuff synergyBuff = activeSynergies.get(i);
             FoodSynergyData synergyData = FoodSynergyManager.getSynergy(synergyBuff.getTarget());
 
-            if (synergyData == null || !requirementsMet(synergyData.requirements()) || synergyBuff.isExpired()) {
+            if (synergyData == null
+                    || !requirementsMet(synergyData.requirements())
+                    || synergyBuff.isExpired()) {
                 removeBuffAttributes(synergyBuff);
                 activeSynergies.remove(i);
+                activeSynergyMap.remove(synergyBuff.getTarget()); // #11
                 changed = true;
             }
         }
 
+        // Add or refresh synergies whose requirements are now met.
         for (FoodSynergyData synergy : FoodSynergyManager.getAllSynergies()) {
-            if (requirementsMet(synergy.requirements())) {
-                int minDuration = Integer.MAX_VALUE;
-                int minInitial = Integer.MAX_VALUE;
-                for (String req : synergy.requirements()) {
+            if (!requirementsMet(synergy.requirements())) continue;
+
+            // Synergy duration mirrors the shortest remaining buff among its requirements.
+            int minDuration = Integer.MAX_VALUE;
+            int minInitial  = Integer.MAX_VALUE;
+            for (String req : synergy.requirements()) {
+                for (ActiveFoodBuff buff : activeBuffs) {
+                    if (satisfiesRequirement(buff, req)) {
+                        if (buff.getDurationRemaining() < minDuration) {
+                            minDuration = buff.getDurationRemaining();
+                            minInitial  = buff.getInitialDuration();
+                        }
+                        break;
+                    }
+                }
+            }
+
+            // #11 — O(1) lookup via map instead of stream().filter()
+            ActiveFoodBuff existing = activeSynergyMap.get(synergy.id());
+
+            if (existing != null) {
+                if (Math.abs(existing.getDurationRemaining() - minDuration) > 10) {
+                    existing.resetDuration(minDuration);
+                    final int finalMin = minDuration;
+                    for (FoodBuffData.EffectData eff : synergy.effects()) {
+                        Registries.STATUS_EFFECT.getEntry(eff.id()).ifPresent(status ->
+                                player.addStatusEffect(new StatusEffectInstance(
+                                        status, finalMin, eff.amplifier()))
+                        );
+                    }
+                    changed = true;
+                }
+            } else {
+                // Determine the HUD icon item from the first satisfied requirement.
+                String iconItem = "minecraft:apple";
+                if (!synergy.requirements().isEmpty()) {
+                    String firstReq = synergy.requirements().get(0);
                     for (ActiveFoodBuff buff : activeBuffs) {
-                        if (satisfiesRequirement(buff, req)) {
-                            if (buff.getDurationRemaining() < minDuration) {
-                                minDuration = buff.getDurationRemaining();
-                                minInitial = buff.getInitialDuration();
-                            }
+                        if (satisfiesRequirement(buff, firstReq)) {
+                            iconItem = buff.getConsumedItemId();
                             break;
                         }
                     }
                 }
 
-                Optional<ActiveFoodBuff> existing = activeSynergies.stream()
-                        .filter(b -> b.getTarget().equals(synergy.id()))
-                        .findFirst();
+                ActiveFoodBuff synergyBuff = new ActiveFoodBuff(
+                        synergy.id(), iconItem, minDuration, minInitial);
 
-                if (existing.isPresent()) {
-                    ActiveFoodBuff buff = existing.get();
-                    if (Math.abs(buff.getDurationRemaining() - minDuration) > 10) {
-                        buff.resetDuration(minDuration);
-
-                        final int finalMinDuration = minDuration;
-                        for (FoodBuffData.EffectData eff : synergy.effects()) {
-                            Registries.STATUS_EFFECT.getEntry(eff.id()).ifPresent(status ->
-                                    player.addStatusEffect(new StatusEffectInstance(status, finalMinDuration, eff.amplifier()))
-                            );
-                        }
-                        changed = true;
-                    }
-                } else {
-                    // The synergy's HUD icon is the item that actually satisfied the first
-                    // requirement (works for "#" tag requirements too, unlike the raw id).
-                    String iconItem = "minecraft:apple";
-                    if (!synergy.requirements().isEmpty()) {
-                        String firstReq = synergy.requirements().get(0);
-                        for (ActiveFoodBuff buff : activeBuffs) {
-                            if (satisfiesRequirement(buff, firstReq)) {
-                                iconItem = buff.getConsumedItemId();
-                                break;
-                            }
-                        }
-                    }
-                    ActiveFoodBuff synergyBuff = new ActiveFoodBuff(synergy.id(), iconItem, minDuration, minInitial);
-
-                    List<FoodBuffData.EffectData> dynamicEffects = new ArrayList<>();
-                    for (FoodBuffData.EffectData eff : synergy.effects()) {
-                        dynamicEffects.add(new FoodBuffData.EffectData(eff.id(), minDuration, eff.amplifier()));
-                    }
-
-                    FoodBuffData dummyData = new FoodBuffData(
-                            synergy.id(), minDuration, 0, 0f, synergy.healthBonus(),
-                            dynamicEffects, synergy.attributes(), 0
-                    );
-
-                    applyBuffEffects(synergyBuff, dummyData);
-                    activeSynergies.add(synergyBuff);
-
-                    logSynergyActivation(synergy, minDuration);
-
-                    if (discoveredSynergies.add(synergy.id())) {
-                        if (player instanceof ServerPlayerEntity serverPlayer) {
-                            ServerPlayNetworking.send(serverPlayer, new SynergyUnlockedPayload());
-                        }
-                    }
-                    changed = true;
+                List<FoodBuffData.EffectData> dynamicEffects = new ArrayList<>();
+                for (FoodBuffData.EffectData eff : synergy.effects()) {
+                    dynamicEffects.add(new FoodBuffData.EffectData(
+                            eff.id(), minDuration, eff.amplifier()));
                 }
+
+                FoodBuffData dummyData = new FoodBuffData(
+                        synergy.id(), minDuration, 0, 0f,
+                        synergy.healthBonus(), dynamicEffects, synergy.attributes(), 0);
+
+                applyBuffEffects(synergyBuff, dummyData);
+                activeSynergies.add(synergyBuff);
+                activeSynergyMap.put(synergy.id(), synergyBuff); // #11
+
+                logSynergyActivation(synergy, minDuration);
+
+                if (discoveredSynergies.add(synergy.id())) {
+                    if (player instanceof ServerPlayerEntity serverPlayer) {
+                        ServerPlayNetworking.send(serverPlayer, new SynergyUnlockedPayload());
+                    }
+                }
+                changed = true;
             }
         }
         return changed;
     }
 
-    /**
-     * Logs a newly activated synergy according to the configured consumption log level.
-     * Activations are rare, so REDUCED logs them too (one short line); ALL adds details.
-     */
     private void logSynergyActivation(FoodSynergyData synergy, int duration) {
-        // The component also ticks client-side in singleplayer; only the server logs.
         if (player.getWorld().isClient()
                 || FlorafareConfig.consumptionLogging == FlorafareConfig.LogLevel.NONE) {
             return;
         }
-
         String playerName = player.getName().getString();
         if (FlorafareConfig.consumptionLogging == FlorafareConfig.LogLevel.ALL) {
             Florafare.LOGGER.info(
-                    "[Florafare Synergy] Player {} activated synergy '{}' (foods: {}) | Health: +{} | Duration: {}t",
-                    playerName, synergy.id(), String.join(", ", synergy.requirements()),
-                    synergy.healthBonus(), duration
-            );
+                    "[Florafare Synergy] Player {} activated synergy '{}' (foods: {}) "
+                            + "| Health: +{} | Duration: {}t",
+                    playerName, synergy.id(),
+                    String.join(", ", synergy.requirements()),
+                    synergy.healthBonus(), duration);
         } else {
             Florafare.LOGGER.info(
                     "[Florafare Synergy] Player {} activated synergy '{}'",
-                    playerName, synergy.id()
-            );
+                    playerName, synergy.id());
         }
     }
 
+    // -------------------------------------------------------------------------
+    // TICK
+    // -------------------------------------------------------------------------
+
     public void tick() {
-        boolean isServer = !player.getWorld().isClient;
-        boolean buffsChanged = false;
+        boolean isServer       = !player.getWorld().isClient;
+        boolean buffsChanged   = false;
         boolean synergiesChanged = false;
 
         for (int i = activeBuffs.size() - 1; i >= 0; i--) {
             ActiveFoodBuff buff = activeBuffs.get(i);
             buff.tick();
-
             if (buff.isExpired()) {
-                if (isServer) {
-                    removeBuffAttributes(buff);
-                    buffsChanged = true;
-                }
+                if (isServer) { removeBuffAttributes(buff); buffsChanged = true; }
                 activeBuffs.remove(i);
             }
         }
@@ -413,10 +435,10 @@ public class PlayerFoodComponent {
         for (int i = activeSynergies.size() - 1; i >= 0; i--) {
             ActiveFoodBuff synergyBuff = activeSynergies.get(i);
             synergyBuff.tick();
-
             if (synergyBuff.isExpired()) {
                 if (isServer) {
                     removeBuffAttributes(synergyBuff);
+                    activeSynergyMap.remove(synergyBuff.getTarget()); // #11
                     synergiesChanged = true;
                 }
                 activeSynergies.remove(i);
@@ -424,9 +446,14 @@ public class PlayerFoodComponent {
         }
 
         if (isServer && (buffsChanged || synergiesChanged)) {
-            sync();
+            dirty = true;
+            syncIfDirty();
         }
     }
+
+    // -------------------------------------------------------------------------
+    // ATTRIBUTE REMOVAL
+    // -------------------------------------------------------------------------
 
     private void removeBuffAttributes(ActiveFoodBuff buff) {
         buff.getAppliedModifiers().forEach((modId, modifier) -> {
@@ -443,40 +470,49 @@ public class PlayerFoodComponent {
         FoodSynergyData synergy = FoodSynergyManager.getSynergy(buff.getTarget());
         if (synergy != null) {
             for (FoodBuffData.EffectData eff : synergy.effects()) {
-                Registries.STATUS_EFFECT.getEntry(eff.id()).ifPresent(player::removeStatusEffect);
+                Registries.STATUS_EFFECT.getEntry(eff.id())
+                        .ifPresent(player::removeStatusEffect);
             }
         }
     }
 
+    // -------------------------------------------------------------------------
+    // SYNC  (#15 — dirty flag: only rebuild NBT when state changed)
+    // -------------------------------------------------------------------------
+
+    /** Sends the current state to the client only if the dirty flag is set. */
+    private void syncIfDirty() {
+        if (!dirty) return;
+        sync();
+        dirty = false;
+    }
+
     public void sync() {
         if (player instanceof ServerPlayerEntity serverPlayer) {
-            ServerPlayNetworking.send(serverPlayer, new FoodBuffSyncPayload(writeToNbt(new NbtCompound())));
+            ServerPlayNetworking.send(serverPlayer,
+                    new FoodBuffSyncPayload(writeToNbt(new NbtCompound())));
         }
     }
 
+    // -------------------------------------------------------------------------
+    // NBT SERIALIZATION
+    // -------------------------------------------------------------------------
+
     public NbtCompound writeToNbt(NbtCompound nbt) {
         NbtList buffs = new NbtList();
-        for (ActiveFoodBuff buff : activeBuffs) {
-            buffs.add(buff.toNbt());
-        }
+        for (ActiveFoodBuff buff : activeBuffs) buffs.add(buff.toNbt());
         nbt.put(NBT_BUFFS_KEY, buffs);
 
         NbtList discovered = new NbtList();
-        for (String id : discoveredFoods) {
-            discovered.add(NbtString.of(id));
-        }
+        for (String id : discoveredFoods) discovered.add(NbtString.of(id));
         nbt.put(NBT_DISCOVERED_KEY, discovered);
 
         NbtList discoveredSyn = new NbtList();
-        for (String synId : discoveredSynergies) {
-            discoveredSyn.add(NbtString.of(synId));
-        }
+        for (String synId : discoveredSynergies) discoveredSyn.add(NbtString.of(synId));
         nbt.put(NBT_DISCOVERED_SYNERGIES_KEY, discoveredSyn);
 
         NbtList activeSyn = new NbtList();
-        for (ActiveFoodBuff b : activeSynergies) {
-            activeSyn.add(b.toNbt());
-        }
+        for (ActiveFoodBuff b : activeSynergies) activeSyn.add(b.toNbt());
         nbt.put(NBT_ACTIVE_SYNERGIES_KEY, activeSyn);
 
         nbt.putBoolean(NBT_JOURNAL_KEY, hasReceivedJournal);
@@ -495,41 +531,48 @@ public class PlayerFoodComponent {
         discoveredFoods.clear();
         if (nbt.contains(NBT_DISCOVERED_KEY, NbtElement.LIST_TYPE)) {
             NbtList list = nbt.getList(NBT_DISCOVERED_KEY, NbtElement.STRING_TYPE);
-            for (int i = 0; i < list.size(); i++) {
-                discoveredFoods.add(list.getString(i));
-            }
+            for (int i = 0; i < list.size(); i++) discoveredFoods.add(list.getString(i));
         }
 
         discoveredSynergies.clear();
         if (nbt.contains(NBT_DISCOVERED_SYNERGIES_KEY, NbtElement.LIST_TYPE)) {
             NbtList list = nbt.getList(NBT_DISCOVERED_SYNERGIES_KEY, NbtElement.STRING_TYPE);
-            for (int i = 0; i < list.size(); i++) {
-                discoveredSynergies.add(list.getString(i));
-            }
+            for (int i = 0; i < list.size(); i++) discoveredSynergies.add(list.getString(i));
         }
 
         activeSynergies.clear();
+        activeSynergyMap.clear(); // #11
         if (nbt.contains(NBT_ACTIVE_SYNERGIES_KEY, NbtElement.LIST_TYPE)) {
             NbtList list = nbt.getList(NBT_ACTIVE_SYNERGIES_KEY, NbtElement.COMPOUND_TYPE);
             for (int i = 0; i < list.size(); i++) {
-                activeSynergies.add(ActiveFoodBuff.fromNbt(list.getCompound(i)));
+                ActiveFoodBuff b = ActiveFoodBuff.fromNbt(list.getCompound(i));
+                activeSynergies.add(b);
+                activeSynergyMap.put(b.getTarget(), b); // #11
             }
         }
 
         hasReceivedJournal = nbt.getBoolean(NBT_JOURNAL_KEY);
+        dirty = false; // freshly loaded — not dirty
     }
 
     public void copyFrom(PlayerFoodComponent old) {
         this.activeBuffs.clear();
         this.activeBuffs.addAll(old.activeBuffs);
+
         this.discoveredFoods.clear();
         this.discoveredFoods.addAll(old.discoveredFoods);
 
         this.discoveredSynergies.clear();
         this.discoveredSynergies.addAll(old.discoveredSynergies);
+
         this.activeSynergies.clear();
-        this.activeSynergies.addAll(old.activeSynergies);
+        this.activeSynergyMap.clear();
+        for (ActiveFoodBuff b : old.activeSynergies) {
+            this.activeSynergies.add(b);
+            this.activeSynergyMap.put(b.getTarget(), b); // #11
+        }
 
         this.hasReceivedJournal = old.hasReceivedJournal;
+        this.dirty = false;
     }
 }

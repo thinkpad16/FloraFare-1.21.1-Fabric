@@ -28,78 +28,79 @@ public class ActiveFoodBuff {
 
     private final Map<Identifier, AppliedModifier> appliedModifiers = new HashMap<>();
 
-    public ActiveFoodBuff(String target, String consumedItemId, int durationRemaining, int initialDuration) {
-        this.target = target;
-        this.consumedItemId = consumedItemId;
+    // #25 — Lazily cached ItemStack so the registry is not queried every render frame.
+    private ItemStack cachedItemStack = null;
+
+    public ActiveFoodBuff(String target, String consumedItemId,
+                          int durationRemaining, int initialDuration) {
+        this.target            = target;
+        this.consumedItemId    = consumedItemId;
         this.durationRemaining = durationRemaining;
-        this.initialDuration = initialDuration;
+        this.initialDuration   = initialDuration;
     }
 
     public void tick() {
-        if (durationRemaining > 0) {
-            durationRemaining--;
-        }
+        if (durationRemaining > 0) durationRemaining--;
     }
 
     public void resetDuration(int newDuration) {
         this.durationRemaining = newDuration;
-        this.initialDuration = newDuration;
+        this.initialDuration   = newDuration;
     }
 
-    public void addModifierRecord(Identifier modifierId, Identifier attributeId, double amount, String operation) {
-        this.appliedModifiers.put(modifierId, new AppliedModifier(attributeId, amount, operation));
+    public void addModifierRecord(Identifier modifierId, Identifier attributeId,
+                                  double amount, String operation) {
+        this.appliedModifiers.put(modifierId,
+                new AppliedModifier(attributeId, amount, operation));
     }
 
-    public Map<Identifier, AppliedModifier> getAppliedModifiers() {
-        return appliedModifiers;
-    }
+    public Map<Identifier, AppliedModifier> getAppliedModifiers() { return appliedModifiers; }
+    public String  getTarget()            { return target; }
+    public String  getConsumedItemId()    { return consumedItemId; }
+    public int     getDurationRemaining() { return durationRemaining; }
+    public int     getInitialDuration()   { return initialDuration; }
+    public boolean isExpired()            { return durationRemaining <= 0; }
 
-    public String getTarget() {
-        return target;
-    }
-
-    public String getConsumedItemId() {
-        return consumedItemId;
-    }
-
-    public int getDurationRemaining() {
-        return durationRemaining;
-    }
-
-    public int getInitialDuration() {
-        return initialDuration;
-    }
-
-    public boolean isExpired() {
-        return durationRemaining <= 0;
-    }
-
+    /**
+     * Returns the ItemStack for the consumed item.
+     * The result is cached after the first call because {@code consumedItemId}
+     * is effectively immutable after construction (#25).
+     */
     public ItemStack getConsumedItemStack() {
-        if (this.consumedItemId == null || this.consumedItemId.isEmpty()) {
-            return Items.APPLE.getDefaultStack();
+        if (cachedItemStack != null) return cachedItemStack;
+
+        if (consumedItemId == null || consumedItemId.isEmpty()) {
+            cachedItemStack = Items.APPLE.getDefaultStack();
+            return cachedItemStack;
         }
-        Identifier id = Identifier.tryParse(this.consumedItemId);
+        Identifier id = Identifier.tryParse(consumedItemId);
         if (id != null && Registries.ITEM.containsId(id)) {
             Item item = Registries.ITEM.get(id);
-            return item.getDefaultStack();
+            cachedItemStack = item.getDefaultStack();
+        } else {
+            cachedItemStack = Items.APPLE.getDefaultStack();
         }
-        return Items.APPLE.getDefaultStack();
+        return cachedItemStack;
     }
+
+    // -------------------------------------------------------------------------
+    // NBT
+    // -------------------------------------------------------------------------
 
     public NbtCompound toNbt() {
         NbtCompound nbt = new NbtCompound();
-        nbt.putString("Target", target);
-        nbt.putString("ConsumedItem", consumedItemId);
-        nbt.putInt("Duration", durationRemaining);
-        nbt.putInt("InitialDuration", initialDuration);
+        nbt.putString("Target",          target);
+        nbt.putString("ConsumedItem",    consumedItemId);
+        nbt.putInt("Duration",           durationRemaining);
+        nbt.putInt("InitialDuration",    initialDuration);
 
         NbtList modList = new NbtList();
         appliedModifiers.forEach((modId, modifier) -> {
             NbtCompound modTag = new NbtCompound();
-            modTag.putString("ModId", modId.toString());
+            modTag.putString("ModId",  modId.toString());
             modTag.putString("AttrId", modifier.attributeId().toString());
             modTag.putDouble("Amount", modifier.amount());
-            modTag.putString("Op", modifier.operation());
+            modTag.putString("Op",     modifier.operation());
             modList.add(modTag);
         });
         nbt.put("Modifiers", modList);
@@ -108,7 +109,8 @@ public class ActiveFoodBuff {
     }
 
     public static ActiveFoodBuff fromNbt(NbtCompound nbt) {
-        String consumed = nbt.contains("ConsumedItem") ? nbt.getString("ConsumedItem") : "minecraft:apple";
+        String consumed = nbt.contains("ConsumedItem")
+                ? nbt.getString("ConsumedItem") : "minecraft:apple";
 
         ActiveFoodBuff buff = new ActiveFoodBuff(
                 nbt.getString("Target"),
@@ -121,13 +123,9 @@ public class ActiveFoodBuff {
             NbtList list = nbt.getList("Modifiers", NbtElement.COMPOUND_TYPE);
             for (int i = 0; i < list.size(); i++) {
                 NbtCompound modTag = list.getCompound(i);
-
-                Identifier modId = Identifier.tryParse(modTag.getString("ModId"));
+                Identifier modId  = Identifier.tryParse(modTag.getString("ModId"));
                 Identifier attrId = Identifier.tryParse(modTag.getString("AttrId"));
-
                 if (modId != null && attrId != null) {
-                    // "Amount"/"Op" default to 0.0/"add_value" for records saved by
-                    // older versions that only stored the modifier and attribute ids.
                     buff.addModifierRecord(modId, attrId,
                             modTag.getDouble("Amount"),
                             modTag.contains("Op") ? modTag.getString("Op") : "add_value");

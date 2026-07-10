@@ -18,28 +18,48 @@ import java.util.Map;
 
 /**
  * Handles the loading and parsing of food buff configurations from datapack JSON files.
+ *
+ * Supported JSON format (single file may contain one or many entries):
+ * <pre>
+ * {
+ *   "priority": 0,          // optional, default 0
+ *   "entries": [
+ *     {
+ *       "id": "minecraft:bread",
+ *       "duration": 6000,
+ *       "nutrition": 5,
+ *       "saturation": 0.6,
+ *       "health_bonus": 0.0,
+ *       "effects": [...],
+ *       "attributes": [...]
+ *     }
+ *   ]
+ * }
+ * </pre>
+ * A single-entry file may omit the "entries" wrapper and place the fields at the root.
+ * The legacy "values" key (#16) has been removed; use "entries" instead.
  */
 public class FoodReloadListener extends JsonDataLoader implements IdentifiableResourceReloadListener {
 
-    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
+    private static final Gson GSON =
+            new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
 
-    private static final String CONFIG_GEN_KEY = "config_generation";
-    private static final String KEY_DURATION = "duration";
-    private static final String KEY_NUTRITION = "nutrition";
-    private static final String KEY_SATURATION = "saturation";
+    private static final String CONFIG_GEN_KEY   = "config_generation";
+    private static final String KEY_DURATION     = "duration";
+    private static final String KEY_NUTRITION    = "nutrition";
+    private static final String KEY_SATURATION   = "saturation";
     private static final String KEY_HEALTH_BONUS = "health_bonus";
-    private static final String KEY_EFFECTS = "effects";
-    private static final String KEY_ATTRIBUTES = "attributes";
-    private static final String KEY_ENTRIES = "entries";
-    private static final String KEY_VALUES = "values";
-    private static final String KEY_ID = "id";
-    private static final String KEY_AMPLIFIER = "amplifier";
-    private static final String KEY_ATTRIBUTE = "attribute";
-    private static final String KEY_AMOUNT = "amount";
-    private static final String KEY_OPERATION = "operation";
-    private static final String KEY_PRIORITY = "priority";
+    private static final String KEY_EFFECTS      = "effects";
+    private static final String KEY_ATTRIBUTES   = "attributes";
+    private static final String KEY_ENTRIES      = "entries";
+    private static final String KEY_ID           = "id";
+    private static final String KEY_AMPLIFIER    = "amplifier";
+    private static final String KEY_ATTRIBUTE    = "attribute";
+    private static final String KEY_AMOUNT       = "amount";
+    private static final String KEY_OPERATION    = "operation";
+    private static final String KEY_PRIORITY     = "priority";
 
-    /** Entries whose target belongs to a mod that isn't installed (counted per reload). */
+    /** Entries whose target belongs to a mod that is not installed (counted per reload). */
     private int absentModTargets;
 
     public FoodReloadListener() {
@@ -52,50 +72,46 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
     }
 
     @Override
-    protected void apply(Map<Identifier, JsonElement> prepared, ResourceManager manager, Profiler profiler) {
+    protected void apply(Map<Identifier, JsonElement> prepared,
+                         ResourceManager manager, Profiler profiler) {
         FoodBuffManager.clear();
         absentModTargets = 0;
 
         prepared.forEach((id, jsonElement) -> {
             try {
-                // Parse global auto-generation settings
+                // Global auto-generation settings file.
                 if (id.getPath().equals(CONFIG_GEN_KEY)) {
                     JsonObject json = jsonElement.getAsJsonObject();
                     if (json.has("duration_multiplier")) {
-                        FoodBuffManager.AUTO_GEN_DURATION_MULT = json.get("duration_multiplier").getAsInt();
+                        FoodBuffManager.AUTO_GEN_DURATION_MULT =
+                                json.get("duration_multiplier").getAsInt();
                     }
                     if (json.has("health_multiplier")) {
-                        FoodBuffManager.AUTO_GEN_HEALTH_MULT = json.get("health_multiplier").getAsDouble();
+                        FoodBuffManager.AUTO_GEN_HEALTH_MULT =
+                                json.get("health_multiplier").getAsDouble();
                     }
                     Florafare.LOGGER.info("Loaded global auto-generation config!");
                     return;
                 }
 
-                // Format 1: Legacy JSON Array fallback (defaults priority to 0)
+                // Legacy JSON Array format (priority defaults to 0).
                 if (jsonElement.isJsonArray()) {
                     JsonArray array = jsonElement.getAsJsonArray();
                     for (JsonElement element : array) {
                         parseAndRegister(element.getAsJsonObject(), null, id, 0);
                     }
-                }
-                // Format 2: JSON Object (Recommended Format)
-                else if (jsonElement.isJsonObject()) {
+                } else if (jsonElement.isJsonObject()) {
                     JsonObject obj = jsonElement.getAsJsonObject();
-
-                    // Read global priority for this file (default is 0)
-                    int filePriority = obj.has(KEY_PRIORITY) ? obj.get(KEY_PRIORITY).getAsInt() : 0;
+                    int filePriority = obj.has(KEY_PRIORITY)
+                            ? obj.get(KEY_PRIORITY).getAsInt() : 0;
 
                     if (obj.has(KEY_ENTRIES) && obj.get(KEY_ENTRIES).isJsonArray()) {
+                        // Standard multi-entry format.
                         for (JsonElement element : obj.getAsJsonArray(KEY_ENTRIES)) {
                             parseAndRegister(element.getAsJsonObject(), null, id, filePriority);
                         }
-                    } else if (obj.has(KEY_VALUES) && obj.get(KEY_VALUES).isJsonArray()) {
-                        for (JsonElement element : obj.getAsJsonArray(KEY_VALUES)) {
-                            parseAndRegister(element.getAsJsonObject(), null, id, filePriority);
-                        }
-                    }
-                    // Single item definition in object
-                    else if (obj.has(KEY_ID)) {
+                    } else if (obj.has(KEY_ID)) {
+                        // Single-entry object at the root.
                         parseAndRegister(obj, id.toString().replace("/", ":"), id, filePriority);
                     }
                 }
@@ -107,28 +123,26 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
 
         Florafare.LOGGER.info("Loaded {} food configurations!", FoodBuffManager.getConfigCount());
         if (absentModTargets > 0) {
-            Florafare.LOGGER.info("{} entries target items from mods that are not installed; they stay inactive until those mods are present.", absentModTargets);
+            Florafare.LOGGER.info(
+                    "{} entries target items from mods that are not installed; "
+                            + "they stay inactive until those mods are present.",
+                    absentModTargets);
         }
     }
 
-    /**
-     * Parses a JSON object and registers the food buff configuration.
-     *
-     * @param json                  The JSON object containing the buff data.
-     * @param defaultTargetFallback Fallback target if not explicitly defined.
-     * @param fileId                The identifier of the file being processed.
-     * @param filePriority          The priority defined at the root of the file.
-     */
-    private void parseAndRegister(JsonObject json, String defaultTargetFallback, Identifier fileId, int filePriority) {
+    private void parseAndRegister(JsonObject json, String defaultTargetFallback,
+                                  Identifier fileId, int filePriority) {
         if (!json.has(KEY_ID) && defaultTargetFallback == null) {
-            Florafare.LOGGER.error("Error in file {}: Missing 'id' field! Buff skipped.", fileId);
+            Florafare.LOGGER.error(
+                    "Error in file {}: Missing 'id' field! Buff skipped.", fileId);
             return;
         }
 
-        // Bare ids target items ("minecraft:bread"), "#"-prefixed ids target tags ("#c:foods").
-        String rawTarget = json.has(KEY_ID) ? json.get(KEY_ID).getAsString() : defaultTargetFallback;
+        String rawTarget = json.has(KEY_ID)
+                ? json.get(KEY_ID).getAsString() : defaultTargetFallback;
         String target = FoodBuffManager.normalizeTarget(rawTarget);
 
+        // Validate plain item-id targets.
         boolean isPlainItemTarget = !target.startsWith("#")
                 && !target.startsWith("namespace:")
                 && !target.startsWith("template:")
@@ -136,65 +150,68 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
         if (isPlainItemTarget) {
             Identifier targetId = Identifier.tryParse(target);
             if (targetId == null) {
-                Florafare.LOGGER.warn("Warning in file {}: '{}' is not a valid item id! Buff may never trigger.", fileId, target);
+                Florafare.LOGGER.warn(
+                        "Warning in file {}: '{}' is not a valid item id! "
+                                + "Buff may never trigger.", fileId, target);
             } else if (!net.minecraft.registry.Registries.ITEM.containsId(targetId)) {
-                if (net.fabricmc.loader.api.FabricLoader.getInstance().isModLoaded(targetId.getNamespace())) {
-                    // The mod is present but the item isn't — almost certainly a typo.
-                    Florafare.LOGGER.warn("Warning in file {}: Item '{}' does not exist! Buff may never trigger.", fileId, target);
+                if (net.fabricmc.loader.api.FabricLoader.getInstance()
+                        .isModLoaded(targetId.getNamespace())) {
+                    Florafare.LOGGER.warn(
+                            "Warning in file {}: Item '{}' does not exist! "
+                                    + "Buff may never trigger.", fileId, target);
                 } else {
-                    // The whole mod is absent; expected for cross-mod packs, so don't spam.
                     absentModTargets++;
                 }
             }
         }
 
-        int duration = json.has(KEY_DURATION) ? json.get(KEY_DURATION).getAsInt() : 6000;
-        int nutrition = json.has(KEY_NUTRITION) ? json.get(KEY_NUTRITION).getAsInt() : 0;
-        float saturation = json.has(KEY_SATURATION) ? json.get(KEY_SATURATION).getAsFloat() : 0.0f;
+        int    duration    = json.has(KEY_DURATION)    ? json.get(KEY_DURATION).getAsInt()    : 6000;
+        int    nutrition   = json.has(KEY_NUTRITION)   ? json.get(KEY_NUTRITION).getAsInt()   : 0;
+        float  saturation  = json.has(KEY_SATURATION)  ? json.get(KEY_SATURATION).getAsFloat() : 0.0f;
         double healthBonus = json.has(KEY_HEALTH_BONUS) ? json.get(KEY_HEALTH_BONUS).getAsDouble() : 0.0;
-
-        // Item-specific priority overrides the file-level priority
-        int priority = json.has(KEY_PRIORITY) ? json.get(KEY_PRIORITY).getAsInt() : filePriority;
+        int    priority    = json.has(KEY_PRIORITY)    ? json.get(KEY_PRIORITY).getAsInt()    : filePriority;
 
         List<FoodBuffData.EffectData> effects = new ArrayList<>();
         if (json.has(KEY_EFFECTS)) {
-            JsonArray effArray = json.getAsJsonArray(KEY_EFFECTS);
-            for (JsonElement e : effArray) {
+            for (JsonElement e : json.getAsJsonArray(KEY_EFFECTS)) {
                 JsonObject effObj = e.getAsJsonObject();
-                Identifier effId = Identifier.tryParse(effObj.get(KEY_ID).getAsString());
-
-                if (effId != null && net.minecraft.registry.Registries.STATUS_EFFECT.containsId(effId)) {
+                Identifier effId  = Identifier.tryParse(effObj.get(KEY_ID).getAsString());
+                if (effId != null
+                        && net.minecraft.registry.Registries.STATUS_EFFECT.containsId(effId)) {
                     effects.add(new FoodBuffData.EffectData(
                             effId,
                             effObj.get(KEY_DURATION).getAsInt(),
-                            effObj.has(KEY_AMPLIFIER) ? effObj.get(KEY_AMPLIFIER).getAsInt() : 0
-                    ));
+                            effObj.has(KEY_AMPLIFIER) ? effObj.get(KEY_AMPLIFIER).getAsInt() : 0));
                 } else {
-                    Florafare.LOGGER.error("Error in file {}: Effect '{}' does not exist! Effect skipped.", fileId, effObj.get(KEY_ID).getAsString());
+                    Florafare.LOGGER.error(
+                            "Error in file {}: Effect '{}' does not exist! Effect skipped.",
+                            fileId, effObj.get(KEY_ID).getAsString());
                 }
             }
         }
 
         List<FoodBuffData.AttributeData> attributes = new ArrayList<>();
         if (json.has(KEY_ATTRIBUTES)) {
-            JsonArray attrArray = json.getAsJsonArray(KEY_ATTRIBUTES);
-            for (JsonElement e : attrArray) {
+            for (JsonElement e : json.getAsJsonArray(KEY_ATTRIBUTES)) {
                 JsonObject attrObj = e.getAsJsonObject();
-                Identifier attrId = Identifier.tryParse(attrObj.get(KEY_ATTRIBUTE).getAsString());
-
-                if (attrId != null && net.minecraft.registry.Registries.ATTRIBUTE.containsId(attrId)) {
+                Identifier attrId  = Identifier.tryParse(attrObj.get(KEY_ATTRIBUTE).getAsString());
+                if (attrId != null
+                        && net.minecraft.registry.Registries.ATTRIBUTE.containsId(attrId)) {
                     attributes.add(new FoodBuffData.AttributeData(
                             attrId,
                             attrObj.get(KEY_AMOUNT).getAsDouble(),
-                            attrObj.get(KEY_OPERATION).getAsString()
-                    ));
+                            attrObj.get(KEY_OPERATION).getAsString()));
                 } else {
-                    Florafare.LOGGER.error("Error in file {}: Attribute '{}' does not exist! Attribute skipped.", fileId, attrObj.get(KEY_ATTRIBUTE).getAsString());
+                    Florafare.LOGGER.error(
+                            "Error in file {}: Attribute '{}' does not exist! Attribute skipped.",
+                            fileId, attrObj.get(KEY_ATTRIBUTE).getAsString());
                 }
             }
         }
 
-        FoodBuffData data = new FoodBuffData(target, duration, nutrition, saturation, healthBonus, effects, attributes, priority);
+        FoodBuffData data = new FoodBuffData(
+                target, duration, nutrition, saturation,
+                healthBonus, effects, attributes, priority);
         FoodBuffManager.putConfig(target, data);
     }
 }
