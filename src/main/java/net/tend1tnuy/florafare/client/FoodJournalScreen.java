@@ -24,6 +24,7 @@ import net.tend1tnuy.florafare.food.FoodSynergyData;
 import net.tend1tnuy.florafare.food.FoodSynergyManager;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -165,42 +166,42 @@ public class FoodJournalScreen extends Screen {
 
         this.previousPageButton = this.addDrawableChild(new PageTurnWidget(
                 bookX + PREV_BTN_X_OFFSET, bookY + BTN_Y_OFFSET, false, btn -> {
-                    if (currentState == ScreenState.FOOD_DETAIL
-                            || currentState == ScreenState.SYNERGY_DETAIL) {
-                        if (detailCurrentPage > 0) {
-                            detailCurrentPage--;
-                        } else {
-                            currentState = (currentState == ScreenState.FOOD_DETAIL)
-                                    ? ScreenState.FOOD_GRID : ScreenState.SYNERGY_GRID;
-                        }
-                    } else if (currentState == ScreenState.FOOD_GRID
-                            || currentState == ScreenState.SYNERGY_GRID) {
-                        if (currentPage > 0) {
-                            currentPage--;
-                        } else {
-                            currentState = ScreenState.INDEX;
-                        }
-                    }
-                    updatePageButtons();
-                    playPageTurnSound();
-                }, true));
+            if (currentState == ScreenState.FOOD_DETAIL
+                    || currentState == ScreenState.SYNERGY_DETAIL) {
+                if (detailCurrentPage > 0) {
+                    detailCurrentPage--;
+                } else {
+                    currentState = (currentState == ScreenState.FOOD_DETAIL)
+                            ? ScreenState.FOOD_GRID : ScreenState.SYNERGY_GRID;
+                }
+            } else if (currentState == ScreenState.FOOD_GRID
+                    || currentState == ScreenState.SYNERGY_GRID) {
+                if (currentPage > 0) {
+                    currentPage--;
+                } else {
+                    currentState = ScreenState.INDEX;
+                }
+            }
+            updatePageButtons();
+            playPageTurnSound();
+        }, true));
 
         this.nextPageButton = this.addDrawableChild(new PageTurnWidget(
                 bookX + NEXT_BTN_X_OFFSET, bookY + BTN_Y_OFFSET, true, btn -> {
-                    if (currentState == ScreenState.FOOD_DETAIL
-                            || currentState == ScreenState.SYNERGY_DETAIL) {
-                        if (detailCurrentPage < detailPages.size() - 1) {
-                            detailCurrentPage++;
-                        }
-                    } else if (currentState == ScreenState.FOOD_GRID
-                            || currentState == ScreenState.SYNERGY_GRID) {
-                        if (currentPage < maxPages - 1) {
-                            currentPage++;
-                        }
-                    }
-                    updatePageButtons();
-                    playPageTurnSound();
-                }, true));
+            if (currentState == ScreenState.FOOD_DETAIL
+                    || currentState == ScreenState.SYNERGY_DETAIL) {
+                if (detailCurrentPage < detailPages.size() - 1) {
+                    detailCurrentPage++;
+                }
+            } else if (currentState == ScreenState.FOOD_GRID
+                    || currentState == ScreenState.SYNERGY_GRID) {
+                if (currentPage < maxPages - 1) {
+                    currentPage++;
+                }
+            }
+            updatePageButtons();
+            playPageTurnSound();
+        }, true));
 
         updatePageButtons();
     }
@@ -220,6 +221,12 @@ public class FoodJournalScreen extends Screen {
         Set<String> discoveredFoods =
                 ((IFoodComponentProvider) this.client.player)
                         .florafare$getFoodComponent().getDiscoveredFoods();
+
+        // Створюємо набір цілей (target), які реально прописані в датапаку
+        Set<String> datapackTargets = new HashSet<>();
+        for (FoodBuffData data : FoodBuffManager.getAllConfigs()) {
+            datapackTargets.add(data.target());
+        }
 
         // Potion-target entries
         for (FoodBuffData data : FoodBuffManager.getAllConfigs()) {
@@ -242,7 +249,13 @@ public class FoodJournalScreen extends Screen {
         for (net.minecraft.item.Item item : Registries.ITEM) {
             ItemStack stack = item.getDefaultStack();
             FoodBuffData data = FoodBuffManager.getConfig(stack);
+
             if (data == null || data.target().startsWith("potion:")) continue;
+
+            // Відфільтровуємо автозгенеровані ванільні страви:
+            // якщо цілі немає в конфігах датапаку, пропускаємо
+            if (!datapackTargets.contains(data.target())) continue;
+
             String itemId = Registries.ITEM.getId(item).toString();
             boolean isUnlocked =
                     discoveredFoods.contains(itemId) || discoveredFoods.contains(data.target());
@@ -335,7 +348,7 @@ public class FoodJournalScreen extends Screen {
 
         allLines.add(new RenderLine(
                 Text.translatable("gui.florafare.journal.duration",
-                        Text.translatable("gui.florafare.journal.duration_dynamic").getString())
+                                Text.translatable("gui.florafare.journal.duration_dynamic").getString())
                         .getString(),
                 COLOR_INK_MID, 12, 0));
 
@@ -368,8 +381,8 @@ public class FoodJournalScreen extends Screen {
                 String val      = attr.operation().contains("multiplied")
                         ? (int) (attr.amount() * 100) + "%"
                         : (attr.amount() % 1 == 0
-                                ? String.valueOf((int) attr.amount())
-                                : String.valueOf(attr.amount()));
+                        ? String.valueOf((int) attr.amount())
+                        : String.valueOf(attr.amount()));
                 allLines.add(new RenderLine(
                         "• " + attrName + ": " + sign + val, COLOR_INK_LIGHT, 11, 4));
             }
@@ -604,7 +617,7 @@ public class FoodJournalScreen extends Screen {
                 centerX - titleW / 2, bookY + TITLE_Y_OFFSET, COLOR_INK_DARK, false);
 
         context.fill(centerX - 40, bookY + TITLE_UNDERLINE_Y,
-                     centerX + 40, bookY + TITLE_UNDERLINE_Y + 1, COLOR_DIVIDER);
+                centerX + 40, bookY + TITLE_UNDERLINE_Y + 1, COLOR_DIVIDER);
 
         // Progress tracker
         int  unlocked     = isSynergy ? unlockedSynergyCount() : unlockedCount();
@@ -623,7 +636,7 @@ public class FoodJournalScreen extends Screen {
         String pageStr  = (currentPage + 1) + " / " + maxPages;
         int    pageStrW = this.textRenderer.getWidth(pageStr);
         context.fill(centerX - pageStrW / 2 - 3, bookY + PAGE_COUNTER_BG_TOP,
-                     centerX + pageStrW / 2 + 3, bookY + PAGE_COUNTER_BG_BOTTOM, 0x22100800);
+                centerX + pageStrW / 2 + 3, bookY + PAGE_COUNTER_BG_BOTTOM, 0x22100800);
         context.drawText(this.textRenderer, pageStr,
                 centerX - pageStrW / 2, bookY + PAGE_COUNTER_Y_OFFSET, COLOR_INK_FAINT, false);
 
@@ -717,7 +730,7 @@ public class FoodJournalScreen extends Screen {
 
             // Drop-shadow
             context.fill(iconCenterX - 14, iconY + 2,
-                         iconCenterX + 18, iconY + 34, 0x22000000);
+                    iconCenterX + 18, iconY + 34, 0x22000000);
 
             context.getMatrices().push();
             context.getMatrices().translate(iconCenterX - 16, iconY, 0);
@@ -736,7 +749,7 @@ public class FoodJournalScreen extends Screen {
                     paperLeft + (PAPER_WIDTH - nameWidth) / 2, nameY, COLOR_INK_DARK, false);
 
             context.fill(paperLeft + 8, nameY + 11,
-                         paperLeft + PAPER_WIDTH - 8, nameY + 12, COLOR_DIVIDER);
+                    paperLeft + PAPER_WIDTH - 8, nameY + 12, COLOR_DIVIDER);
         }
 
         int py = bookY + (detailCurrentPage == 0
@@ -787,7 +800,7 @@ public class FoodJournalScreen extends Screen {
                     paperLeft + (PAPER_WIDTH - nameWidth) / 2, py, COLOR_RED_DARK, false);
 
             context.fill(paperLeft + 8, py + 11,
-                         paperLeft + PAPER_WIDTH - 8, py + 12, COLOR_DIVIDER);
+                    paperLeft + PAPER_WIDTH - 8, py + 12, COLOR_DIVIDER);
         }
 
         int py = bookY + (detailCurrentPage == 0
@@ -818,8 +831,8 @@ public class FoodJournalScreen extends Screen {
                         px + line.offsetX + 1, drawY, line.color, false);
                 int headerW = this.textRenderer.getWidth(line.text);
                 context.fill(px + line.offsetX, drawY + 10,
-                             px + line.offsetX + Math.min(headerW, paperWidth - 8),
-                             drawY + 11, 0x33503010);
+                        px + line.offsetX + Math.min(headerW, paperWidth - 8),
+                        drawY + 11, 0x33503010);
             } else {
                 context.drawText(this.textRenderer, line.text,
                         px + line.offsetX, drawY, line.color, false);
@@ -833,7 +846,7 @@ public class FoodJournalScreen extends Screen {
         String pageStr  = (detailCurrentPage + 1) + " / " + detailPages.size();
         int    pageStrW = this.textRenderer.getWidth(pageStr);
         context.fill(centerX - pageStrW / 2 - 3, bookY + PAGE_COUNTER_BG_TOP,
-                     centerX + pageStrW / 2 + 3, bookY + PAGE_COUNTER_BG_BOTTOM, 0x22100800);
+                centerX + pageStrW / 2 + 3, bookY + PAGE_COUNTER_BG_BOTTOM, 0x22100800);
         context.drawText(this.textRenderer, pageStr,
                 centerX - pageStrW / 2, bookY + PAGE_COUNTER_Y_OFFSET,
                 COLOR_INK_FAINT, false);

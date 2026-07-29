@@ -15,14 +15,7 @@ import squeek.appleskin.api.event.TooltipOverlayEvent;
 import java.util.Set;
 
 /**
- * AppleSkin compatibility. Registered through AppleSkin's own "appleskin" entrypoint,
- * so this class is only ever loaded when AppleSkin is installed.
- *
- * AppleSkin reads the item's vanilla {@link FoodComponent} to render the hunger/saturation
- * tooltip and HUD preview. Florafare never modifies that component (it applies its values
- * at eat-time instead), so without this hook AppleSkin shows the vanilla/base values rather
- * than ours. Here we override AppleSkin's "modified" food component with the values resolved
- * from {@link FoodBuffManager}, which are replicated to the client via FoodConfigSyncPayload.
+ * AppleSkin compatibility.
  */
 public class AppleSkinIntegration implements AppleSkinApi {
 
@@ -33,30 +26,38 @@ public class AppleSkinIntegration implements AppleSkinApi {
     }
 
     /**
-     * Hides AppleSkin's hunger/saturation tooltip icons for Florafare-managed
-     * foods until the player has discovered them (eaten them once) — the same
-     * gating as the food journal, so the values stay a surprise beforehand.
-     * Only fires client-side (tooltip rendering), so the client access is safe.
+     * Спільний метод для перевірки, чи гравець вже дослідив цю їжу.
+     */
+    private static boolean isFoodDiscovered(ItemStack stack, FoodBuffData data) {
+        PlayerEntity player = MinecraftClient.getInstance().player;
+        if (player == null) {
+            return false;
+        }
+
+        Set<String> discovered = ((IFoodComponentProvider) player).florafare$getFoodComponent().getDiscoveredFoods();
+        String itemId = Registries.ITEM.getId(stack.getItem()).toString();
+
+        return discovered.contains(itemId) || discovered.contains(data.target());
+    }
+
+    /**
+     * Приховує іконки ситості в тултипі (підказці при наведенні мишкою), якщо їжа не відкрита.
      */
     private static void onTooltipOverlayPre(TooltipOverlayEvent.Pre event) {
         FoodBuffData data = FoodBuffManager.getConfig(event.itemStack);
         if (data == null) {
-            return; // not Florafare-managed: leave AppleSkin's default behaviour
-        }
-
-        PlayerEntity player = MinecraftClient.getInstance().player;
-        if (player == null) {
             return;
         }
 
-        Set<String> discovered = ((IFoodComponentProvider) player).florafare$getFoodComponent().getDiscoveredFoods();
-        String itemId = Registries.ITEM.getId(event.itemStack.getItem()).toString();
-        // The target check covers discoveries recorded before they were keyed by item id.
-        if (!discovered.contains(itemId) && !discovered.contains(data.target())) {
+        if (!isFoodDiscovered(event.itemStack, data)) {
             event.isCanceled = true;
         }
     }
 
+    /**
+     * Динамічно змінює значення, які AppleSkin використовує для малювання шкали HUD
+     * (блимання "стегенець" при триманні їжі в руці).
+     */
     private static void onFoodValues(FoodValuesEvent event) {
         ItemStack stack = event.itemStack;
         if (stack == null || stack.isEmpty()) {
@@ -68,17 +69,23 @@ public class AppleSkinIntegration implements AppleSkinApi {
             return;
         }
 
-        // Rebuild only the values AppleSkin displays. Other properties (effects, eat time)
-        // don't affect the hunger/saturation readout, so a minimal component is sufficient.
-        FoodComponent florafareValues = new FoodComponent.Builder()
-                .nutrition(data.nutrition())
-                .saturationModifier(data.saturation())
-                .build();
+        FoodComponent florafareValues;
 
-        // Override BOTH components: AppleSkin renders defaultFoodComponent underneath
-        // modifiedFoodComponent (as a "this value was modified" comparison), so leaving
-        // the default at vanilla makes the tooltip show vanilla and our values combined.
-        // Florafare fully replaces the food values, so there is no "default" to compare to.
+        // Якщо їжу ще не їли — передаємо AppleSkin нульові значення.
+        // Він побачить 0 ситості і просто не буде малювати прев'ю на HUD.
+        if (!isFoodDiscovered(stack, data)) {
+            florafareValues = new FoodComponent.Builder()
+                    .nutrition(0)
+                    .saturationModifier(0f)
+                    .build();
+        } else {
+            // Якщо їжа досліджена — віддаємо правильні значення з датапаку.
+            florafareValues = new FoodComponent.Builder()
+                    .nutrition(data.nutrition())
+                    .saturationModifier(data.saturation())
+                    .build();
+        }
+
         event.defaultFoodComponent = florafareValues;
         event.modifiedFoodComponent = florafareValues;
     }
