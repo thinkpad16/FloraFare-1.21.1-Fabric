@@ -182,7 +182,17 @@ public class FoodBuffManager {
         return new FoodBuffData(
                 itemId.toString(), durationTicks, food.nutrition(),
                 saturationModifier, healthBonus,
-                new ArrayList<>(), new ArrayList<>(), 0);
+                new ArrayList<>(), new ArrayList<>(), 0, food.canAlwaysEat());
+    }
+
+    /**
+     * Whether the given stack should be eatable even at full hunger, per its
+     * resolved Florafare buff config (datapack "always_edible", or the underlying
+     * vanilla FoodComponent's own flag when no explicit config applies).
+     */
+    public static boolean isAlwaysEdible(ItemStack stack) {
+        FoodBuffData data = getConfig(stack);
+        return data != null && data.alwaysEdible();
     }
 
     public static int getConfigCount() { return CONFIGS.size(); }

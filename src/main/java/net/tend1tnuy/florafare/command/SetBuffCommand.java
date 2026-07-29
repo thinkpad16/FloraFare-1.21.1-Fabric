@@ -127,7 +127,8 @@ public class SetBuffCommand {
                 DoubleArgumentType.getDouble(context, "health"),
                 new ArrayList<>(),
                 attrs,
-                0
+                0,
+                false
         );
 
         FoodBuffManager.setRuntimeStackConfig(uniqueId, data);

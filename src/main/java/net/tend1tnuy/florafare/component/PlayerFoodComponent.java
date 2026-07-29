@@ -371,7 +371,7 @@ public class PlayerFoodComponent {
 
                 FoodBuffData dummyData = new FoodBuffData(
                         synergy.id(), minDuration, 0, 0f,
-                        synergy.healthBonus(), dynamicEffects, synergy.attributes(), 0);
+                        synergy.healthBonus(), dynamicEffects, synergy.attributes(), 0, false);
 
                 applyBuffEffects(synergyBuff, dummyData);
                 activeSynergies.add(synergyBuff);

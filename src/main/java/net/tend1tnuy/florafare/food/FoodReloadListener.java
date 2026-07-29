@@ -18,26 +18,6 @@ import java.util.Map;
 
 /**
  * Handles the loading and parsing of food buff configurations from datapack JSON files.
- *
- * Supported JSON format (single file may contain one or many entries):
- * <pre>
- * {
- *   "priority": 0,          // optional, default 0
- *   "entries": [
- *     {
- *       "id": "minecraft:bread",
- *       "duration": 6000,
- *       "nutrition": 5,
- *       "saturation": 0.6,
- *       "health_bonus": 0.0,
- *       "effects": [...],
- *       "attributes": [...]
- *     }
- *   ]
- * }
- * </pre>
- * A single-entry file may omit the "entries" wrapper and place the fields at the root.
- * The legacy "values" key (#16) has been removed; use "entries" instead.
  */
 public class FoodReloadListener extends JsonDataLoader implements IdentifiableResourceReloadListener {
 
@@ -58,6 +38,7 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
     private static final String KEY_AMOUNT       = "amount";
     private static final String KEY_OPERATION    = "operation";
     private static final String KEY_PRIORITY     = "priority";
+    private static final String KEY_ALWAYS_EDIBLE = "always_edible";
 
     /** Entries whose target belongs to a mod that is not installed (counted per reload). */
     private int absentModTargets;
@@ -98,21 +79,25 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
                 if (jsonElement.isJsonArray()) {
                     JsonArray array = jsonElement.getAsJsonArray();
                     for (JsonElement element : array) {
-                        parseAndRegister(element.getAsJsonObject(), null, id, 0);
+                        parseAndRegister(element.getAsJsonObject(), null, id, 0, false);
                     }
                 } else if (jsonElement.isJsonObject()) {
                     JsonObject obj = jsonElement.getAsJsonObject();
+
+                    // Зчитуємо глобальні параметри для всього файлу
                     int filePriority = obj.has(KEY_PRIORITY)
                             ? obj.get(KEY_PRIORITY).getAsInt() : 0;
+                    boolean fileAlwaysEdible = obj.has(KEY_ALWAYS_EDIBLE)
+                            && obj.get(KEY_ALWAYS_EDIBLE).getAsBoolean();
 
                     if (obj.has(KEY_ENTRIES) && obj.get(KEY_ENTRIES).isJsonArray()) {
                         // Standard multi-entry format.
                         for (JsonElement element : obj.getAsJsonArray(KEY_ENTRIES)) {
-                            parseAndRegister(element.getAsJsonObject(), null, id, filePriority);
+                            parseAndRegister(element.getAsJsonObject(), null, id, filePriority, fileAlwaysEdible);
                         }
                     } else if (obj.has(KEY_ID)) {
                         // Single-entry object at the root.
-                        parseAndRegister(obj, id.toString().replace("/", ":"), id, filePriority);
+                        parseAndRegister(obj, id.toString().replace("/", ":"), id, filePriority, fileAlwaysEdible);
                     }
                 }
 
@@ -131,7 +116,7 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
     }
 
     private void parseAndRegister(JsonObject json, String defaultTargetFallback,
-                                  Identifier fileId, int filePriority) {
+                                  Identifier fileId, int filePriority, boolean fileAlwaysEdible) {
         if (!json.has(KEY_ID) && defaultTargetFallback == null) {
             Florafare.LOGGER.error(
                     "Error in file {}: Missing 'id' field! Buff skipped.", fileId);
@@ -170,6 +155,10 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
         float  saturation  = json.has(KEY_SATURATION)  ? json.get(KEY_SATURATION).getAsFloat() : 0.0f;
         double healthBonus = json.has(KEY_HEALTH_BONUS) ? json.get(KEY_HEALTH_BONUS).getAsDouble() : 0.0;
         int    priority    = json.has(KEY_PRIORITY)    ? json.get(KEY_PRIORITY).getAsInt()    : filePriority;
+
+        // Якщо параметр вказаний всередині елемента — використовуємо його. Якщо ні — використовуємо глобальний (з кореня)
+        boolean alwaysEdible = json.has(KEY_ALWAYS_EDIBLE)
+                ? json.get(KEY_ALWAYS_EDIBLE).getAsBoolean() : fileAlwaysEdible;
 
         List<FoodBuffData.EffectData> effects = new ArrayList<>();
         if (json.has(KEY_EFFECTS)) {
@@ -211,7 +200,7 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
 
         FoodBuffData data = new FoodBuffData(
                 target, duration, nutrition, saturation,
-                healthBonus, effects, attributes, priority);
+                healthBonus, effects, attributes, priority, alwaysEdible);
         FoodBuffManager.putConfig(target, data);
     }
 }

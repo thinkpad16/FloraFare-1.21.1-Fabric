@@ -15,6 +15,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
  * Injects into PlayerEntity to attach, tick, and persist the custom food component.
@@ -39,15 +40,22 @@ public abstract class PlayerEntityMixin implements IFoodComponentProvider {
     }
 
     /**
+     * Примусово дозволяє споживання, якщо гравець тримає їжу з параметром always_edible.
+     */
+    @Inject(method = "canConsume", at = @At("HEAD"), cancellable = true)
+    private void florafare$allowAlwaysEdible(boolean ignoreHunger, CallbackInfoReturnable<Boolean> cir) {
+        if (!ignoreHunger) {
+            PlayerEntity player = (PlayerEntity) (Object) this;
+            // Перевіряємо обидві руки на наявність їжі з датапаку, яку можна їсти завжди
+            if (FoodBuffManager.isAlwaysEdible(player.getMainHandStack()) ||
+                    FoodBuffManager.isAlwaysEdible(player.getOffHandStack())) {
+                cir.setReturnValue(true);
+            }
+        }
+    }
+
+    /**
      * Suppresses vanilla hunger/saturation application for foods that Florafare manages.
-     *
-     * On the SERVER, {@code PlayerEntityEatMixin} cancels PlayerEntity#eatFood at HEAD and
-     * applies our configured values, so this redirect is never reached there. On the CLIENT,
-     * however, eatFood still runs for local prediction and would apply the vanilla
-     * FoodComponent values, making the hunger bar flicker to the wrong value until the next
-     * server sync. Since the configs are replicated to the client (FoodConfigSyncPayload),
-     * we skip the vanilla call here whenever a Florafare config exists; foods without a
-     * config keep vanilla behaviour untouched.
      */
     @Redirect(
             method = "eatFood",
