@@ -46,7 +46,8 @@ public class DumpFoodsCommand {
                                 CommandManager.RegistrationEnvironment environment) {
         dispatcher.register(
                 CommandManager.literal("florafare")
-                        .requires(source -> source.hasPermissionLevel(2))
+                        .requires(source -> source.hasPermissionLevel(
+                                net.tend1tnuy.florafare.config.FlorafareConfig.commandPermissionLevel))
                         .then(CommandManager.literal("dumpfoods")
                                 .executes(DumpFoodsCommand::executeDump)
                         )

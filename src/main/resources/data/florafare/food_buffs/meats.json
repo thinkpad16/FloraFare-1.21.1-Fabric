@@ -1,0 +1,100 @@
+{
+  "priority": 1,
+  "entries": [
+    {
+      "id": "minecraft:cooked_beef",
+      "duration": 3000,
+      "nutrition": 8,
+      "saturation": 0.8,
+      "health_bonus": 2,
+      "attributes": [
+        { "attribute": "minecraft:generic.attack_damage", "amount": 1.0, "operation": "add_value" }
+      ]
+    },
+    {
+      "id": "minecraft:cooked_porkchop",
+      "duration": 3000,
+      "nutrition": 8,
+      "saturation": 0.8,
+      "health_bonus": 2,
+      "attributes": [
+        { "attribute": "minecraft:generic.attack_damage", "amount": 1.0, "operation": "add_value" }
+      ]
+    },
+    {
+      "id": "minecraft:cooked_chicken",
+      "duration": 3000,
+      "nutrition": 6,
+      "saturation": 0.6,
+      "health_bonus": 1,
+      "attributes": [
+        { "attribute": "minecraft:generic.movement_speed", "amount": 0.03, "operation": "add_multiplied_base" }
+      ]
+    },
+    {
+      "id": "minecraft:cooked_mutton",
+      "duration": 3000,
+      "nutrition": 6,
+      "saturation": 0.8,
+      "health_bonus": 1
+    },
+    {
+      "id": "minecraft:cooked_rabbit",
+      "duration": 3000,
+      "nutrition": 5,
+      "saturation": 0.6,
+      "health_bonus": 1,
+      "attributes": [
+        { "attribute": "minecraft:generic.jump_strength", "amount": 0.05, "operation": "add_multiplied_base" }
+      ]
+    },
+    {
+      "id": "minecraft:beef",
+      "duration": 1200,
+      "nutrition": 3,
+      "saturation": 0.3
+    },
+    {
+      "id": "minecraft:porkchop",
+      "duration": 1200,
+      "nutrition": 3,
+      "saturation": 0.3
+    },
+    {
+      "id": "minecraft:chicken",
+      "duration": 1200,
+      "nutrition": 2,
+      "saturation": 0.3
+    },
+    {
+      "id": "minecraft:mutton",
+      "duration": 1200,
+      "nutrition": 2,
+      "saturation": 0.3
+    },
+    {
+      "id": "minecraft:rabbit",
+      "duration": 1200,
+      "nutrition": 3,
+      "saturation": 0.3
+    },
+    {
+      "id": "minecraft:rotten_flesh",
+      "duration": 1200,
+      "nutrition": 4,
+      "saturation": 0.1,
+      "effects": [
+        { "id": "minecraft:nausea", "duration": 200, "amplifier": 0 }
+      ]
+    },
+    {
+      "id": "minecraft:spider_eye",
+      "duration": 1200,
+      "nutrition": 2,
+      "saturation": 0.8,
+      "effects": [
+        { "id": "minecraft:poison", "duration": 100, "amplifier": 0 }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,78 @@
+{
+  "priority": 1,
+  "entries": [
+    {
+      "id": "minecraft:cooked_cod",
+      "duration": 2400,
+      "nutrition": 5,
+      "saturation": 0.6,
+      "health_bonus": 1
+    },
+    {
+      "id": "minecraft:cooked_salmon",
+      "duration": 2400,
+      "nutrition": 6,
+      "saturation": 0.8,
+      "health_bonus": 1,
+      "attributes": [
+        { "attribute": "minecraft:generic.water_movement_efficiency", "amount": 0.1, "operation": "add_multiplied_base" }
+      ]
+    },
+    {
+      "id": "minecraft:cod",
+      "duration": 600,
+      "nutrition": 2,
+      "saturation": 0.1
+    },
+    {
+      "id": "minecraft:salmon",
+      "duration": 600,
+      "nutrition": 2,
+      "saturation": 0.3
+    },
+    {
+      "id": "minecraft:dried_kelp",
+      "duration": 600,
+      "nutrition": 1,
+      "saturation": 0.3
+    },
+    {
+      "id": "minecraft:tropical_fish",
+      "duration": 600,
+      "nutrition": 1,
+      "saturation": 0.1
+    },
+    {
+      "id": "minecraft:pufferfish",
+      "duration": 600,
+      "nutrition": 1,
+      "saturation": 0.1,
+      "effects": [
+        { "id": "minecraft:nausea", "duration": 60, "amplifier": 0 },
+        { "id": "minecraft:poison", "duration": 300, "amplifier": 1 },
+        { "id": "minecraft:hunger", "duration": 300, "amplifier": 1 }
+      ]
+    },
+    {
+      "id": "minecraft:rabbit_stew",
+      "duration": 3000,
+      "nutrition": 10,
+      "saturation": 0.6,
+      "health_bonus": 2
+    },
+    {
+      "id": "minecraft:mushroom_stew",
+      "duration": 3000,
+      "nutrition": 6,
+      "saturation": 0.6,
+      "health_bonus": 1
+    },
+    {
+      "id": "minecraft:beetroot_soup",
+      "duration": 3000,
+      "nutrition": 6,
+      "saturation": 0.6,
+      "health_bonus": 1
+    }
+  ]
+}

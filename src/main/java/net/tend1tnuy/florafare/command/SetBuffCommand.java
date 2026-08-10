@@ -40,7 +40,8 @@ public class SetBuffCommand {
 
         dispatcher.register(
                 CommandManager.literal("florafare")
-                        .requires(source -> source.hasPermissionLevel(2))
+                        .requires(source -> source.hasPermissionLevel(
+                                net.tend1tnuy.florafare.config.FlorafareConfig.commandPermissionLevel))
 
                         // Branch: /florafare clear <player> (Clears all active buffs and synergies)
                         .then(CommandManager.literal("clear")

@@ -28,7 +28,8 @@ import java.util.*;
 
 public class PlayerFoodComponent {
 
-    public static final int MAX_BUFF_SLOTS = 3;
+    /** Configurable via {@code FlorafareConfig.maxBuffSlots}; kept in sync with clients via FlorafareServerConfigSyncPayload. */
+    public static int MAX_BUFF_SLOTS = 3;
 
     private static final String NBT_BUFFS_KEY               = "FlorafareActiveBuffs";
     private static final String NBT_DISCOVERED_KEY          = "FlorafareDiscoveredFoods";

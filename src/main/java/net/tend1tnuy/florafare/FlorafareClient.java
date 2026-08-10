@@ -13,8 +13,11 @@ import net.tend1tnuy.florafare.client.FoodJournalScreen;
 import net.tend1tnuy.florafare.client.HudConfigScreen;
 import net.tend1tnuy.florafare.client.toast.FoodDiscoveryToast;
 import net.tend1tnuy.florafare.component.IFoodComponentProvider;
+import net.tend1tnuy.florafare.component.PlayerFoodComponent;
+import net.tend1tnuy.florafare.config.FlorafareConfig;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
 import net.tend1tnuy.florafare.food.FoodSynergyManager;
+import net.tend1tnuy.florafare.network.FlorafareServerConfigSyncPayload;
 import net.tend1tnuy.florafare.network.FoodBuffSyncPayload;
 import net.tend1tnuy.florafare.network.FoodConfigSyncPayload;
 import net.tend1tnuy.florafare.network.FoodSynergySyncPayload;
@@ -74,12 +77,30 @@ public class FlorafareClient implements ClientModInitializer {
                 context.client().execute(() ->
                         context.client().setScreen(new FoodJournalScreen())));
 
+        ClientPlayNetworking.registerGlobalReceiver(FlorafareServerConfigSyncPayload.ID, (payload, context) ->
+                context.client().execute(() -> {
+                    // Applied in-memory only (never written to disk) so a dedicated
+                    // server stays authoritative every time this client (re)connects —
+                    // mirrors FoodBuffManager.loadConfigsFromNbt's approach.
+                    FlorafareConfig.maxBuffSlots = payload.maxBuffSlots();
+                    FlorafareConfig.autoGenDurationMultiplier = payload.autoGenDurationMultiplier();
+                    FlorafareConfig.autoGenHealthMultiplier = payload.autoGenHealthMultiplier();
+                    FlorafareConfig.enableSynergies = payload.enableSynergies();
+                    FlorafareConfig.enableAlwaysEdibleOverride = payload.enableAlwaysEdibleOverride();
+                    FlorafareConfig.respectVanillaFoodEffects = payload.respectVanillaFoodEffects();
+                    FlorafareConfig.enableForgottenMead = payload.enableForgottenMead();
+                    PlayerFoodComponent.MAX_BUFF_SLOTS = payload.maxBuffSlots();
+                    FoodJournalScreen.invalidateCache();
+                }));
+
         ClientPlayNetworking.registerGlobalReceiver(FoodUnlockedPayload.ID, (payload, context) ->
                 context.client().execute(() -> {
                     // A new food was discovered — invalidate the cache so the journal
                     // shows the updated unlock state on next open (#7).
                     FoodJournalScreen.invalidateCache();
-                    context.client().getToastManager().add(new FoodDiscoveryToast());
+                    if (FlorafareConfig.enableDiscoveryToasts) {
+                        context.client().getToastManager().add(new FoodDiscoveryToast());
+                    }
                 }));
 
         HudRenderCallback.EVENT.register(new FlorafareHud());

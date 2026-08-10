@@ -39,6 +39,8 @@ public class Florafare implements ModInitializer {
 
         // 1. Config
         net.tend1tnuy.florafare.config.FlorafareConfig.load();
+        net.tend1tnuy.florafare.component.PlayerFoodComponent.MAX_BUFF_SLOTS =
+                net.tend1tnuy.florafare.config.FlorafareConfig.maxBuffSlots;
 
         // 2. Items & creative tab
         ItemRegistry.initialize();
@@ -60,6 +62,7 @@ public class Florafare implements ModInitializer {
         PayloadTypeRegistry.playS2C().register(SynergyUnlockedPayload.ID, SynergyUnlockedPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(FoodConfigSyncPayload.ID,  FoodConfigSyncPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(FoodSynergySyncPayload.ID, FoodSynergySyncPayload.CODEC);
+        PayloadTypeRegistry.playS2C().register(FlorafareServerConfigSyncPayload.ID, FlorafareServerConfigSyncPayload.CODEC);
 
         // 6. Commands — registered together in one logical block (#22)
         CommandRegistrationCallback.EVENT.register(DumpFoodsCommand::register);
@@ -71,9 +74,11 @@ public class Florafare implements ModInitializer {
                     new FoodConfigSyncPayload(FoodBuffManager.serializeConfigs());
             FoodSynergySyncPayload synergyPayload =
                     new FoodSynergySyncPayload(FoodSynergyManager.serializeSynergies());
+            FlorafareServerConfigSyncPayload serverConfigPayload = buildServerConfigSyncPayload();
             for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
                 ServerPlayNetworking.send(player, configPayload);
                 ServerPlayNetworking.send(player, synergyPayload);
+                ServerPlayNetworking.send(player, serverConfigPayload);
             }
         });
 
@@ -107,8 +112,10 @@ public class Florafare implements ModInitializer {
                     new FoodConfigSyncPayload(FoodBuffManager.serializeConfigs()));
             ServerPlayNetworking.send(handler.player,
                     new FoodSynergySyncPayload(FoodSynergyManager.serializeSynergies()));
+            ServerPlayNetworking.send(handler.player, buildServerConfigSyncPayload());
 
-            if (!comp.hasReceivedJournal()) {
+            if (!comp.hasReceivedJournal()
+                    && net.tend1tnuy.florafare.config.FlorafareConfig.grantJournalOnFirstJoin) {
                 ItemStack journal = new ItemStack(ItemRegistry.FOOD_JOURNAL);
                 handler.player.getInventory().offerOrDrop(journal);
                 comp.setHasReceivedJournal(true);
@@ -128,5 +135,18 @@ public class Florafare implements ModInitializer {
      */
     public static Identifier id(String path) {
         return Identifier.of(MOD_ID, path);
+    }
+
+    /** Snapshots the server-authoritative subset of {@code FlorafareConfig} for client sync. */
+    private static FlorafareServerConfigSyncPayload buildServerConfigSyncPayload() {
+        return new FlorafareServerConfigSyncPayload(
+                net.tend1tnuy.florafare.config.FlorafareConfig.maxBuffSlots,
+                net.tend1tnuy.florafare.config.FlorafareConfig.autoGenDurationMultiplier,
+                net.tend1tnuy.florafare.config.FlorafareConfig.autoGenHealthMultiplier,
+                net.tend1tnuy.florafare.config.FlorafareConfig.enableSynergies,
+                net.tend1tnuy.florafare.config.FlorafareConfig.enableAlwaysEdibleOverride,
+                net.tend1tnuy.florafare.config.FlorafareConfig.respectVanillaFoodEffects,
+                net.tend1tnuy.florafare.config.FlorafareConfig.enableForgottenMead
+        );
     }
 }

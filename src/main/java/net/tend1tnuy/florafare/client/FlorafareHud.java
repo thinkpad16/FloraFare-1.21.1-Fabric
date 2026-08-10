@@ -18,7 +18,6 @@ import java.util.List;
 public class FlorafareHud implements HudRenderCallback {
 
     private static final float HUD_SCALE = 0.8f;
-    private static final int   MAX_SLOTS = 3;
 
     private static class SlotState {
         String         currentId       = "";
@@ -26,9 +25,20 @@ public class FlorafareHud implements HudRenderCallback {
         ActiveFoodBuff lastBuff        = null;
     }
 
-    private final SlotState[] slots = {
-            new SlotState(), new SlotState(), new SlotState()
-    };
+    private SlotState[] slots = new SlotState[0];
+
+    /** Resizes {@link #slots} to match the current (server-synced) buff slot count. */
+    private SlotState[] slots() {
+        int maxSlots = Math.max(1, PlayerFoodComponent.MAX_BUFF_SLOTS);
+        if (slots.length != maxSlots) {
+            SlotState[] resized = new SlotState[maxSlots];
+            for (int i = 0; i < maxSlots; i++) {
+                resized[i] = (i < slots.length) ? slots[i] : new SlotState();
+            }
+            slots = resized;
+        }
+        return slots;
+    }
 
     // #12 — Tick-driven blink accumulator replaces System.currentTimeMillis().
     private float blinkTimer = 0f;
@@ -54,6 +64,9 @@ public class FlorafareHud implements HudRenderCallback {
         int slotHeight  = 24;
         int slotSpacing = 28;
 
+        SlotState[] slots    = slots();
+        int         maxSlots = slots.length;
+
         int screenWidth  = (int) (context.getScaledWindowWidth()  / HUD_SCALE);
         int screenHeight = (int) (context.getScaledWindowHeight() / HUD_SCALE);
 
@@ -64,15 +77,15 @@ public class FlorafareHud implements HudRenderCallback {
             case TOP_LEFT    -> { baseX = 10; baseY = 10; }
             case TOP_RIGHT   -> { baseX = screenWidth - slotWidth - 10; baseY = 10; }
             case BOTTOM_LEFT -> { baseX = 10;
-                                  baseY = screenHeight - (MAX_SLOTS * slotSpacing) - 10; }
+                                  baseY = screenHeight - (maxSlots * slotSpacing) - 10; }
             case BOTTOM_RIGHT -> { baseX = screenWidth - slotWidth - 10;
-                                   baseY = screenHeight - (MAX_SLOTS * slotSpacing) - 10; }
+                                   baseY = screenHeight - (maxSlots * slotSpacing) - 10; }
         }
 
         context.getMatrices().push();
         context.getMatrices().scale(HUD_SCALE, HUD_SCALE, 1.0f);
 
-        for (int i = 0; i < MAX_SLOTS; i++) {
+        for (int i = 0; i < maxSlots; i++) {
             ActiveFoodBuff buff  = (i < buffs.size()) ? buffs.get(i) : null;
             SlotState      state = slots[i];
             int            y     = baseY + (i * slotSpacing);
@@ -89,7 +102,10 @@ public class FlorafareHud implements HudRenderCallback {
 
                 int     renderX      = calculateAnimatedX(baseX, state.animationOffset);
                 boolean isSynergized = isBuffSynergized(buff, activeSynergies);
-                renderSlot(context, client, buff, renderX, y, 1.0f,
+                // Icon "pops in" alongside the slide — 0 at the start of the slide, 1 once settled.
+                float appearProgress = 1.0f - MathHelper.clamp(
+                        Math.abs(state.animationOffset) / (slotWidth * 1.5f), 0.0f, 1.0f);
+                renderSlot(context, client, buff, renderX, y, 1.0f, appearProgress,
                         slotWidth, slotHeight, isCompact, isSynergized);
             } else {
                 state.currentId = "";
@@ -101,7 +117,8 @@ public class FlorafareHud implements HudRenderCallback {
                             1.0f - Math.abs(state.animationOffset) / (slotWidth * 1.5f));
                     int     renderX      = calculateAnimatedX(baseX, state.animationOffset);
                     boolean isSynergized = isBuffSynergized(state.lastBuff, activeSynergies);
-                    renderSlot(context, client, state.lastBuff, renderX, y, fadeAlpha,
+                    // Same progress curve, now shrinking the icon back down as it slides away.
+                    renderSlot(context, client, state.lastBuff, renderX, y, fadeAlpha, fadeAlpha,
                             slotWidth, slotHeight, isCompact, isSynergized);
                 } else {
                     state.lastBuff = null;
@@ -132,7 +149,7 @@ public class FlorafareHud implements HudRenderCallback {
     }
 
     private void renderSlot(DrawContext context, MinecraftClient client,
-                            ActiveFoodBuff buff, int x, int y, float fadeAlpha,
+                            ActiveFoodBuff buff, int x, int y, float fadeAlpha, float appearProgress,
                             int slotWidth, int slotHeight,
                             boolean isCompact, boolean isSynergized) {
         float initialDuration = Math.max(1.0f, (float) buff.getInitialDuration());
@@ -140,9 +157,14 @@ public class FlorafareHud implements HudRenderCallback {
         float progress        = MathHelper.clamp(remainingTicks / initialDuration, 0.0f, 1.0f);
 
         // #12 — Blink driven by the tick-based blinkTimer instead of System.currentTimeMillis().
+        // Blink speed ramps up the closer the buff is to expiring, for a stronger sense of urgency.
         boolean isBlinking  = progress <= 0.1f || remainingTicks <= 200;
-        float   blinkAlpha  = isBlinking
-                ? 0.5f + 0.5f * MathHelper.sin(blinkTimer * 0.628f) : 1.0f;
+        float   blinkAlpha  = 1.0f;
+        if (isBlinking) {
+            float urgency    = 1.0f - MathHelper.clamp(progress / 0.1f, 0.0f, 1.0f);
+            float blinkSpeed = MathHelper.lerp(urgency, 0.5f, 1.4f);
+            blinkAlpha = 0.5f + 0.5f * MathHelper.sin(blinkTimer * blinkSpeed);
+        }
         float   finalAlpha  = blinkAlpha * fadeAlpha;
 
         int alphaInt = (int) (finalAlpha * 255);
@@ -169,15 +191,24 @@ public class FlorafareHud implements HudRenderCallback {
             context.fill(x + 1, y + slotHeight - 2, x + 1 + barWidth, y + slotHeight - 1, colorBottom);
         }
 
+        // Icon scale-pop: grows in from 70% as the slot slides into place (and shrinks
+        // back down as it slides away), layered on top of the compact/normal icon scale.
+        float popScale = 0.7f + 0.3f * MathHelper.clamp(appearProgress, 0.0f, 1.0f);
+
         ItemStack stack = buff.getConsumedItemStack();
         context.getMatrices().push();
         if (HudConfig.iconSize == HudConfig.IconSize.SMALL) {
-            float scale    = 0.75f;
+            float scale    = 0.75f * popScale;
             int   offsetXY = (int) ((slotHeight - (16 * scale)) / 2);
             context.getMatrices().translate(x + offsetXY, y + offsetXY - 1, 0);
             context.getMatrices().scale(scale, scale, 1.0f);
             context.drawItem(stack, 0, 0);
         } else {
+            int centerX = x + 4 + 8;
+            int centerY = y + 2 + 8;
+            context.getMatrices().translate(centerX, centerY, 0);
+            context.getMatrices().scale(popScale, popScale, 1.0f);
+            context.getMatrices().translate(-centerX, -centerY, 0);
             context.drawItem(stack, x + 4, y + 2);
         }
         context.getMatrices().pop();

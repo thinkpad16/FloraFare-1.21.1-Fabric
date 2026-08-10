@@ -16,9 +16,26 @@ public class FlorafareConfig {
     // Logging levels: NONE (disabled), REDUCED (less spam, only heals), ALL (everything)
     public enum LogLevel { NONE, REDUCED, ALL }
 
-    // Main settings
+    // --- Main settings ---
     public static boolean enableSynergies = true;
-    public static LogLevel consumptionLogging = LogLevel.ALL; // Default set to ALL
+    public static LogLevel consumptionLogging = LogLevel.ALL;
+
+    // --- Server-authoritative gameplay settings (synced to clients on join/reload) ---
+    public static int maxBuffSlots = 3;
+    public static int autoGenDurationMultiplier = 1200;
+    public static double autoGenHealthMultiplier = 0.5;
+    public static boolean enableAlwaysEdibleOverride = true;
+    public static boolean respectVanillaFoodEffects = false;
+    public static boolean enableForgottenMead = true;
+    public static boolean grantJournalOnFirstJoin = true;
+
+    // --- Server-only settings (not synced; read at command registration time) ---
+    public static int commandPermissionLevel = 2;
+
+    // --- Client-local cosmetic settings ---
+    public static boolean enableDiscoveryToasts = true;
+    public static int toastDisplayTimeMs = 5000;
+    public static boolean stripFoodTooltips = true;
 
     // Client HUD settings (stored as enum names; parsed by the client HudConfig)
     public static String hudLayout = "COMPACT";
@@ -34,6 +51,17 @@ public class FlorafareConfig {
                     if (data.consumptionLogging != null) {
                         consumptionLogging = data.consumptionLogging;
                     }
+                    maxBuffSlots = data.maxBuffSlots;
+                    autoGenDurationMultiplier = data.autoGenDurationMultiplier;
+                    autoGenHealthMultiplier = data.autoGenHealthMultiplier;
+                    enableAlwaysEdibleOverride = data.enableAlwaysEdibleOverride;
+                    respectVanillaFoodEffects = data.respectVanillaFoodEffects;
+                    enableForgottenMead = data.enableForgottenMead;
+                    grantJournalOnFirstJoin = data.grantJournalOnFirstJoin;
+                    commandPermissionLevel = data.commandPermissionLevel;
+                    enableDiscoveryToasts = data.enableDiscoveryToasts;
+                    toastDisplayTimeMs = data.toastDisplayTimeMs;
+                    stripFoodTooltips = data.stripFoodTooltips;
                     if (data.hudLayout != null) hudLayout = data.hudLayout;
                     if (data.hudIconSize != null) hudIconSize = data.hudIconSize;
                     if (data.hudPosition != null) hudPosition = data.hudPosition;
@@ -52,6 +80,17 @@ public class FlorafareConfig {
             ConfigData data = new ConfigData();
             data.enableSynergies = enableSynergies;
             data.consumptionLogging = consumptionLogging;
+            data.maxBuffSlots = maxBuffSlots;
+            data.autoGenDurationMultiplier = autoGenDurationMultiplier;
+            data.autoGenHealthMultiplier = autoGenHealthMultiplier;
+            data.enableAlwaysEdibleOverride = enableAlwaysEdibleOverride;
+            data.respectVanillaFoodEffects = respectVanillaFoodEffects;
+            data.enableForgottenMead = enableForgottenMead;
+            data.grantJournalOnFirstJoin = grantJournalOnFirstJoin;
+            data.commandPermissionLevel = commandPermissionLevel;
+            data.enableDiscoveryToasts = enableDiscoveryToasts;
+            data.toastDisplayTimeMs = toastDisplayTimeMs;
+            data.stripFoodTooltips = stripFoodTooltips;
             data.hudLayout = hudLayout;
             data.hudIconSize = hudIconSize;
             data.hudPosition = hudPosition;
@@ -64,6 +103,17 @@ public class FlorafareConfig {
     private static class ConfigData {
         public boolean enableSynergies = true;
         public LogLevel consumptionLogging = LogLevel.ALL;
+        public int maxBuffSlots = 3;
+        public int autoGenDurationMultiplier = 1200;
+        public double autoGenHealthMultiplier = 0.5;
+        public boolean enableAlwaysEdibleOverride = true;
+        public boolean respectVanillaFoodEffects = false;
+        public boolean enableForgottenMead = true;
+        public boolean grantJournalOnFirstJoin = true;
+        public int commandPermissionLevel = 2;
+        public boolean enableDiscoveryToasts = true;
+        public int toastDisplayTimeMs = 5000;
+        public boolean stripFoodTooltips = true;
         public String hudLayout = "COMPACT";
         public String hudIconSize = "LARGE";
         public String hudPosition = "BOTTOM_LEFT";

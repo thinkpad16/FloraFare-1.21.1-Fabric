@@ -1,11 +1,11 @@
 # FloraFare
 
-A datapack-driven food overhaul for **Minecraft 1.21.1 (Fabric)**. Eating food grants timed **buffs** (extra max health, attributes, status effects), and eating the right combinations at the same time unlocks hidden **synergies**. Everything — nutrition, saturation, buffs, synergies — is defined in JSON datapacks, so modpack makers have full control without touching code.
+A datapack-driven food overhaul for **Minecraft 1.21.1 (Fabric)**. Eating food grants timed **buffs** (extra max health, attributes, status effects), and eating the right combinations at the same time unlocks hidden **synergies**. Everything — nutrition, saturation, buffs, synergies, and almost every gameplay knob — is either defined in JSON datapacks or exposed in the mod config, so modpack makers have full control without touching code. FloraFare ships with a curated set of default buffs/synergies for vanilla food, so it works out of the box even with no extra datapack installed.
 
 - **Author:** tend1tnuy
 - **License:** MIT
 - **Requires:** Minecraft `1.21.1`, Fabric Loader, Fabric API, Java 21
-- **Optional:** [AppleSkin](https://modrinth.com/mod/appleskin) (hunger/saturation preview integration)
+- **Optional:** [AppleSkin](https://modrinth.com/mod/appleskin) (hunger/saturation preview integration), [ModMenu](https://modrinth.com/mod/modmenu) (in-game settings screen — Cloth Config is bundled automatically, no separate install needed)
 
 ---
 
@@ -23,7 +23,7 @@ A datapack-driven food overhaul for **Minecraft 1.21.1 (Fabric)**. Eating food g
 
 | Item | How you get it | What it does |
 |---|---|---|
-| **Food Journal** | Given automatically on first join | Right-click to open the journal: browse every configured food and its buff, plus discovered synergies. Undiscovered synergies stay hidden. Tag entries cycle through the items in the tag. |
+| **Food Journal** | Given automatically on first join (toggle: `grantJournalOnFirstJoin`) | Right-click to open the journal: browse every configured food and its buff, plus discovered synergies. A search bar filters the grid live by item/synergy name **or** by any effect/attribute it grants. Undiscovered synergies stay hidden. Tag entries cycle through the items in the tag. |
 | **Forgotten Mead** | Crafting / creative | Drink to remove your **most recently gained** buff (returns a glass bottle). Useful to free a buff slot. |
 
 ### HUD
@@ -40,7 +40,9 @@ Settings persist in the main config file.
 
 ## Datapacks
 
-FloraFare loads two kinds of data files. They work in **any datapack** — the mod's built-in pack, a world datapack (`<world>/datapacks/...`), or a server datapack. A datapack file at the **same path** as a built-in file overrides it completely.
+FloraFare loads two kinds of data files. They work in **any datapack** — the mod's own built-in pack (`data/florafare/...`, bundled in the jar), a world datapack (`<world>/datapacks/...`), or a server datapack. A datapack file at the **same path** as a built-in file overrides it completely — so a modpack can override or disable any of FloraFare's default vanilla-food buffs/synergies just by shipping a file at the same `data/florafare/food_buffs/<name>.json` / `food_synergies/<name>.json` path.
+
+The bundled default pack covers common vanilla foods (fruits & vegetables, breads, meats, seafood, golden foods) and six vanilla-only synergies (`fresh_fruits`, `raw_meats`, `hearty_lunch`, `ocean_bounty`, `golden_feast`, `fisherman_feast`) — enough to see buffs and synergies working immediately, without requiring any external datapack.
 
 ```
 data/
@@ -235,7 +237,7 @@ Notes:
 
 ## Commands
 
-All commands require permission level 2 (op).
+All commands require permission level 2 (op) by default — configurable via `commandPermissionLevel`.
 
 | Command | What it does |
 |---|---|
@@ -250,20 +252,56 @@ All commands require permission level 2 (op).
 
 ## Configuration (`config/florafare.json`)
 
+Every field below is editable in-game via **ModMenu** (if installed — Cloth Config is bundled with FloraFare, so no separate download is needed) as well as by hand-editing the JSON file.
+
 ```json
 {
   "enableSynergies": true,
   "consumptionLogging": "ALL",
+  "maxBuffSlots": 3,
+  "autoGenDurationMultiplier": 1200,
+  "autoGenHealthMultiplier": 0.5,
+  "enableAlwaysEdibleOverride": true,
+  "respectVanillaFoodEffects": false,
+  "enableForgottenMead": true,
+  "grantJournalOnFirstJoin": true,
+  "commandPermissionLevel": 2,
+  "enableDiscoveryToasts": true,
+  "toastDisplayTimeMs": 5000,
+  "stripFoodTooltips": true,
   "hudLayout": "COMPACT",
   "hudIconSize": "LARGE",
   "hudPosition": "BOTTOM_LEFT"
 }
 ```
 
+### Server-authoritative (synced to every client on join / after `/reload`)
+
 | Key | Values | Meaning |
 |---|---|---|
 | `enableSynergies` | `true` / `false` | Master switch for the synergy system. |
+| `maxBuffSlots` | int, default `3` | How many buffs a player can hold at once. |
+| `autoGenDurationMultiplier` | int, default `1200` | Global default for auto-generated buff duration (`vanilla nutrition × this`), used when no `config_generation.json` overrides it. |
+| `autoGenHealthMultiplier` | double, default `0.5` | Global default for auto-generated buff health bonus. |
+| `enableAlwaysEdibleOverride` | `true` / `false` | Master switch for the per-food `always_edible` datapack flag. |
+| `respectVanillaFoodEffects` | `true` / `false` | When `true`, a Florafare-managed food's *vanilla* status effects (e.g. chorus fruit's own chance-based effects) also apply alongside its configured buff, instead of being suppressed. |
+| `enableForgottenMead` | `true` / `false` | Whether Forgotten Mead actually removes a buff when drunk. |
+| `grantJournalOnFirstJoin` | `true` / `false` | Whether new players are automatically given a Food Journal. |
+
+### Server-only (not synced — restart or `/reload` to apply)
+
+| Key | Values | Meaning |
+|---|---|---|
+| `commandPermissionLevel` | int `0`-`4`, default `2` | Permission level required for all `/florafare` subcommands. |
+
+### Client-local (cosmetic, per-machine)
+
+| Key | Values | Meaning |
+|---|---|---|
 | `consumptionLogging` | `NONE` / `REDUCED` / `ALL` | Server-log detail: `ALL` logs every consumption and synergy with full stats, `REDUCED` only logs health-restoring foods (exploit tracking) and synergy activations, `NONE` disables logging. |
+| `enableDiscoveryToasts` | `true` / `false` | Whether discovering a new food/synergy shows a toast notification. |
+| `toastDisplayTimeMs` | int, default `5000` | How long discovery toasts stay on screen. |
+| `stripFoodTooltips` | `true` / `false` | Whether Florafare simplifies the tooltip of its managed foods (hiding vanilla nutrition/effect lines it has replaced). |
 | `hudLayout`, `hudIconSize`, `hudPosition` | see [HUD](#hud) | Client HUD appearance (also editable in-game with **H**). |
 
 ---

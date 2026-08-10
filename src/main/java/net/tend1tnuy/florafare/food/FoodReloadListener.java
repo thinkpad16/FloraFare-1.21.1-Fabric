@@ -58,6 +58,14 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
         FoodBuffManager.clear();
         absentModTargets = 0;
 
+        // Seed from the global config default; a datapack's own config_generation.json
+        // (below) can still override it for this reload. Also fixes these statics
+        // staying stale across /reload once no datapack defines the file anymore.
+        FoodBuffManager.AUTO_GEN_DURATION_MULT =
+                net.tend1tnuy.florafare.config.FlorafareConfig.autoGenDurationMultiplier;
+        FoodBuffManager.AUTO_GEN_HEALTH_MULT =
+                net.tend1tnuy.florafare.config.FlorafareConfig.autoGenHealthMultiplier;
+
         prepared.forEach((id, jsonElement) -> {
             try {
                 // Global auto-generation settings file.
@@ -84,7 +92,6 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
                 } else if (jsonElement.isJsonObject()) {
                     JsonObject obj = jsonElement.getAsJsonObject();
 
-                    // Зчитуємо глобальні параметри для всього файлу
                     int filePriority = obj.has(KEY_PRIORITY)
                             ? obj.get(KEY_PRIORITY).getAsInt() : 0;
                     boolean fileAlwaysEdible = obj.has(KEY_ALWAYS_EDIBLE)
@@ -156,7 +163,6 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
         double healthBonus = json.has(KEY_HEALTH_BONUS) ? json.get(KEY_HEALTH_BONUS).getAsDouble() : 0.0;
         int    priority    = json.has(KEY_PRIORITY)    ? json.get(KEY_PRIORITY).getAsInt()    : filePriority;
 
-        // Якщо параметр вказаний всередині елемента — використовуємо його. Якщо ні — використовуємо глобальний (з кореня)
         boolean alwaysEdible = json.has(KEY_ALWAYS_EDIBLE)
                 ? json.get(KEY_ALWAYS_EDIBLE).getAsBoolean() : fileAlwaysEdible;
 

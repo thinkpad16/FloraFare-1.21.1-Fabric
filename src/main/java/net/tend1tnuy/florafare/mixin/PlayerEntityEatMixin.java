@@ -88,9 +88,19 @@ public abstract class PlayerEntityEatMixin {
                 Criteria.CONSUME_ITEM.trigger(player, stack);
 
                 // --- Replicate the cancelled LivingEntity#eatFood (super) side effects ---
-                // NOTE: the FoodComponent's own status effects (applyFoodEffects) are
-                // intentionally NOT replicated — for Florafare-managed foods, all effects
-                // are defined exclusively via datapack configs.
+                // By default, the FoodComponent's own status effects (applyFoodEffects) are
+                // NOT replicated — for Florafare-managed foods, all effects are defined
+                // exclusively via datapack configs. Server admins can opt back into vanilla
+                // effects stacking alongside the Florafare buff via the config flag below.
+                if (FlorafareConfig.respectVanillaFoodEffects) {
+                    for (FoodComponent.StatusEffectEntry entry : food.effects()) {
+                        if (world.random.nextFloat() < entry.probability()) {
+                            player.addStatusEffect(
+                                    new net.minecraft.entity.effect.StatusEffectInstance(entry.effect()));
+                        }
+                    }
+                }
+
                 world.playSound(
                         null,
                         player.getX(), player.getY(), player.getZ(),

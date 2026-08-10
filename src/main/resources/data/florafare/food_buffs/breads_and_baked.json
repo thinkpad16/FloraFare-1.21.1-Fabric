@@ -1,0 +1,35 @@
+{
+  "priority": 1,
+  "entries": [
+    {
+      "id": "minecraft:bread",
+      "duration": 3000,
+      "nutrition": 5,
+      "saturation": 0.6,
+      "health_bonus": 1
+    },
+    {
+      "id": "minecraft:baked_potato",
+      "duration": 3000,
+      "nutrition": 5,
+      "saturation": 0.6,
+      "health_bonus": 1
+    },
+    {
+      "id": "minecraft:cookie",
+      "duration": 1800,
+      "nutrition": 2,
+      "saturation": 0.1,
+      "attributes": [
+        { "attribute": "minecraft:generic.luck", "amount": 1.0, "operation": "add_value" }
+      ]
+    },
+    {
+      "id": "minecraft:pumpkin_pie",
+      "duration": 3600,
+      "nutrition": 8,
+      "saturation": 0.3,
+      "health_bonus": 2
+    }
+  ]
+}

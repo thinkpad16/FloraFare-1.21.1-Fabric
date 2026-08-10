@@ -27,7 +27,8 @@ public abstract class ItemStackMixin {
     private void florafare$clearExtraneousTooltips(Item.TooltipContext context, PlayerEntity player, TooltipType type, CallbackInfoReturnable<List<Text>> cir) {
         ItemStack stack = (ItemStack) (Object) this;
 
-        if (FoodBuffManager.getConfig(stack) != null) {
+        if (net.tend1tnuy.florafare.config.FlorafareConfig.stripFoodTooltips
+                && FoodBuffManager.getConfig(stack) != null) {
             List<Text> tooltip = cir.getReturnValue();
 
             if (tooltip != null && tooltip.size() > 1) {

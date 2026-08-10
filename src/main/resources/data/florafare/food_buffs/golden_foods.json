@@ -1,0 +1,38 @@
+{
+  "priority": 2,
+  "entries": [
+    {
+      "id": "minecraft:golden_carrot",
+      "duration": 3600,
+      "nutrition": 6,
+      "saturation": 1.2,
+      "health_bonus": 2,
+      "effects": [
+        { "id": "minecraft:night_vision", "duration": 3000, "amplifier": 0 }
+      ]
+    },
+    {
+      "id": "minecraft:golden_apple",
+      "duration": 6000,
+      "nutrition": 4,
+      "saturation": 1.2,
+      "health_bonus": 4,
+      "effects": [
+        { "id": "minecraft:regeneration", "duration": 100, "amplifier": 1 }
+      ]
+    },
+    {
+      "id": "minecraft:enchanted_golden_apple",
+      "priority": 3,
+      "duration": 9000,
+      "nutrition": 4,
+      "saturation": 1.2,
+      "health_bonus": 8,
+      "effects": [
+        { "id": "minecraft:regeneration", "duration": 200, "amplifier": 1 },
+        { "id": "minecraft:resistance", "duration": 6000, "amplifier": 0 },
+        { "id": "minecraft:fire_resistance", "duration": 6000, "amplifier": 0 }
+      ]
+    }
+  ]
+}

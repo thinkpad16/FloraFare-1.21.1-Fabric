@@ -9,8 +9,10 @@ group = project.maven_group
 repositories {
 	// AppleSkin (optional integration)
 	maven { url "https://maven.ryanliptak.com/" }
-	// Cloth Config (only needed for the commented-out AppleSkin dev-runtime testing below)
+	// Cloth Config (bundled via jar-in-jar for the ModMenu config screen)
 	maven { url "https://maven.shedaniel.me/" }
+	// ModMenu (optional integration)
+	maven { url "https://maven.terraformersmc.com/" }
 }
 
 fabricApi {
@@ -31,9 +33,22 @@ dependencies {
 	// optional — our integration class is only loaded via AppleSkin's own "appleskin"
 	// entrypoint, which only fires when AppleSkin is installed.
 	modCompileOnly "squeek.appleskin:appleskin-fabric:${project.appleskin_version}"
-	// To test the AppleSkin integration in the dev client, uncomment these two lines:
+	// To test the AppleSkin integration in the dev client, uncomment this line:
 	//modLocalRuntime "squeek.appleskin:appleskin-fabric:${project.appleskin_version}"
-	//modLocalRuntime "me.shedaniel.cloth:cloth-config-fabric:15.0.140"
+
+	// Cloth Config: bundled via jar-in-jar ("include") so the ModMenu config screen
+	// always has it available at runtime, without forcing users to install it
+	// separately or making it a hard mod dependency.
+	modImplementation("me.shedaniel.cloth:cloth-config-fabric:${project.cloth_config_version}") {
+		exclude group: "net.fabricmc.fabric-api"
+	}
+	include "me.shedaniel.cloth:cloth-config-fabric:${project.cloth_config_version}"
+
+	// ModMenu: genuinely optional. compileOnly so the "modmenu" entrypoint class
+	// compiles against its API, modLocalRuntime so it's present in the dev client;
+	// neither bundles it into the built jar or requires it at distribution time.
+	modCompileOnly "com.terraformersmc:modmenu:${project.modmenu_version}"
+	modLocalRuntime "com.terraformersmc:modmenu:${project.modmenu_version}"
 }
 
 processResources {

@@ -2,15 +2,11 @@
 	"schemaVersion": 1,
 	"id": "florafare",
 	"version": "${version}",
-	"name": "florafare",
-	"description": "!",
+	"name": "FloraFare",
+	"description": "A datapack-driven food overhaul: eating grants timed buffs, and combining the right dishes unlocks hidden synergies. Fully configurable, with an in-game ModMenu settings screen and a searchable culinary journal.",
 	"authors": [
 		"tend1tnuy"
 	],
-	"contact": {
-		"homepage": "https://fabricmc.net/",
-		"sources": "https://github.com/FabricMC/fabric-example-mod"
-	},
 	"license": "MIT",
 	"icon": "assets/florafare/icon.png",
 	"environment": "*",
@@ -26,6 +22,9 @@
       ],
       "appleskin": [
         "net.tend1tnuy.florafare.compat.appleskin.AppleSkinIntegration"
+      ],
+      "modmenu": [
+        "net.tend1tnuy.florafare.compat.modmenu.FlorafareModMenuIntegration"
       ]
 	},
 	"mixins": [
@@ -38,6 +37,7 @@
 		"fabric-api": "*"
 	},
 	"suggests": {
-		"appleskin": "*"
+		"appleskin": "*",
+		"modmenu": "*"
 	}
 }

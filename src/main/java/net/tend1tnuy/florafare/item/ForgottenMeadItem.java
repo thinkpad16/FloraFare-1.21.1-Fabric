@@ -23,16 +23,14 @@ public class ForgottenMeadItem extends Item {
 
     @Override
     public ItemStack finishUsing(ItemStack stack, World world, LivingEntity user) {
-        // Handle base food consumption logic (e.g., decrementing stack size)
         ItemStack result = super.finishUsing(stack, world, user);
 
-        // Remove the last active buff on the server side
-        if (!world.isClient && user instanceof ServerPlayerEntity player) {
+        if (!world.isClient && user instanceof ServerPlayerEntity player
+                && net.tend1tnuy.florafare.config.FlorafareConfig.enableForgottenMead) {
             PlayerFoodComponent component = ((IFoodComponentProvider) player).florafare$getFoodComponent();
             component.removeLastBuff();
         }
 
-        // Return a glass bottle to the player if not in creative mode
         if (user instanceof PlayerEntity player && !player.getAbilities().creativeMode) {
             ItemStack bottle = new ItemStack(Items.GLASS_BOTTLE);
             if (result.isEmpty()) {

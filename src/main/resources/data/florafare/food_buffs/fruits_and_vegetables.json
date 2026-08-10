@@ -1,0 +1,75 @@
+{
+  "priority": 1,
+  "entries": [
+    {
+      "id": "minecraft:apple",
+      "duration": 2400,
+      "nutrition": 4,
+      "saturation": 0.3,
+      "attributes": [
+        { "attribute": "minecraft:generic.movement_speed", "amount": 0.02, "operation": "add_multiplied_base" }
+      ]
+    },
+    {
+      "id": "minecraft:carrot",
+      "duration": 2400,
+      "nutrition": 3,
+      "saturation": 0.6,
+      "effects": [
+        { "id": "minecraft:night_vision", "duration": 200, "amplifier": 0 }
+      ]
+    },
+    {
+      "id": "minecraft:potato",
+      "duration": 1800,
+      "nutrition": 1,
+      "saturation": 0.3
+    },
+    {
+      "id": "minecraft:beetroot",
+      "duration": 1800,
+      "nutrition": 1,
+      "saturation": 0.6,
+      "health_bonus": 1
+    },
+    {
+      "id": "minecraft:melon_slice",
+      "duration": 1800,
+      "nutrition": 2,
+      "saturation": 0.3
+    },
+    {
+      "id": "minecraft:sweet_berries",
+      "duration": 1800,
+      "nutrition": 2,
+      "saturation": 0.1,
+      "attributes": [
+        { "attribute": "minecraft:generic.jump_strength", "amount": 0.05, "operation": "add_multiplied_base" }
+      ]
+    },
+    {
+      "id": "minecraft:glow_berries",
+      "duration": 1800,
+      "nutrition": 2,
+      "saturation": 0.1,
+      "attributes": [
+        { "attribute": "minecraft:generic.luck", "amount": 1.0, "operation": "add_value" }
+      ]
+    },
+    {
+      "id": "minecraft:chorus_fruit",
+      "duration": 1200,
+      "nutrition": 4,
+      "saturation": 0.3
+    },
+    {
+      "id": "minecraft:poisonous_potato",
+      "duration": 1200,
+      "nutrition": 2,
+      "saturation": 0.3,
+      "effects": [
+        { "id": "minecraft:poison", "duration": 100, "amplifier": 0 }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,88 @@
+{
+  "entries": [
+    {
+      "id": "florafare:fresh_fruits",
+      "requirements": [
+        "minecraft:carrot",
+        "minecraft:melon_slice",
+        "minecraft:apple"
+      ],
+      "duration": 6000,
+      "attributes": [
+        { "attribute": "minecraft:generic.movement_speed", "amount": 0.05, "operation": "add_multiplied_base" },
+        { "attribute": "minecraft:generic.luck", "amount": 2.0, "operation": "add_value" },
+        { "attribute": "minecraft:generic.jump_strength", "amount": 0.1, "operation": "add_multiplied_base" }
+      ]
+    },
+    {
+      "id": "florafare:raw_meats",
+      "requirements": [
+        "minecraft:porkchop",
+        "minecraft:beef",
+        "minecraft:mutton"
+      ],
+      "duration": 6000,
+      "attributes": [
+        { "attribute": "minecraft:generic.attack_damage", "amount": 3.0, "operation": "add_value" },
+        { "attribute": "minecraft:generic.attack_knockback", "amount": 1.0, "operation": "add_value" },
+        { "attribute": "minecraft:player.sweeping_damage_ratio", "amount": 0.2, "operation": "add_multiplied_base" }
+      ]
+    },
+    {
+      "id": "florafare:hearty_lunch",
+      "requirements": [
+        "minecraft:baked_potato",
+        "minecraft:cooked_beef",
+        "minecraft:carrot"
+      ],
+      "duration": 2400,
+      "health_bonus": 6,
+      "effects": [
+        { "id": "minecraft:resistance", "duration": 2400, "amplifier": 0 }
+      ]
+    },
+    {
+      "id": "florafare:ocean_bounty",
+      "requirements": [
+        "#minecraft:fishes",
+        "minecraft:dried_kelp"
+      ],
+      "duration": 2400,
+      "health_bonus": 4,
+      "attributes": [
+        { "attribute": "minecraft:generic.water_movement_efficiency", "amount": 0.2, "operation": "add_multiplied_base" }
+      ]
+    },
+    {
+      "id": "florafare:golden_feast",
+      "requirements": [
+        "minecraft:golden_apple",
+        "minecraft:golden_carrot",
+        "minecraft:pumpkin_pie"
+      ],
+      "duration": 4800,
+      "health_bonus": 4,
+      "effects": [
+        { "id": "minecraft:regeneration", "duration": 4800, "amplifier": 0 }
+      ],
+      "attributes": [
+        { "attribute": "minecraft:generic.max_absorption", "amount": 4.0, "operation": "add_value" }
+      ]
+    },
+    {
+      "id": "florafare:fisherman_feast",
+      "requirements": [
+        "minecraft:cooked_cod",
+        "minecraft:cooked_salmon",
+        "minecraft:dried_kelp"
+      ],
+      "duration": 3600,
+      "effects": [
+        { "id": "minecraft:water_breathing", "duration": 3600, "amplifier": 0 }
+      ],
+      "attributes": [
+        { "attribute": "minecraft:generic.water_movement_efficiency", "amount": 0.2, "operation": "add_multiplied_base" }
+      ]
+    }
+  ]
+}

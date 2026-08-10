@@ -3,6 +3,7 @@ package net.tend1tnuy.florafare.client;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.PageTurnWidget;
+import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.client.sound.PositionedSoundInstance;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
@@ -26,6 +27,7 @@ import net.tend1tnuy.florafare.food.FoodSynergyManager;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 public class FoodJournalScreen extends Screen {
@@ -39,16 +41,22 @@ public class FoodJournalScreen extends Screen {
 
     private static final int BOOK_WIDTH  = 192;
     private static final int BOOK_HEIGHT = 192;
+    private static final int BOOK_X_SHIFT = 20; // nudges the whole panel right of dead-center
 
-    // Grid layout
+    // Grid layout — one row shorter than the book could fit, to make room for the search bar.
     private static final int ITEMS_PER_ROW  = 5;
-    private static final int ROWS_PER_PAGE  = 5;
+    private static final int ROWS_PER_PAGE  = 4;
     private static final int ITEMS_PER_PAGE = ITEMS_PER_ROW * ROWS_PER_PAGE;
     private static final int ITEM_SPACING   = 23;
 
     // Named pixel offsets — all relative to bookX / bookY
     private static final int GRID_START_X_OFFSET   = 37;
-    private static final int GRID_START_Y_OFFSET   = 36;
+    private static final int GRID_START_Y_OFFSET   = 60;
+    private static final int SEARCH_BAR_Y_OFFSET    = 44;
+    private static final int SEARCH_ICON_WIDTH      = 9;
+    private static final int SEARCH_FIELD_HEIGHT    = 8;
+    private static final int SEARCH_FIELD_WIDTH     =
+            ITEMS_PER_ROW * ITEM_SPACING - SEARCH_ICON_WIDTH - 20;
     private static final int TITLE_Y_OFFSET         = 12;
     private static final int TITLE_UNDERLINE_Y      = 22;
     private static final int PROGRESS_Y_OFFSET      = 26;
@@ -88,6 +96,12 @@ public class FoodJournalScreen extends Screen {
     private static final int COLOR_DIVIDER        = 0x55503010;
     private static final int COLOR_LOCKED_OVERLAY = 0x99000000;
 
+    // Search field — a light card so typed/placeholder text has clean contrast against
+    // the vanilla book page, with a soft translucent border (not a hard opaque outline,
+    // which read as too heavy/"fat" next to the rest of the book's thin ink lines).
+    private static final int COLOR_SEARCH_BOX_BG     = 0xFFF3E6C6;
+    private static final int COLOR_SEARCH_BOX_BORDER = 0x66503010;
+
     // -------------------------------------------------------------------------
     // SCREEN STATE
     // -------------------------------------------------------------------------
@@ -99,6 +113,18 @@ public class FoodJournalScreen extends Screen {
     private ScreenState currentState = ScreenState.INDEX;
     private int currentPage = 0;
     private int maxPages    = 1;
+
+    // Animation timing — content slides/pops into place on open and on every state change.
+    private long screenOpenTimeMs = System.currentTimeMillis();
+    private long stateEnterTimeMs = System.currentTimeMillis();
+    private static final long OPEN_ANIM_MS  = 220L;
+    private static final long STATE_ANIM_MS = 180L;
+
+    /** Switches screen state and restarts the content entrance animation. */
+    private void setState(ScreenState newState) {
+        this.currentState    = newState;
+        this.stateEnterTimeMs = System.currentTimeMillis();
+    }
 
     private final List<List<RenderLine>> detailPages = new ArrayList<>();
     private int detailCurrentPage = 0;
@@ -112,6 +138,12 @@ public class FoodJournalScreen extends Screen {
 
     private PageTurnWidget nextPageButton;
     private PageTurnWidget previousPageButton;
+    private TextFieldWidget searchField;
+    private String searchQuery = "";
+
+    /** Filtered views of {@link JournalDataCache#foods}/{@code synergies}, recomputed on search change. */
+    private List<FoodEntry>    filteredFoods     = new ArrayList<>();
+    private List<SynergyEntry> filteredSynergies = new ArrayList<>();
 
     // -------------------------------------------------------------------------
     // DATA CACHE
@@ -138,9 +170,12 @@ public class FoodJournalScreen extends Screen {
         CACHE.valid = false;
     }
 
-    // Convenience accessors into the cache
-    private List<FoodEntry>    displayItems        () { return CACHE.foods; }
-    private List<SynergyEntry> synergyDisplayItems () { return CACHE.synergies; }
+    // Convenience accessors — the grid/pagination work off the search-filtered view,
+    // while progress counters always reflect the full unfiltered set.
+    private List<FoodEntry>    displayItems        () { return filteredFoods; }
+    private List<SynergyEntry> synergyDisplayItems () { return filteredSynergies; }
+    private List<FoodEntry>    allFoodItems        () { return CACHE.foods; }
+    private List<SynergyEntry> allSynergyItems     () { return CACHE.synergies; }
     private int unlockedCount        () { return CACHE.unlockedFoods; }
     private int unlockedSynergyCount () { return CACHE.unlockedSynergies; }
 
@@ -160,9 +195,36 @@ public class FoodJournalScreen extends Screen {
         if (!CACHE.valid) {
             rebuildCache();
         }
+        // Re-applies the current search query (empty on a fresh screen instance —
+        // search resets each time the journal is reopened) to the freshly built cache.
+        rebuildFilteredLists();
 
         int bookX = bookX();
         int bookY = bookY();
+
+        // Explicit color on the placeholder Text itself — TextFieldWidget renders the
+        // placeholder using the Text's own style, not the editable/uneditable color
+        // fields, so leaving it unstyled fell back to vanilla's default (near-white),
+        // unreadable against the light parchment card.
+        Text placeholderText = Text.translatable("gui.florafare.journal.search.placeholder")
+                .copy().styled(style -> style.withColor(
+                        net.minecraft.text.TextColor.fromRgb(COLOR_INK_FAINT)));
+
+        this.searchField = new TextFieldWidget(this.textRenderer,
+                bookX + GRID_START_X_OFFSET + SEARCH_ICON_WIDTH, bookY + SEARCH_BAR_Y_OFFSET,
+                SEARCH_FIELD_WIDTH, SEARCH_FIELD_HEIGHT,
+                placeholderText);
+        this.searchField.setMaxLength(50);
+        this.searchField.setDrawsBackground(false);
+        // TextFieldWidget always renders with a text shadow (no public toggle for it),
+        // which paired with the near-black ink read as too heavy/bold next to the rest
+        // of the book's shadow-less text — a softer mid ink tone reads much lighter.
+        this.searchField.setEditableColor(COLOR_INK_MID);
+        this.searchField.setUneditableColor(COLOR_INK_FAINT);
+        this.searchField.setPlaceholder(placeholderText);
+        this.searchField.setText(searchQuery);
+        this.searchField.setChangedListener(this::onSearchChanged);
+        this.addDrawableChild(this.searchField);
 
         this.previousPageButton = this.addDrawableChild(new PageTurnWidget(
                 bookX + PREV_BTN_X_OFFSET, bookY + BTN_Y_OFFSET, false, btn -> {
@@ -171,15 +233,15 @@ public class FoodJournalScreen extends Screen {
                 if (detailCurrentPage > 0) {
                     detailCurrentPage--;
                 } else {
-                    currentState = (currentState == ScreenState.FOOD_DETAIL)
-                            ? ScreenState.FOOD_GRID : ScreenState.SYNERGY_GRID;
+                    setState((currentState == ScreenState.FOOD_DETAIL)
+                            ? ScreenState.FOOD_GRID : ScreenState.SYNERGY_GRID);
                 }
             } else if (currentState == ScreenState.FOOD_GRID
                     || currentState == ScreenState.SYNERGY_GRID) {
                 if (currentPage > 0) {
                     currentPage--;
                 } else {
-                    currentState = ScreenState.INDEX;
+                    setState(ScreenState.INDEX);
                 }
             }
             updatePageButtons();
@@ -222,7 +284,6 @@ public class FoodJournalScreen extends Screen {
                 ((IFoodComponentProvider) this.client.player)
                         .florafare$getFoodComponent().getDiscoveredFoods();
 
-        // Створюємо набір цілей (target), які реально прописані в датапаку
         Set<String> datapackTargets = new HashSet<>();
         for (FoodBuffData data : FoodBuffManager.getAllConfigs()) {
             datapackTargets.add(data.target());
@@ -252,8 +313,7 @@ public class FoodJournalScreen extends Screen {
 
             if (data == null || data.target().startsWith("potion:")) continue;
 
-            // Відфільтровуємо автозгенеровані ванільні страви:
-            // якщо цілі немає в конфігах датапаку, пропускаємо
+            // Skip auto-generated entries — only show foods with an explicit datapack config.
             if (!datapackTargets.contains(data.target())) continue;
 
             String itemId = Registries.ITEM.getId(item).toString();
@@ -285,6 +345,71 @@ public class FoodJournalScreen extends Screen {
     }
 
     // -------------------------------------------------------------------------
+    // SEARCH
+    // -------------------------------------------------------------------------
+
+    private void onSearchChanged(String query) {
+        this.searchQuery = query;
+        rebuildFilteredLists();
+        this.currentPage = 0;
+        updatePageButtons();
+    }
+
+    /** Recomputes {@link #filteredFoods}/{@link #filteredSynergies} from the current query. */
+    private void rebuildFilteredLists() {
+        String query = searchQuery.trim().toLowerCase(Locale.ROOT);
+
+        if (query.isEmpty()) {
+            filteredFoods     = CACHE.foods;
+            filteredSynergies = CACHE.synergies;
+            return;
+        }
+
+        filteredFoods = new ArrayList<>();
+        for (FoodEntry entry : CACHE.foods) {
+            if (matchesQuery(entry.stack.getName().getString(), entry.data.effects(),
+                    entry.data.attributes(), query)) {
+                filteredFoods.add(entry);
+            }
+        }
+
+        filteredSynergies = new ArrayList<>();
+        for (SynergyEntry entry : CACHE.synergies) {
+            String name = Text.translatable(
+                    "synergy.florafare." + entry.data.id().replace(":", ".")).getString();
+            if (matchesQuery(name, entry.data.effects(), entry.data.attributes(), query)) {
+                filteredSynergies.add(entry);
+            }
+        }
+    }
+
+    /**
+     * Matches a display name and its granted effects/attributes against a lowercase
+     * search query. Locked entries are matched the same as unlocked ones — they still
+     * render as {@code ?} in the grid, only whether they appear in the filtered list
+     * changes — consistent with the journal's "browse everything, unlock the detail
+     * view" model.
+     */
+    private boolean matchesQuery(String displayName, List<FoodBuffData.EffectData> effects,
+                                 List<FoodBuffData.AttributeData> attributes, String query) {
+        if (displayName.toLowerCase(Locale.ROOT).contains(query)) return true;
+
+        for (FoodBuffData.EffectData effect : effects) {
+            String effectName = Text.translatable(
+                    "effect." + effect.id().getNamespace() + "." + effect.id().getPath()).getString();
+            if (effectName.toLowerCase(Locale.ROOT).contains(query)) return true;
+        }
+
+        for (FoodBuffData.AttributeData attr : attributes) {
+            String attrKey = "florafare.attribute." + attr.attributeId().getPath().replace("generic.", "");
+            String attrName = Text.translatable(attrKey).getString();
+            if (attrName.toLowerCase(Locale.ROOT).contains(query)) return true;
+        }
+
+        return false;
+    }
+
+    // -------------------------------------------------------------------------
     // PAGE BUTTON MANAGEMENT
     // -------------------------------------------------------------------------
 
@@ -301,6 +426,13 @@ public class FoodJournalScreen extends Screen {
         } else {
             this.previousPageButton.visible = true;
             this.nextPageButton.visible     = this.currentPage < this.maxPages - 1;
+        }
+
+        boolean showSearch = currentState == ScreenState.FOOD_GRID
+                || currentState == ScreenState.SYNERGY_GRID;
+        this.searchField.setVisible(showSearch);
+        if (!showSearch) {
+            this.searchField.setFocused(false);
         }
     }
 
@@ -443,6 +575,22 @@ public class FoodJournalScreen extends Screen {
         int bookX = bookX();
         int bookY = bookY();
 
+        // Opening pop: the whole book scales in from ~92% to 100%, eased out. Only
+        // affects drawing, not widget hit-boxes — harmless since page buttons/search
+        // are invisible during the INDEX state, which is always what's showing when
+        // this first plays.
+        long  sinceOpen  = System.currentTimeMillis() - screenOpenTimeMs;
+        float openT      = MathHelper.clamp(sinceOpen / (float) OPEN_ANIM_MS, 0.0f, 1.0f);
+        float openEased  = 1.0f - (1.0f - openT) * (1.0f - openT) * (1.0f - openT);
+        float openScale  = 0.92f + 0.08f * openEased;
+        float pivotX     = bookX + BOOK_WIDTH  / 2.0f;
+        float pivotY     = bookY + BOOK_HEIGHT / 2.0f;
+
+        context.getMatrices().push();
+        context.getMatrices().translate(pivotX, pivotY, 0);
+        context.getMatrices().scale(openScale, openScale, 1.0f);
+        context.getMatrices().translate(-pivotX, -pivotY, 0);
+
         // Draw the vanilla book texture — no overlays or vignettes on top of it.
         context.drawTexture(BOOK_TEXTURE, bookX, bookY, 0, 0,
                 BOOK_WIDTH, BOOK_HEIGHT, 256, 256);
@@ -452,6 +600,15 @@ public class FoodJournalScreen extends Screen {
         hoverFoodsIndex     = false;
         hoverSynergiesIndex = false;
 
+        // Content slide: each time the state changes (index -> grid -> detail, and
+        // back), the new content eases up into place instead of snapping in instantly.
+        long  sinceState   = System.currentTimeMillis() - stateEnterTimeMs;
+        float stateT       = MathHelper.clamp(sinceState / (float) STATE_ANIM_MS, 0.0f, 1.0f);
+        float stateEased   = 1.0f - (1.0f - stateT) * (1.0f - stateT);
+        float slideOffset  = (1.0f - stateEased) * 6.0f;
+
+        context.getMatrices().push();
+        context.getMatrices().translate(0, slideOffset, 0);
         switch (currentState) {
             case INDEX          -> drawIndexPage(context, mouseX, mouseY, bookX, bookY);
             case FOOD_GRID      -> drawGridContent(context, mouseX, mouseY, bookX, bookY, false, delta);
@@ -459,6 +616,9 @@ public class FoodJournalScreen extends Screen {
             case FOOD_DETAIL    -> drawFoodDetailView(context, bookX, bookY);
             case SYNERGY_DETAIL -> drawSynergyDetailView(context, bookX, bookY);
         }
+        context.getMatrices().pop();
+
+        context.getMatrices().pop();
 
         super.render(context, mouseX, mouseY, delta);
 
@@ -514,7 +674,7 @@ public class FoodJournalScreen extends Screen {
 
         // Subtitle
         Text subtitle = Text.translatable("gui.florafare.journal.subtitle",
-                unlockedCount(), displayItems().size());
+                unlockedCount(), allFoodItems().size());
         int subWidth = this.textRenderer.getWidth(subtitle);
         context.getMatrices().push();
         context.getMatrices().translate(centerX, bookY + INDEX_SUBTITLE_Y, 0);
@@ -597,6 +757,14 @@ public class FoodJournalScreen extends Screen {
         context.drawText(this.textRenderer, gem, centerX - gemW / 2, y, COLOR_INK_FAINT, false);
     }
 
+    /** Small hand-drawn magnifying glass (lens ring + diagonal handle) — no texture asset needed. */
+    private void drawMagnifyingGlass(DrawContext context, int x, int y) {
+        int color = 0xFF5C4A2A; // COLOR_INK_LIGHT, made opaque for fill/drawBorder use
+        context.drawBorder(x, y, 5, 5, color);
+        context.fill(x + 4, y + 5, x + 6, y + 6, color);
+        context.fill(x + 5, y + 6, x + 7, y + 7, color);
+    }
+
     // -------------------------------------------------------------------------
     // GRID PAGE
     // -------------------------------------------------------------------------
@@ -611,7 +779,7 @@ public class FoodJournalScreen extends Screen {
         // Section title
         Text titleText = Text.translatable(isSynergy
                 ? "gui.florafare.journal.synergies_title"
-                : "gui.florafare.journal.tab.foods");
+                : "gui.florafare.journal.dishes_title");
         int titleW = this.textRenderer.getWidth(titleText);
         context.drawText(this.textRenderer, titleText,
                 centerX - titleW / 2, bookY + TITLE_Y_OFFSET, COLOR_INK_DARK, false);
@@ -619,9 +787,9 @@ public class FoodJournalScreen extends Screen {
         context.fill(centerX - 40, bookY + TITLE_UNDERLINE_Y,
                 centerX + 40, bookY + TITLE_UNDERLINE_Y + 1, COLOR_DIVIDER);
 
-        // Progress tracker
+        // Progress tracker — always against the full (unfiltered) set.
         int  unlocked     = isSynergy ? unlockedSynergyCount() : unlockedCount();
-        int  total        = isSynergy ? synergyDisplayItems().size() : displayItems().size();
+        int  total        = isSynergy ? allSynergyItems().size() : allFoodItems().size();
         Text trackerText  = Text.translatable("gui.florafare.journal.progress", unlocked, total);
         int  trackerColor = (unlocked == total && total > 0) ? COLOR_GOLD : COLOR_INK_FAINT;
 
@@ -639,6 +807,18 @@ public class FoodJournalScreen extends Screen {
                 centerX + pageStrW / 2 + 3, bookY + PAGE_COUNTER_BG_BOTTOM, 0x22100800);
         context.drawText(this.textRenderer, pageStr,
                 centerX - pageStrW / 2, bookY + PAGE_COUNTER_Y_OFFSET, COLOR_INK_FAINT, false);
+
+        // Search bar — parchment-styled box behind the (background-less) vanilla text
+        // field, plus a small hand-drawn magnifying glass; no extra texture assets.
+        int searchIconX   = bookX + GRID_START_X_OFFSET;
+        int searchFieldX  = searchIconX + SEARCH_ICON_WIDTH;
+        int searchY       = bookY + SEARCH_BAR_Y_OFFSET;
+        context.fill(searchFieldX - 1, searchY - 1,
+                searchFieldX + SEARCH_FIELD_WIDTH + 1, searchY + SEARCH_FIELD_HEIGHT + 1,
+                COLOR_SEARCH_BOX_BG);
+        context.drawBorder(searchFieldX - 1, searchY - 1,
+                SEARCH_FIELD_WIDTH + 2, SEARCH_FIELD_HEIGHT + 2, COLOR_SEARCH_BOX_BORDER);
+        drawMagnifyingGlass(context, searchIconX + 1, searchY + 1);
 
         // Item grid
         int startX     = bookX + GRID_START_X_OFFSET;
@@ -695,8 +875,12 @@ public class FoodJournalScreen extends Screen {
                 if (isHovered) hoveredEntry = entry;
             }
 
+            // Small extra "lift" riding the same hover lerp as the scale, so hovered
+            // items feel like they tilt up off the page rather than just growing in place.
+            float lift = (scale - 1.0f) * 8.0f;
+
             context.getMatrices().push();
-            context.getMatrices().translate(x + 8, y + 8, 0);
+            context.getMatrices().translate(x + 8, y + 8 - lift, 0);
             context.getMatrices().scale(scale, scale, 1.0f);
             context.getMatrices().translate(-(x + 8), -(y + 8), 0);
 
@@ -856,7 +1040,7 @@ public class FoodJournalScreen extends Screen {
     // UTILITIES
     // -------------------------------------------------------------------------
 
-    private int bookX() { return (this.width  - BOOK_WIDTH)  / 2; }
+    private int bookX() { return (this.width - BOOK_WIDTH) / 2 + BOOK_X_SHIFT; }
     private int bookY() { return (this.height - BOOK_HEIGHT) / 2; }
 
     /**
@@ -898,13 +1082,13 @@ public class FoodJournalScreen extends Screen {
         if (button == 0) {
             if (currentState == ScreenState.INDEX) {
                 if (hoverFoodsIndex) {
-                    currentState = ScreenState.FOOD_GRID;
+                    setState(ScreenState.FOOD_GRID);
                     currentPage  = 0;
                     updatePageButtons();
                     playPageTurnSound();
                     return true;
                 } else if (FlorafareConfig.enableSynergies && hoverSynergiesIndex) {
-                    currentState = ScreenState.SYNERGY_GRID;
+                    setState(ScreenState.SYNERGY_GRID);
                     currentPage  = 0;
                     updatePageButtons();
                     playPageTurnSound();
@@ -935,7 +1119,7 @@ public class FoodJournalScreen extends Screen {
                             if (entry.isUnlocked) {
                                 selectedSynergy = entry;
                                 buildDetailPages(entry.data);
-                                currentState = ScreenState.SYNERGY_DETAIL;
+                                setState(ScreenState.SYNERGY_DETAIL);
                                 updatePageButtons();
                                 playPageTurnSound();
                             } else if (this.client != null) {
@@ -948,7 +1132,7 @@ public class FoodJournalScreen extends Screen {
                             if (entry.isUnlocked) {
                                 selectedEntry = entry;
                                 buildDetailPages(entry.data);
-                                currentState = ScreenState.FOOD_DETAIL;
+                                setState(ScreenState.FOOD_DETAIL);
                                 updatePageButtons();
                                 playPageTurnSound();
                             } else if (this.client != null) {

@@ -25,9 +25,6 @@ public class AppleSkinIntegration implements AppleSkinApi {
         TooltipOverlayEvent.Pre.EVENT.register(AppleSkinIntegration::onTooltipOverlayPre);
     }
 
-    /**
-     * Спільний метод для перевірки, чи гравець вже дослідив цю їжу.
-     */
     private static boolean isFoodDiscovered(ItemStack stack, FoodBuffData data) {
         PlayerEntity player = MinecraftClient.getInstance().player;
         if (player == null) {
@@ -40,9 +37,7 @@ public class AppleSkinIntegration implements AppleSkinApi {
         return discovered.contains(itemId) || discovered.contains(data.target());
     }
 
-    /**
-     * Приховує іконки ситості в тултипі (підказці при наведенні мишкою), якщо їжа не відкрита.
-     */
+    /** Hides the saturation/nutrition tooltip overlay for foods the player hasn't discovered yet. */
     private static void onTooltipOverlayPre(TooltipOverlayEvent.Pre event) {
         FoodBuffData data = FoodBuffManager.getConfig(event.itemStack);
         if (data == null) {
@@ -55,8 +50,9 @@ public class AppleSkinIntegration implements AppleSkinApi {
     }
 
     /**
-     * Динамічно змінює значення, які AppleSkin використовує для малювання шкали HUD
-     * (блимання "стегенець" при триманні їжі в руці).
+     * Overrides the nutrition/saturation values AppleSkin uses to draw its HUD overlay
+     * (the drumstick-blink preview shown while holding food), with the datapack-configured
+     * values instead of the item's vanilla FoodComponent.
      */
     private static void onFoodValues(FoodValuesEvent event) {
         ItemStack stack = event.itemStack;
@@ -71,15 +67,14 @@ public class AppleSkinIntegration implements AppleSkinApi {
 
         FoodComponent florafareValues;
 
-        // Якщо їжу ще не їли — передаємо AppleSkin нульові значення.
-        // Він побачить 0 ситості і просто не буде малювати прев'ю на HUD.
+        // Zero values for undiscovered food — AppleSkin then sees 0 saturation and
+        // simply skips drawing the HUD preview, keeping it hidden like the journal.
         if (!isFoodDiscovered(stack, data)) {
             florafareValues = new FoodComponent.Builder()
                     .nutrition(0)
                     .saturationModifier(0f)
                     .build();
         } else {
-            // Якщо їжа досліджена — віддаємо правильні значення з датапаку.
             florafareValues = new FoodComponent.Builder()
                     .nutrition(data.nutrition())
                     .saturationModifier(data.saturation())

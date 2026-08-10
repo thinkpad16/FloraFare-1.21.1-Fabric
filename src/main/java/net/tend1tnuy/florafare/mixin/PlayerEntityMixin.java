@@ -40,13 +40,13 @@ public abstract class PlayerEntityMixin implements IFoodComponentProvider {
     }
 
     /**
-     * Примусово дозволяє споживання, якщо гравець тримає їжу з параметром always_edible.
+     * Forces consumption to be allowed when the player holds food configured with
+     * the datapack's {@code always_edible} flag.
      */
     @Inject(method = "canConsume", at = @At("HEAD"), cancellable = true)
     private void florafare$allowAlwaysEdible(boolean ignoreHunger, CallbackInfoReturnable<Boolean> cir) {
-        if (!ignoreHunger) {
+        if (!ignoreHunger && net.tend1tnuy.florafare.config.FlorafareConfig.enableAlwaysEdibleOverride) {
             PlayerEntity player = (PlayerEntity) (Object) this;
-            // Перевіряємо обидві руки на наявність їжі з датапаку, яку можна їсти завжди
             if (FoodBuffManager.isAlwaysEdible(player.getMainHandStack()) ||
                     FoodBuffManager.isAlwaysEdible(player.getOffHandStack())) {
                 cir.setReturnValue(true);
