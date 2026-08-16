@@ -1,5 +1,6 @@
 package net.tend1tnuy.florafare.client;
 
+import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.PageTurnWidget;
@@ -52,11 +53,23 @@ public class FoodJournalScreen extends Screen {
     // Named pixel offsets — all relative to bookX / bookY
     private static final int GRID_START_X_OFFSET   = 37;
     private static final int GRID_START_Y_OFFSET   = 60;
-    private static final int SEARCH_BAR_Y_OFFSET    = 44;
-    private static final int SEARCH_ICON_WIDTH      = 9;
+
+    // Search bar — a single parchment "card" spanning the *same* left/right edges as
+    // the item grid below it (GRID_START_X_OFFSET - 2, out to the last column's right
+    // edge), so the two visually line up instead of the card floating narrower/offset
+    // from the grid. TextFieldWidget with drawsBackground(false) applies NONE of
+    // vanilla's usual padding (no 4px left inset, no vertical centering of the text
+    // row within its height), so both are computed by hand below via the search*()
+    // helpers — that omission is what previously left the placeholder text flush
+    // against the card's border and jammed against its own icon.
+    private static final int SEARCH_BAR_Y_OFFSET    = 42;
+    private static final int SEARCH_BAR_HEIGHT      = 13;
+    private static final int SEARCH_BAR_LEFT_OFFSET = GRID_START_X_OFFSET - 2;
+    private static final int SEARCH_BAR_WIDTH       = (ITEMS_PER_ROW - 1) * ITEM_SPACING + 20;
+    private static final int SEARCH_BAR_PAD_X       = 4;
+    private static final int SEARCH_ICON_SIZE       = 7;
+    private static final int SEARCH_ICON_TEXT_GAP   = 4;
     private static final int SEARCH_FIELD_HEIGHT    = 8;
-    private static final int SEARCH_FIELD_WIDTH     =
-            ITEMS_PER_ROW * ITEM_SPACING - SEARCH_ICON_WIDTH - 20;
     private static final int TITLE_Y_OFFSET         = 12;
     private static final int TITLE_UNDERLINE_Y      = 22;
     private static final int PROGRESS_Y_OFFSET      = 26;
@@ -101,6 +114,9 @@ public class FoodJournalScreen extends Screen {
     // which read as too heavy/"fat" next to the rest of the book's thin ink lines).
     private static final int COLOR_SEARCH_BOX_BG     = 0xFFF3E6C6;
     private static final int COLOR_SEARCH_BOX_BORDER = 0x66503010;
+    // Translucent ink wash for selected text — vanilla's selection is a hard inverted
+    // block, which looks wrong on parchment.
+    private static final int COLOR_SEARCH_SELECTION  = 0x553B2A14;
 
     // -------------------------------------------------------------------------
     // SCREEN STATE
@@ -138,7 +154,7 @@ public class FoodJournalScreen extends Screen {
 
     private PageTurnWidget nextPageButton;
     private PageTurnWidget previousPageButton;
-    private TextFieldWidget searchField;
+    private FlatTextFieldWidget searchField;
     private String searchQuery = "";
 
     /** Filtered views of {@link JournalDataCache#foods}/{@code synergies}, recomputed on search change. */
@@ -202,26 +218,24 @@ public class FoodJournalScreen extends Screen {
         int bookX = bookX();
         int bookY = bookY();
 
-        // Explicit color on the placeholder Text itself — TextFieldWidget renders the
-        // placeholder using the Text's own style, not the editable/uneditable color
-        // fields, so leaving it unstyled fell back to vanilla's default (near-white),
-        // unreadable against the light parchment card.
-        Text placeholderText = Text.translatable("gui.florafare.journal.search.placeholder")
-                .copy().styled(style -> style.withColor(
-                        net.minecraft.text.TextColor.fromRgb(COLOR_INK_FAINT)));
+        // Plain, unstyled placeholder — FlatTextFieldWidget draws it with an explicit
+        // colour argument, and a Text's own style colour would override that argument.
+        Text placeholderText =
+                Text.translatable("gui.florafare.journal.search.placeholder");
 
-        this.searchField = new TextFieldWidget(this.textRenderer,
-                bookX + GRID_START_X_OFFSET + SEARCH_ICON_WIDTH, bookY + SEARCH_BAR_Y_OFFSET,
-                SEARCH_FIELD_WIDTH, SEARCH_FIELD_HEIGHT,
-                placeholderText);
+        // FlatTextFieldWidget instead of a plain TextFieldWidget: vanilla always draws
+        // field text via drawTextWithShadow with no public toggle, and that shadow was
+        // what made the search text look bold/traced against the parchment while every
+        // other line in the book is drawn flat. See the class at the bottom of this file.
+        this.searchField = new FlatTextFieldWidget(this.textRenderer,
+                searchTextX(bookX), searchTextY(bookY),
+                searchTextWidth(bookX), SEARCH_FIELD_HEIGHT,
+                placeholderText,
+                COLOR_INK_MID, COLOR_INK_FAINT, COLOR_INK_DARK, COLOR_SEARCH_SELECTION);
         this.searchField.setMaxLength(50);
+        // Keeps getInnerWidth() equal to the widget width (vanilla subtracts 8 for its
+        // own background inset) — our card and padding are drawn by hand instead.
         this.searchField.setDrawsBackground(false);
-        // TextFieldWidget always renders with a text shadow (no public toggle for it),
-        // which paired with the near-black ink read as too heavy/bold next to the rest
-        // of the book's shadow-less text — a softer mid ink tone reads much lighter.
-        this.searchField.setEditableColor(COLOR_INK_MID);
-        this.searchField.setUneditableColor(COLOR_INK_FAINT);
-        this.searchField.setPlaceholder(placeholderText);
         this.searchField.setText(searchQuery);
         this.searchField.setChangedListener(this::onSearchChanged);
         this.addDrawableChild(this.searchField);
@@ -504,7 +518,7 @@ public class FoodJournalScreen extends Screen {
             allLines.add(new RenderLine("", COLOR_INK_DARK, 6, 0));
             allLines.add(new RenderLine(
                     Text.translatable("gui.florafare.journal.attributes_title").getString(),
-                    COLOR_INK_DARK, 14, 0));
+                    COLOR_INK_DARK, 14, 0, true));
             for (FoodBuffData.AttributeData attr : attributes) {
                 String attrKey  = "florafare.attribute."
                         + attr.attributeId().getPath().replace("generic.", "");
@@ -524,7 +538,7 @@ public class FoodJournalScreen extends Screen {
             allLines.add(new RenderLine("", COLOR_INK_DARK, 6, 0));
             allLines.add(new RenderLine(
                     Text.translatable("gui.florafare.journal.effects_title").getString(),
-                    COLOR_INK_DARK, 14, 0));
+                    COLOR_INK_DARK, 14, 0, true));
             for (var effect : effects) {
                 String effectKey  = "effect." + effect.id().getNamespace()
                         + "." + effect.id().getPath();
@@ -808,17 +822,18 @@ public class FoodJournalScreen extends Screen {
         context.drawText(this.textRenderer, pageStr,
                 centerX - pageStrW / 2, bookY + PAGE_COUNTER_Y_OFFSET, COLOR_INK_FAINT, false);
 
-        // Search bar — parchment-styled box behind the (background-less) vanilla text
-        // field, plus a small hand-drawn magnifying glass; no extra texture assets.
-        int searchIconX   = bookX + GRID_START_X_OFFSET;
-        int searchFieldX  = searchIconX + SEARCH_ICON_WIDTH;
-        int searchY       = bookY + SEARCH_BAR_Y_OFFSET;
-        context.fill(searchFieldX - 1, searchY - 1,
-                searchFieldX + SEARCH_FIELD_WIDTH + 1, searchY + SEARCH_FIELD_HEIGHT + 1,
-                COLOR_SEARCH_BOX_BG);
-        context.drawBorder(searchFieldX - 1, searchY - 1,
-                SEARCH_FIELD_WIDTH + 2, SEARCH_FIELD_HEIGHT + 2, COLOR_SEARCH_BOX_BORDER);
-        drawMagnifyingGlass(context, searchIconX + 1, searchY + 1);
+        // Search bar — a single parchment-styled card the full width of the grid below
+        // it, with a hand-drawn magnifying glass inset on the left and the
+        // (background-less) vanilla text field inset further in past it; no extra
+        // texture assets. Geometry comes from the search*() helpers so this card can
+        // never drift out of alignment with the real TextFieldWidget built in init().
+        int barLeft = searchBarLeft(bookX);
+        int barTop  = searchBarTop(bookY);
+        context.fill(barLeft, barTop,
+                barLeft + SEARCH_BAR_WIDTH, barTop + SEARCH_BAR_HEIGHT, COLOR_SEARCH_BOX_BG);
+        context.drawBorder(barLeft, barTop,
+                SEARCH_BAR_WIDTH, SEARCH_BAR_HEIGHT, COLOR_SEARCH_BOX_BORDER);
+        drawMagnifyingGlass(context, searchIconX(bookX), searchIconY(bookY));
 
         // Item grid
         int startX     = bookX + GRID_START_X_OFFSET;
@@ -857,8 +872,13 @@ public class FoodJournalScreen extends Screen {
 
             if (isSynergy) {
                 SynergyEntry entry = synergyDisplayItems().get(i);
-                entry.hoverScale = MathHelper.lerp(lerpFactor, entry.hoverScale,
-                        isHovered ? 1.25f : 1.0f);
+                // Undiscovered entries never animate — they keep a flat 1.0 scale (and
+                // therefore zero lift) so only the slot highlight reacts to hover. The
+                // grow-and-lift motion on a locked slot pushed the item and its "?"
+                // overlay past the slot's drawn border into the row above.
+                entry.hoverScale = entry.isUnlocked
+                        ? MathHelper.lerp(lerpFactor, entry.hoverScale, isHovered ? 1.25f : 1.0f)
+                        : 1.0f;
                 scale       = entry.hoverScale;
                 isUnlocked  = entry.isUnlocked;
                 stackToDraw = entry.reqStacks.isEmpty()
@@ -867,8 +887,9 @@ public class FoodJournalScreen extends Screen {
                 if (isHovered) hoveredSynergy = entry;
             } else {
                 FoodEntry entry = displayItems().get(i);
-                entry.hoverScale = MathHelper.lerp(lerpFactor, entry.hoverScale,
-                        isHovered ? 1.25f : 1.0f);
+                entry.hoverScale = entry.isUnlocked
+                        ? MathHelper.lerp(lerpFactor, entry.hoverScale, isHovered ? 1.25f : 1.0f)
+                        : 1.0f;
                 scale       = entry.hoverScale;
                 isUnlocked  = entry.isUnlocked;
                 stackToDraw = entry.stack;
@@ -883,20 +904,28 @@ public class FoodJournalScreen extends Screen {
             context.getMatrices().translate(x + 8, y + 8 - lift, 0);
             context.getMatrices().scale(scale, scale, 1.0f);
             context.getMatrices().translate(-(x + 8), -(y + 8), 0);
-
             context.drawItem(stackToDraw, x, y);
+            context.getMatrices().pop();
 
+            // Locked-dish darkening + "?" (and the synergy "✦" badge) are drawn in
+            // their own transform, separate from the item's hover scale/lift above.
+            // They used to share that transform, so on hover the darkened overlay
+            // grew and slid upward right along with the item and spilled past the
+            // slot's drawn border into the row above; pinning them to the plain
+            // 16x16 slot bounds keeps them contained regardless of hover state.
             if (!isUnlocked) {
+                context.getMatrices().push();
                 context.getMatrices().translate(0, 0, 200);
                 context.fill(x, y, x + 16, y + 16, COLOR_LOCKED_OVERLAY);
                 context.drawText(this.textRenderer, "?", x + 5, y + 4, 0xCCCCCC, false);
+                context.getMatrices().pop();
             } else if (isSynergy) {
+                context.getMatrices().push();
                 context.getMatrices().translate(0, 0, 200);
                 context.drawText(this.textRenderer, "✦", x - 1, y - 2,
                         COLOR_GOLD_BRIGHT, false);
+                context.getMatrices().pop();
             }
-
-            context.getMatrices().pop();
         }
     }
 
@@ -1005,21 +1034,20 @@ public class FoodJournalScreen extends Screen {
                 continue;
             }
 
-            int drawY = py;
-            if (line.height == 14) {
-                drawY += 2;
+            if (line.isHeader) {
+                // Headers are set apart by ink tone and a rule only. They used to be
+                // faux-bolded by drawing the same string again 1 px to the right, but
+                // Minecraft's font leaves just 1 px between glyphs, so the second pass
+                // filled every gap and ran the letters together into one solid slab.
+                int drawY = py + 2;
                 context.drawText(this.textRenderer, line.text,
                         px + line.offsetX, drawY, line.color, false);
-                // Faux-bold: render again 1 px to the right
-                context.drawText(this.textRenderer, line.text,
-                        px + line.offsetX + 1, drawY, line.color, false);
-                int headerW = this.textRenderer.getWidth(line.text);
+                int headerW = Math.min(this.textRenderer.getWidth(line.text), paperWidth - 8);
                 context.fill(px + line.offsetX, drawY + 10,
-                        px + line.offsetX + Math.min(headerW, paperWidth - 8),
-                        drawY + 11, 0x33503010);
+                        px + line.offsetX + headerW, drawY + 11, COLOR_DIVIDER);
             } else {
                 context.drawText(this.textRenderer, line.text,
-                        px + line.offsetX, drawY, line.color, false);
+                        px + line.offsetX, py, line.color, false);
             }
             py += line.height;
         }
@@ -1042,6 +1070,31 @@ public class FoodJournalScreen extends Screen {
 
     private int bookX() { return (this.width - BOOK_WIDTH) / 2 + BOOK_X_SHIFT; }
     private int bookY() { return (this.height - BOOK_HEIGHT) / 2; }
+
+    // -------------------------------------------------------------------------
+    // SEARCH BAR GEOMETRY
+    // -------------------------------------------------------------------------
+    // Shared by init() (which positions the real TextFieldWidget) and
+    // drawGridContent() (which paints the card/icon behind it) so the two can never
+    // drift out of sync with each other.
+
+    private int searchBarLeft(int bookX) { return bookX + SEARCH_BAR_LEFT_OFFSET; }
+    private int searchBarTop(int bookY)  { return bookY + SEARCH_BAR_Y_OFFSET; }
+
+    private int searchIconX(int bookX) { return searchBarLeft(bookX) + SEARCH_BAR_PAD_X; }
+    private int searchIconY(int bookY) {
+        return searchBarTop(bookY) + (SEARCH_BAR_HEIGHT - SEARCH_ICON_SIZE) / 2;
+    }
+
+    private int searchTextX(int bookX) {
+        return searchIconX(bookX) + SEARCH_ICON_SIZE + SEARCH_ICON_TEXT_GAP;
+    }
+    private int searchTextY(int bookY) {
+        return searchBarTop(bookY) + (SEARCH_BAR_HEIGHT - SEARCH_FIELD_HEIGHT) / 2;
+    }
+    private int searchTextWidth(int bookX) {
+        return searchBarLeft(bookX) + SEARCH_BAR_WIDTH - SEARCH_BAR_PAD_X - searchTextX(bookX);
+    }
 
     /**
      * Returns the Roman-numeral suffix for a potion amplifier value.
@@ -1166,16 +1219,23 @@ public class FoodJournalScreen extends Screen {
     // -------------------------------------------------------------------------
 
     private static class RenderLine {
-        final String text;
-        final int    color;
-        final int    height;
-        final int    offsetX;
+        final String  text;
+        final int     color;
+        final int     height;
+        final int     offsetX;
+        /** Section headers get the rule underneath; body lines are drawn plain. */
+        final boolean isHeader;
 
         RenderLine(String text, int color, int height, int offsetX) {
-            this.text    = text;
-            this.color   = color;
-            this.height  = height;
-            this.offsetX = offsetX;
+            this(text, color, height, offsetX, false);
+        }
+
+        RenderLine(String text, int color, int height, int offsetX, boolean isHeader) {
+            this.text     = text;
+            this.color    = color;
+            this.height   = height;
+            this.offsetX  = offsetX;
+            this.isHeader = isHeader;
         }
     }
 
@@ -1202,6 +1262,144 @@ public class FoodJournalScreen extends Screen {
             this.data       = data;
             this.reqStacks  = reqStacks;
             this.isUnlocked = isUnlocked;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // FLAT (SHADOW-LESS) TEXT FIELD
+    // -------------------------------------------------------------------------
+
+    /**
+     * A {@link TextFieldWidget} that draws its contents without a drop shadow.
+     *
+     * <p>Vanilla's {@code renderWidget} always paints field text through
+     * {@code drawTextWithShadow}, and exposes no switch for it. Against the journal's
+     * parchment that shadow made the search text look bold and traced-over, while every
+     * other line in the book is drawn flat via {@code drawText(..., false)}. So this
+     * subclass replaces {@code renderWidget} wholesale with a flat equivalent.
+     *
+     * <p>Vanilla tracks the horizontal scroll position in a private
+     * {@code firstCharacterIndex} with no accessor, so this class keeps its own
+     * {@link #scrollIndex} and overrides {@link #onClick} to map clicks through the same
+     * value — that keeps rendering and click-to-place-cursor consistent with each other
+     * without needing a mixin or access widener. (Vanilla's own copy of the index is
+     * then only read by code paths this class overrides.) Likewise the selection anchor
+     * is captured by overriding {@link #setSelectionEnd}, since {@code selectionEnd} is
+     * private too.
+     */
+    private static class FlatTextFieldWidget extends TextFieldWidget {
+
+        private final TextRenderer font;
+        private final Text placeholderText;
+        private final int  textColor;
+        private final int  placeholderColor;
+        private final int  cursorColor;
+        private final int  selectionColor;
+
+        /** Index of the leftmost rendered character — our copy of vanilla's private one. */
+        private int scrollIndex = 0;
+        /** The fixed end of a selection; the moving end is {@link #getCursor()}. */
+        private int selectionAnchor = 0;
+
+        FlatTextFieldWidget(TextRenderer font, int x, int y, int width, int height,
+                            Text placeholderText, int textColor, int placeholderColor,
+                            int cursorColor, int selectionColor) {
+            super(font, x, y, width, height, placeholderText);
+            this.font             = font;
+            this.placeholderText  = placeholderText;
+            this.textColor        = textColor;
+            this.placeholderColor = placeholderColor;
+            this.cursorColor      = cursorColor;
+            this.selectionColor   = selectionColor;
+        }
+
+        @Override
+        public void setSelectionEnd(int index) {
+            super.setSelectionEnd(index);
+            // Called from the superclass constructor before our fields are assigned,
+            // so getText() can still be null at that point.
+            String text = this.getText();
+            this.selectionAnchor = MathHelper.clamp(index, 0, text == null ? 0 : text.length());
+        }
+
+        /**
+         * Keeps {@link #scrollIndex} such that the cursor stays visible and no blank gap
+         * is left at the right edge while text remains to the left — the same invariant
+         * vanilla maintains on its private index.
+         */
+        private void updateScrollIndex(String text, int cursor) {
+            int width = this.getInnerWidth();
+
+            if (this.scrollIndex > text.length()) this.scrollIndex = text.length();
+            if (cursor < this.scrollIndex)        this.scrollIndex = cursor;
+
+            while (this.scrollIndex < cursor
+                    && this.font.getWidth(text.substring(this.scrollIndex, cursor)) > width) {
+                this.scrollIndex++;
+            }
+            while (this.scrollIndex > 0
+                    && this.font.getWidth(text.substring(this.scrollIndex - 1)) <= width) {
+                this.scrollIndex--;
+            }
+        }
+
+        @Override
+        public void onClick(double mouseX, double mouseY) {
+            String text  = this.getText();
+            int    start = MathHelper.clamp(this.scrollIndex, 0, text.length());
+            String shown = this.font.trimToWidth(text.substring(start), this.getInnerWidth());
+            int    click = MathHelper.floor(mouseX) - this.getX();
+            this.setCursor(this.font.trimToWidth(shown, click).length() + start,
+                    Screen.hasShiftDown());
+        }
+
+        @Override
+        public void renderWidget(DrawContext context, int mouseX, int mouseY, float delta) {
+            if (!this.isVisible()) return;
+
+            String text   = this.getText();
+            int    cursor = MathHelper.clamp(this.getCursor(), 0, text.length());
+            int    anchor = MathHelper.clamp(this.selectionAnchor, 0, text.length());
+            updateScrollIndex(text, cursor);
+
+            int x = this.getX();
+            int y = this.getY();
+
+            // Placeholder — shown only while empty and unfocused, so it never sits
+            // underneath the caret.
+            if (text.isEmpty() && !this.isFocused()) {
+                if (this.placeholderText != null) {
+                    context.drawText(this.font, this.placeholderText, x, y,
+                            this.placeholderColor, false);
+                }
+                return;
+            }
+
+            String shown      = this.font.trimToWidth(text.substring(this.scrollIndex),
+                    this.getInnerWidth());
+            int    shownEnd   = this.scrollIndex + shown.length();
+
+            // Selection wash, painted under the glyphs.
+            if (anchor != cursor) {
+                int selStart = Math.max(Math.min(cursor, anchor), this.scrollIndex);
+                int selEnd   = Math.min(Math.max(cursor, anchor), shownEnd);
+                if (selEnd > selStart) {
+                    int sx = x + this.font.getWidth(text.substring(this.scrollIndex, selStart));
+                    int ex = x + this.font.getWidth(text.substring(this.scrollIndex, selEnd));
+                    context.fill(sx, y - 1, ex, y + this.font.fontHeight, this.selectionColor);
+                }
+            }
+
+            if (!shown.isEmpty()) {
+                context.drawText(this.font, shown, x, y, this.textColor, false);
+            }
+
+            // Blinking caret as a thin rule rather than vanilla's shadowed "_" glyph.
+            if (this.isFocused() && (System.currentTimeMillis() / 300L) % 2L == 0L
+                    && cursor >= this.scrollIndex && cursor <= shownEnd) {
+                int cx = x + this.font.getWidth(text.substring(this.scrollIndex, cursor));
+                context.fill(cx, y - 1, cx + 1, y + this.font.fontHeight, this.cursorColor);
+            }
         }
     }
 }
