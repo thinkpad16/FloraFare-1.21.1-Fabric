@@ -3,9 +3,14 @@
   "item.florafare.forgotten_mead": "Забутий мід",
 
   "toast.florafare.discovery.title": "Кулінарна Книга",
-  "toast.florafare.discovery.description": "Відкрито нову страву!",
+  "toast.florafare.discovery.food": "Відкрито: %s!",
+  "toast.florafare.discovery.synergy_title": "Нова синергія!",
+  "toast.florafare.discovery.synergy": "Розблоковано: %s!",
 
   "gui.florafare.hud.empty": "",
+
+  "tooltip.florafare.hud.remaining": "Залишилось: %s",
+  "tooltip.florafare.hud.synergized": "Сприяє активній синергії",
 
   "gui.florafare.journal.title": "Кулінарна Книга",
   "gui.florafare.journal.subtitle": "%s з %s рецептів розкрито",
@@ -56,6 +61,8 @@
   "command.florafare.error.buff_not_found": "Бафф з ID %s не знайдено у датапаку!",
   "command.florafare.error.slots_full": "У %s немає вільних слотів для баффів!",
   "command.florafare.clear.success": "Усі баффи та синергії Florafare для %s очищено",
+  "command.florafare.journal_give.success": "§aКулінарний журнал видано гравцю %s",
+  "command.florafare.repair.success": "§aВидалено %s осиротілих атрибутних модифікаторів Florafare у %s",
 
   "key.florafare.hud_config": "Відкрити налаштування HUD",
   "category.florafare.general": "Мод Florafare",
@@ -63,6 +70,7 @@
   "gui.florafare.hud_config.mode": "Вигляд GUI: %s",
   "gui.florafare.hud_config.icons": "Розмір значків: %s",
   "gui.florafare.hud_config.position": "Позиція екрана: %s",
+  "gui.florafare.hud_config.scale": "Масштаб HUD: %s",
 
   "gui.florafare.config.title": "Налаштування Florafare",
   "gui.florafare.config.category.general": "Загальні",

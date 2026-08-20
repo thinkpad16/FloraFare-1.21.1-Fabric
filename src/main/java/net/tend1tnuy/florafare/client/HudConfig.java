@@ -8,15 +8,21 @@ public class HudConfig {
     public enum IconSize      { SMALL, LARGE }
     public enum ScreenPosition { TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT }
 
+    public static final float MIN_SCALE = 0.5f;
+    public static final float MAX_SCALE = 1.5f;
+
     public static LayoutMode     layoutMode = LayoutMode.COMPACT;
     public static IconSize       iconSize   = IconSize.LARGE;
     public static ScreenPosition position   = ScreenPosition.BOTTOM_LEFT;
+    public static float          scale      = 0.8f;
 
     /** Restores the HUD settings persisted in the mod config file. */
     public static void loadFromConfig() {
         layoutMode = parse(LayoutMode.class,     FlorafareConfig.hudLayout,   LayoutMode.COMPACT);
         iconSize   = parse(IconSize.class,       FlorafareConfig.hudIconSize, IconSize.LARGE);
         position   = parse(ScreenPosition.class, FlorafareConfig.hudPosition, ScreenPosition.BOTTOM_LEFT);
+        // Clamped defensively in case a hand-edited config file has an out-of-range value.
+        scale      = net.minecraft.util.math.MathHelper.clamp(FlorafareConfig.hudScale, MIN_SCALE, MAX_SCALE);
     }
 
     /** Writes the current HUD settings into the mod config file. */
@@ -24,6 +30,7 @@ public class HudConfig {
         FlorafareConfig.hudLayout   = layoutMode.name();
         FlorafareConfig.hudIconSize = iconSize.name();
         FlorafareConfig.hudPosition = position.name();
+        FlorafareConfig.hudScale    = scale;
         FlorafareConfig.save();
     }
 

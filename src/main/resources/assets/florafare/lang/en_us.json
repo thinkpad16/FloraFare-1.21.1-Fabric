@@ -3,9 +3,14 @@
   "item.florafare.forgotten_mead": "Forgotten Mead",
 
   "toast.florafare.discovery.title": "Culinary Journal",
-  "toast.florafare.discovery.description": "New dish discovered!",
+  "toast.florafare.discovery.food": "%s discovered!",
+  "toast.florafare.discovery.synergy_title": "New Synergy!",
+  "toast.florafare.discovery.synergy": "%s unlocked!",
 
   "gui.florafare.hud.empty": "",
+
+  "tooltip.florafare.hud.remaining": "%s remaining",
+  "tooltip.florafare.hud.synergized": "Contributing to an active synergy",
 
   "gui.florafare.journal.title": "Culinary Journal",
   "gui.florafare.journal.subtitle": "%s of %s recipes unearthed",
@@ -56,6 +61,8 @@
   "command.florafare.error.buff_not_found": "Buff with ID %s not found in the datapack!",
   "command.florafare.error.slots_full": "%s has no free buff slots!",
   "command.florafare.clear.success": "Cleared all Florafare buffs and synergies for %s",
+  "command.florafare.journal_give.success": "§aFood Journal given to player %s",
+  "command.florafare.repair.success": "§aRemoved %s orphaned Florafare attribute modifier(s) from %s",
 
   "key.florafare.hud_config": "Open HUD Configuration",
   "category.florafare.general": "Florafare Mod",
@@ -63,6 +70,7 @@
   "gui.florafare.hud_config.mode": "Layout style: %s",
   "gui.florafare.hud_config.icons": "Icon scale: %s",
   "gui.florafare.hud_config.position": "Screen edge: %s",
+  "gui.florafare.hud_config.scale": "HUD scale: %s",
 
   "gui.florafare.config.title": "Florafare Configuration",
   "gui.florafare.config.category.general": "General",

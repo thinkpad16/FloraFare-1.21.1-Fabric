@@ -238,7 +238,14 @@ public class FoodJournalScreen extends Screen {
         this.searchField.setDrawsBackground(false);
         this.searchField.setText(searchQuery);
         this.searchField.setChangedListener(this::onSearchChanged);
-        this.addDrawableChild(this.searchField);
+        // addSelectableChild (not addDrawableChild): keeps click/focus/typing wired up
+        // through Screen's normal input dispatch, but takes it out of Screen#render's
+        // automatic drawable pass — that pass runs after this screen's own state-enter
+        // slide transform is popped, so the field's text used to snap into place
+        // instantly while the search bar's hand-drawn card/icon slid in around it.
+        // It's rendered manually instead, inside that same transform, from
+        // drawGridContent().
+        this.addSelectableChild(this.searchField);
 
         this.previousPageButton = this.addDrawableChild(new PageTurnWidget(
                 bookX + PREV_BTN_X_OFFSET, bookY + BTN_Y_OFFSET, false, btn -> {
@@ -589,14 +596,14 @@ public class FoodJournalScreen extends Screen {
         int bookX = bookX();
         int bookY = bookY();
 
-        // Opening pop: the whole book scales in from ~92% to 100%, eased out. Only
-        // affects drawing, not widget hit-boxes — harmless since page buttons/search
-        // are invisible during the INDEX state, which is always what's showing when
-        // this first plays.
+        // Opening pop: the whole book scales in from ~97% to 100%, eased out — a light
+        // settle rather than a big springy pop. Only affects drawing, not widget
+        // hit-boxes — harmless since page buttons/search are invisible during the
+        // INDEX state, which is always what's showing when this first plays.
         long  sinceOpen  = System.currentTimeMillis() - screenOpenTimeMs;
         float openT      = MathHelper.clamp(sinceOpen / (float) OPEN_ANIM_MS, 0.0f, 1.0f);
         float openEased  = 1.0f - (1.0f - openT) * (1.0f - openT) * (1.0f - openT);
-        float openScale  = 0.92f + 0.08f * openEased;
+        float openScale  = 0.97f + 0.03f * openEased;
         float pivotX     = bookX + BOOK_WIDTH  / 2.0f;
         float pivotY     = bookY + BOOK_HEIGHT / 2.0f;
 
@@ -834,6 +841,12 @@ public class FoodJournalScreen extends Screen {
         context.drawBorder(barLeft, barTop,
                 SEARCH_BAR_WIDTH, SEARCH_BAR_HEIGHT, COLOR_SEARCH_BOX_BORDER);
         drawMagnifyingGlass(context, searchIconX(bookX), searchIconY(bookY));
+
+        // Rendered manually (not by Screen's automatic drawable pass — see the
+        // addSelectableChild comment in init()) so the field's own text/caret/
+        // placeholder slides in with the rest of this state's content instead of
+        // popping into place a frame after the transform below it finishes.
+        this.searchField.render(context, mouseX, mouseY, delta);
 
         // Item grid
         int startX     = bookX + GRID_START_X_OFFSET;

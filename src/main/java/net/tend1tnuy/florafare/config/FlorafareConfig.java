@@ -32,6 +32,14 @@ public class FlorafareConfig {
     // --- Server-only settings (not synced; read at command registration time) ---
     public static int commandPermissionLevel = 2;
 
+    /**
+     * Item ids Florafare should never intercept, for interop with other food/hunger
+     * mods that want to handle these items themselves (e.g. "modid:custom_stew").
+     * Applied once at startup via FoodBuffManager.excludeItem; the resulting
+     * exclusion set is what actually gets synced to clients, not this raw list.
+     */
+    public static java.util.List<String> ignoredFoodItems = new java.util.ArrayList<>();
+
     // --- Client-local cosmetic settings ---
     public static boolean enableDiscoveryToasts = true;
     public static int toastDisplayTimeMs = 5000;
@@ -41,6 +49,7 @@ public class FlorafareConfig {
     public static String hudLayout = "COMPACT";
     public static String hudIconSize = "LARGE";
     public static String hudPosition = "BOTTOM_LEFT";
+    public static float hudScale = 0.8f;
 
     public static void load() {
         if (FILE.exists()) {
@@ -59,12 +68,14 @@ public class FlorafareConfig {
                     enableForgottenMead = data.enableForgottenMead;
                     grantJournalOnFirstJoin = data.grantJournalOnFirstJoin;
                     commandPermissionLevel = data.commandPermissionLevel;
+                    if (data.ignoredFoodItems != null) ignoredFoodItems = data.ignoredFoodItems;
                     enableDiscoveryToasts = data.enableDiscoveryToasts;
                     toastDisplayTimeMs = data.toastDisplayTimeMs;
                     stripFoodTooltips = data.stripFoodTooltips;
                     if (data.hudLayout != null) hudLayout = data.hudLayout;
                     if (data.hudIconSize != null) hudIconSize = data.hudIconSize;
                     if (data.hudPosition != null) hudPosition = data.hudPosition;
+                    hudScale = data.hudScale;
                 }
             } catch (Exception e) {
                 Florafare.LOGGER.error("Failed to load config", e);
@@ -88,12 +99,14 @@ public class FlorafareConfig {
             data.enableForgottenMead = enableForgottenMead;
             data.grantJournalOnFirstJoin = grantJournalOnFirstJoin;
             data.commandPermissionLevel = commandPermissionLevel;
+            data.ignoredFoodItems = ignoredFoodItems;
             data.enableDiscoveryToasts = enableDiscoveryToasts;
             data.toastDisplayTimeMs = toastDisplayTimeMs;
             data.stripFoodTooltips = stripFoodTooltips;
             data.hudLayout = hudLayout;
             data.hudIconSize = hudIconSize;
             data.hudPosition = hudPosition;
+            data.hudScale = hudScale;
             GSON.toJson(data, writer);
         } catch (Exception e) {
             Florafare.LOGGER.error("Failed to save config", e);
@@ -111,11 +124,13 @@ public class FlorafareConfig {
         public boolean enableForgottenMead = true;
         public boolean grantJournalOnFirstJoin = true;
         public int commandPermissionLevel = 2;
+        public java.util.List<String> ignoredFoodItems = new java.util.ArrayList<>();
         public boolean enableDiscoveryToasts = true;
         public int toastDisplayTimeMs = 5000;
         public boolean stripFoodTooltips = true;
         public String hudLayout = "COMPACT";
         public String hudIconSize = "LARGE";
         public String hudPosition = "BOTTOM_LEFT";
+        public float hudScale = 0.8f;
     }
 }

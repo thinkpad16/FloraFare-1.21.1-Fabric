@@ -20,8 +20,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -35,6 +37,24 @@ public class FoodBuffManager {
     private static final Map<String, FoodBuffData> RUNTIME_STACK_CONFIGS =
             new ConcurrentHashMap<>();
 
+    /**
+     * Item ids Florafare fully ignores, for interop with other food/hunger mods.
+     * Populated from {@code florafare.json}'s {@code ignoredFoodItems} and from
+     * {@link net.tend1tnuy.florafare.api.FlorafareAPI#excludeFood(String)}. Checked
+     * before anything else in {@link #getConfig(ItemStack)}, so an excluded item is
+     * completely invisible to every Florafare hook (eating, tooltips, AppleSkin,
+     * always-edible). Synced to clients so tooltip stripping and hunger prediction
+     * stay consistent with the server's authoritative decision.
+     */
+    private static final Set<String> EXCLUDED_ITEMS = ConcurrentHashMap.newKeySet();
+
+    /**
+     * Targets that were defined by two or more datapack/API entries at the exact
+     * same priority, so which one ended up winning was not a deliberate choice.
+     * Tracked for {@code /florafare validate}; harmless to gameplay either way.
+     */
+    private static final Set<String> AMBIGUOUS_TARGETS = ConcurrentHashMap.newKeySet();
+
     private static final String RUNTIME_FILE_NAME = "florafare_runtime.dat";
     private static final String BUFF_ID_KEY       = "FlorafareBuffId";
 
@@ -43,6 +63,7 @@ public class FoodBuffManager {
 
     public static void clear() {
         CONFIGS.clear();
+        AMBIGUOUS_TARGETS.clear();
     }
 
     /**
@@ -69,12 +90,22 @@ public class FoodBuffManager {
     public static void putConfig(String target, FoodBuffData data) {
         if (CONFIGS.containsKey(target)) {
             FoodBuffData existing = CONFIGS.get(target);
+            if (data.priority() == existing.priority()) {
+                AMBIGUOUS_TARGETS.add(target);
+            } else {
+                AMBIGUOUS_TARGETS.remove(target);
+            }
             if (data.priority() >= existing.priority()) {
                 CONFIGS.put(target, data);
             }
         } else {
             CONFIGS.put(target, data);
         }
+    }
+
+    /** Targets defined at the same priority by more than one source; see {@link #AMBIGUOUS_TARGETS}. */
+    public static Set<String> getAmbiguousTargets() {
+        return new HashSet<>(AMBIGUOUS_TARGETS);
     }
 
     public static void setRuntimeStackConfig(String uuid, FoodBuffData data) {
@@ -108,8 +139,43 @@ public class FoodBuffManager {
         }
     }
 
+    /**
+     * Marks an item id as fully ignored by Florafare. Safe to call from any mod's
+     * initializer; take effect immediately server-side and are synced to clients
+     * on their next join or {@code /reload}.
+     */
+    public static void excludeItem(String itemId) {
+        Identifier id = normalizeItemId(itemId);
+        if (id != null) EXCLUDED_ITEMS.add(id.toString());
+    }
+
+    public static void includeItem(String itemId) {
+        Identifier id = normalizeItemId(itemId);
+        if (id != null) EXCLUDED_ITEMS.remove(id.toString());
+    }
+
+    public static boolean isExcluded(ItemStack stack) {
+        return EXCLUDED_ITEMS.contains(Registries.ITEM.getId(stack.getItem()).toString());
+    }
+
+    public static Set<String> getExcludedItems() {
+        return new HashSet<>(EXCLUDED_ITEMS);
+    }
+
+    /** Replaces the client-side exclusion set with data received from the server. */
+    public static void setExcludedItems(Set<String> items) {
+        EXCLUDED_ITEMS.clear();
+        EXCLUDED_ITEMS.addAll(items);
+    }
+
+    private static Identifier normalizeItemId(String itemId) {
+        if (itemId == null || itemId.isBlank()) return null;
+        return Identifier.tryParse(itemId.trim());
+    }
+
     public static FoodBuffData getConfig(ItemStack stack) {
         if (stack.getItem() instanceof ForgottenMeadItem) return null;
+        if (isExcluded(stack)) return null;
 
         // Check for a command-applied runtime buff first.
         NbtComponent customDataComp = stack.get(DataComponentTypes.CUSTOM_DATA);

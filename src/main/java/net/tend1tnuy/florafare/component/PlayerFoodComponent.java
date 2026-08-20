@@ -16,6 +16,7 @@ import net.minecraft.registry.tag.TagKey;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.util.Identifier;
 import net.tend1tnuy.florafare.Florafare;
+import net.tend1tnuy.florafare.api.FlorafareEvents;
 import net.tend1tnuy.florafare.config.FlorafareConfig;
 import net.tend1tnuy.florafare.food.FoodBuffData;
 import net.tend1tnuy.florafare.food.FoodSynergyData;
@@ -75,7 +76,10 @@ public class PlayerFoodComponent {
         dirty = true;
         syncIfDirty();
         if (player instanceof ServerPlayerEntity serverPlayer) {
-            ServerPlayNetworking.send(serverPlayer, new FoodUnlockedPayload());
+            ServerPlayNetworking.send(serverPlayer, new FoodUnlockedPayload(itemId));
+        }
+        if (!player.getWorld().isClient()) {
+            FlorafareEvents.FOOD_DISCOVERED.invoker().onFoodDiscovered(player, itemId);
         }
         return true;
     }
@@ -94,7 +98,10 @@ public class PlayerFoodComponent {
             ActiveFoodBuff buff = existing.get();
             buff.resetDuration(data.duration());
             applyBuffEffects(buff, data);
-            if (!player.getWorld().isClient) updateSynergies();
+            if (!player.getWorld().isClient) {
+                updateSynergies();
+                FlorafareEvents.BUFF_APPLIED.invoker().onBuffApplied(player, stack, buff);
+            }
             dirty = true;
             syncIfDirty();
             return true;
@@ -106,7 +113,10 @@ public class PlayerFoodComponent {
                 data.target(), itemId, data.duration(), data.duration());
         applyBuffEffects(buff, data);
         activeBuffs.add(buff);
-        if (!player.getWorld().isClient) updateSynergies();
+        if (!player.getWorld().isClient) {
+            updateSynergies();
+            FlorafareEvents.BUFF_APPLIED.invoker().onBuffApplied(player, stack, buff);
+        }
         dirty = true;
         syncIfDirty();
         return true;
@@ -379,10 +389,11 @@ public class PlayerFoodComponent {
                 activeSynergyMap.put(synergy.id(), synergyBuff); // #11
 
                 logSynergyActivation(synergy, minDuration);
+                FlorafareEvents.SYNERGY_ACTIVATED.invoker().onSynergyActivated(player, synergy, synergyBuff);
 
                 if (discoveredSynergies.add(synergy.id())) {
                     if (player instanceof ServerPlayerEntity serverPlayer) {
-                        ServerPlayNetworking.send(serverPlayer, new SynergyUnlockedPayload());
+                        ServerPlayNetworking.send(serverPlayer, new SynergyUnlockedPayload(synergy.id()));
                     }
                 }
                 changed = true;
@@ -473,6 +484,17 @@ public class PlayerFoodComponent {
             for (FoodBuffData.EffectData eff : synergy.effects()) {
                 Registries.STATUS_EFFECT.getEntry(eff.id())
                         .ifPresent(player::removeStatusEffect);
+            }
+        }
+
+        // Single choke point for every removal path (expiry, Forgotten Mead, /florafare
+        // clear, requirement-no-longer-met), so listeners see a consistent signal
+        // regardless of why the buff/synergy ended.
+        if (!player.getWorld().isClient()) {
+            if (synergy != null) {
+                FlorafareEvents.SYNERGY_ENDED.invoker().onSynergyEnded(player, buff);
+            } else {
+                FlorafareEvents.BUFF_REMOVED.invoker().onBuffRemoved(player, buff);
             }
         }
     }

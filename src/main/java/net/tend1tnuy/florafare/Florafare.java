@@ -41,6 +41,9 @@ public class Florafare implements ModInitializer {
         net.tend1tnuy.florafare.config.FlorafareConfig.load();
         net.tend1tnuy.florafare.component.PlayerFoodComponent.MAX_BUFF_SLOTS =
                 net.tend1tnuy.florafare.config.FlorafareConfig.maxBuffSlots;
+        for (String itemId : net.tend1tnuy.florafare.config.FlorafareConfig.ignoredFoodItems) {
+            FoodBuffManager.excludeItem(itemId);
+        }
 
         // 2. Items & creative tab
         ItemRegistry.initialize();
@@ -63,6 +66,7 @@ public class Florafare implements ModInitializer {
         PayloadTypeRegistry.playS2C().register(FoodConfigSyncPayload.ID,  FoodConfigSyncPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(FoodSynergySyncPayload.ID, FoodSynergySyncPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(FlorafareServerConfigSyncPayload.ID, FlorafareServerConfigSyncPayload.CODEC);
+        PayloadTypeRegistry.playS2C().register(FoodExclusionSyncPayload.ID, FoodExclusionSyncPayload.CODEC);
 
         // 6. Commands — registered together in one logical block (#22)
         CommandRegistrationCallback.EVENT.register(DumpFoodsCommand::register);
@@ -75,10 +79,13 @@ public class Florafare implements ModInitializer {
             FoodSynergySyncPayload synergyPayload =
                     new FoodSynergySyncPayload(FoodSynergyManager.serializeSynergies());
             FlorafareServerConfigSyncPayload serverConfigPayload = buildServerConfigSyncPayload();
+            FoodExclusionSyncPayload exclusionPayload =
+                    FoodExclusionSyncPayload.of(FoodBuffManager.getExcludedItems());
             for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
                 ServerPlayNetworking.send(player, configPayload);
                 ServerPlayNetworking.send(player, synergyPayload);
                 ServerPlayNetworking.send(player, serverConfigPayload);
+                ServerPlayNetworking.send(player, exclusionPayload);
             }
         });
 
@@ -113,6 +120,8 @@ public class Florafare implements ModInitializer {
             ServerPlayNetworking.send(handler.player,
                     new FoodSynergySyncPayload(FoodSynergyManager.serializeSynergies()));
             ServerPlayNetworking.send(handler.player, buildServerConfigSyncPayload());
+            ServerPlayNetworking.send(handler.player,
+                    FoodExclusionSyncPayload.of(FoodBuffManager.getExcludedItems()));
 
             if (!comp.hasReceivedJournal()
                     && net.tend1tnuy.florafare.config.FlorafareConfig.grantJournalOnFirstJoin) {

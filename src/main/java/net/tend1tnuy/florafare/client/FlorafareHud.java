@@ -6,18 +6,20 @@ import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.render.RenderTickCounter;
 import net.minecraft.item.ItemStack;
 import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
 import net.minecraft.util.math.MathHelper;
 import net.tend1tnuy.florafare.component.ActiveFoodBuff;
 import net.tend1tnuy.florafare.component.IFoodComponentProvider;
 import net.tend1tnuy.florafare.component.PlayerFoodComponent;
+import net.tend1tnuy.florafare.food.FoodBuffData;
+import net.tend1tnuy.florafare.food.FoodBuffManager;
 import net.tend1tnuy.florafare.food.FoodSynergyData;
 import net.tend1tnuy.florafare.food.FoodSynergyManager;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public class FlorafareHud implements HudRenderCallback {
-
-    private static final float HUD_SCALE = 0.8f;
 
     private static class SlotState {
         String         currentId       = "";
@@ -67,8 +69,10 @@ public class FlorafareHud implements HudRenderCallback {
         SlotState[] slots    = slots();
         int         maxSlots = slots.length;
 
-        int screenWidth  = (int) (context.getScaledWindowWidth()  / HUD_SCALE);
-        int screenHeight = (int) (context.getScaledWindowHeight() / HUD_SCALE);
+        float hudScale = HudConfig.scale;
+
+        int screenWidth  = (int) (context.getScaledWindowWidth()  / hudScale);
+        int screenHeight = (int) (context.getScaledWindowHeight() / hudScale);
 
         int baseX = 10;
         int baseY = 10;
@@ -82,8 +86,24 @@ public class FlorafareHud implements HudRenderCallback {
                                    baseY = screenHeight - (maxSlots * slotSpacing) - 10; }
         }
 
+        // Hover details only make sense while the cursor is actually visible and
+        // positioned — during normal gameplay the mouse is locked to the camera and
+        // has no meaningful on-screen location, so a tooltip would just float uselessly
+        // at a stale spot. A screen being open (inventory, chat, pause menu, the
+        // journal itself...) is exactly when the cursor is real, and the HUD still
+        // renders underneath that screen, so hovering a buff slot there works.
+        boolean cursorVisible = client.currentScreen != null;
+        int mouseX = -1;
+        int mouseY = -1;
+        if (cursorVisible) {
+            mouseX = (int) (client.mouse.getX() * client.getWindow().getScaledWidth()  / client.getWindow().getWidth());
+            mouseY = (int) (client.mouse.getY() * client.getWindow().getScaledHeight() / client.getWindow().getHeight());
+        }
+        ActiveFoodBuff hoveredBuff       = null;
+        boolean        hoveredSynergized = false;
+
         context.getMatrices().push();
-        context.getMatrices().scale(HUD_SCALE, HUD_SCALE, 1.0f);
+        context.getMatrices().scale(hudScale, hudScale, 1.0f);
 
         for (int i = 0; i < maxSlots; i++) {
             ActiveFoodBuff buff  = (i < buffs.size()) ? buffs.get(i) : null;
@@ -107,6 +127,18 @@ public class FlorafareHud implements HudRenderCallback {
                         Math.abs(state.animationOffset) / (slotWidth * 1.5f), 0.0f, 1.0f);
                 renderSlot(context, client, buff, renderX, y, 1.0f, appearProgress,
                         slotWidth, slotHeight, isCompact, isSynergized);
+
+                if (cursorVisible) {
+                    int realX = (int) (renderX  * hudScale);
+                    int realY = (int) (y        * hudScale);
+                    int realW = (int) (slotWidth  * hudScale);
+                    int realH = (int) (slotHeight * hudScale);
+                    if (mouseX >= realX && mouseX < realX + realW
+                            && mouseY >= realY && mouseY < realY + realH) {
+                        hoveredBuff       = buff;
+                        hoveredSynergized = isSynergized;
+                    }
+                }
             } else {
                 state.currentId = "";
                 if (state.lastBuff != null
@@ -128,6 +160,84 @@ public class FlorafareHud implements HudRenderCallback {
         }
 
         context.getMatrices().pop();
+
+        // Drawn outside the HUD-scale transform above, in real screen coordinates —
+        // same space mouseX/mouseY were computed in — so the tooltip isn't itself
+        // scaled or offset by the HUD's own zoom.
+        if (hoveredBuff != null) {
+            FoodBuffData data = FoodBuffManager.getConfig(hoveredBuff.getConsumedItemStack());
+            if (data != null) {
+                context.drawTooltip(client.textRenderer,
+                        buildTooltipLines(hoveredBuff, data, hoveredSynergized),
+                        mouseX, mouseY);
+            }
+        }
+    }
+
+    /**
+     * Builds the hover-tooltip lines for a HUD buff slot: name, remaining time, and
+     * the same health/attribute/effect breakdown the journal shows for this buff,
+     * so players don't have to open the journal mid-game just to check what a
+     * buff they already have actually does.
+     */
+    private static List<Text> buildTooltipLines(ActiveFoodBuff buff, FoodBuffData data,
+                                                 boolean isSynergized) {
+        List<Text> lines = new ArrayList<>();
+        lines.add(buff.getConsumedItemStack().getName());
+
+        int seconds = buff.getDurationRemaining() / 20;
+        String timeStr = String.format("%02d:%02d", seconds / 60, seconds % 60);
+        lines.add(Text.translatable("tooltip.florafare.hud.remaining", timeStr).formatted(Formatting.GRAY));
+
+        if (data.healthBonus() != 0) {
+            String sign = data.healthBonus() > 0 ? "+" : "";
+            String val  = data.healthBonus() % 1 == 0
+                    ? String.valueOf((int) data.healthBonus()) : String.valueOf(data.healthBonus());
+            lines.add(Text.translatable("gui.florafare.journal.health", sign + val).formatted(Formatting.RED));
+        }
+
+        for (FoodBuffData.AttributeData attr : data.attributes()) {
+            String attrKey  = "florafare.attribute." + attr.attributeId().getPath().replace("generic.", "");
+            String attrName = Text.translatable(attrKey).getString();
+            String sign     = attr.amount() > 0 ? "+" : "";
+            String val      = attr.operation().contains("multiplied")
+                    ? (int) (attr.amount() * 100) + "%"
+                    : (attr.amount() % 1 == 0
+                    ? String.valueOf((int) attr.amount()) : String.valueOf(attr.amount()));
+            lines.add(Text.literal("• " + attrName + ": " + sign + val).formatted(Formatting.DARK_GREEN));
+        }
+
+        for (FoodBuffData.EffectData effect : data.effects()) {
+            String effectKey  = "effect." + effect.id().getNamespace() + "." + effect.id().getPath();
+            String effectName = Text.translatable(effectKey).getString();
+            lines.add(Text.literal("• " + effectName + amplifierNumeral(effect.amplifier()))
+                    .formatted(Formatting.BLUE));
+        }
+
+        if (isSynergized) {
+            lines.add(Text.translatable("tooltip.florafare.hud.synergized").formatted(Formatting.GOLD));
+        }
+
+        return lines;
+    }
+
+    /**
+     * Roman-numeral suffix for a potion amplifier, mirroring the journal's own
+     * {@code getAmplifierNumeral} so HUD tooltips and journal pages agree.
+     * Amplifier 0 = level I, and vanilla omits "I" for level-1 effects.
+     */
+    private static String amplifierNumeral(int amplifier) {
+        return switch (amplifier) {
+            case 0 -> "";
+            case 1 -> " II";
+            case 2 -> " III";
+            case 3 -> " IV";
+            case 4 -> " V";
+            case 5 -> " VI";
+            case 6 -> " VII";
+            case 7 -> " VIII";
+            default -> " " + (amplifier + 1);
+        };
     }
 
     private int calculateAnimatedX(int baseX, float offset) {
@@ -158,12 +268,14 @@ public class FlorafareHud implements HudRenderCallback {
 
         // #12 — Blink driven by the tick-based blinkTimer instead of System.currentTimeMillis().
         // Blink speed ramps up the closer the buff is to expiring, for a stronger sense of urgency.
+        // Kept to a slow, sub-1Hz pulse with a high alpha floor (never far from fully opaque) — a
+        // fast full-strobe read as flicker rather than a warning, especially right before expiry.
         boolean isBlinking  = progress <= 0.1f || remainingTicks <= 200;
         float   blinkAlpha  = 1.0f;
         if (isBlinking) {
             float urgency    = 1.0f - MathHelper.clamp(progress / 0.1f, 0.0f, 1.0f);
-            float blinkSpeed = MathHelper.lerp(urgency, 0.5f, 1.4f);
-            blinkAlpha = 0.5f + 0.5f * MathHelper.sin(blinkTimer * blinkSpeed);
+            float blinkSpeed = MathHelper.lerp(urgency, 0.08f, 0.22f);
+            blinkAlpha = 0.7f + 0.3f * MathHelper.sin(blinkTimer * blinkSpeed);
         }
         float   finalAlpha  = blinkAlpha * fadeAlpha;
 

@@ -28,6 +28,11 @@ bin/
 
 *.DS_Store
 
+# local AI-assistant tooling (per-machine, not project config)
+
+.claude/settings.local.json
+.proxyai/
+
 # fabric
 
 run/

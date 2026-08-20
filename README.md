@@ -23,7 +23,7 @@ A datapack-driven food overhaul for **Minecraft 1.21.1 (Fabric)**. Eating food g
 
 | Item | How you get it | What it does |
 |---|---|---|
-| **Food Journal** | Given automatically on first join (toggle: `grantJournalOnFirstJoin`) | Right-click to open the journal: browse every configured food and its buff, plus discovered synergies. A search bar filters the grid live by item/synergy name **or** by any effect/attribute it grants. Undiscovered synergies stay hidden. Tag entries cycle through the items in the tag. |
+| **Food Journal** | Given automatically on first join (toggle: `grantJournalOnFirstJoin`); craftable (book + apple + wheat) or replaceable via `/florafare journal give <player>` if lost | Right-click to open the journal: browse every configured food and its buff, plus discovered synergies. A search bar filters the grid live by item/synergy name **or** by any effect/attribute it grants. Undiscovered synergies stay hidden. Tag entries cycle through the items in the tag. |
 | **Forgotten Mead** | Crafting / creative | Drink to remove your **most recently gained** buff (returns a glass bottle). Useful to free a buff slot. |
 
 ### HUD
@@ -33,8 +33,11 @@ Active buffs and synergies are rendered on screen with item icons and remaining-
 - **Layout:** `COMPACT` / expanded
 - **Icon size:** `SMALL` / `LARGE`
 - **Position:** e.g. `BOTTOM_LEFT`
+- **Scale:** 50%–150%, adjustable with a slider
 
 Settings persist in the main config file.
+
+Hovering a buff slot while a screen is open (inventory, chat, the journal itself, and so on) shows a tooltip with the full breakdown — remaining time, health bonus, attributes, and every status effect it grants — plus a note if it's contributing to an active synergy. This only works while the cursor is actually unlocked, since during normal play the mouse just steers the camera and has no on-screen position to hover with.
 
 ---
 
@@ -229,7 +232,7 @@ Files live in `data/<namespace>/food_synergies/`. A file is either a single syne
 Notes:
 
 - With **3 buff slots**, keep requirements to 3 or fewer or the synergy can never activate.
-- Synergies are **hidden** in the journal until first activated (a toast announces the discovery). Discoveries are saved per player.
+- Synergies are **hidden** in the journal until first activated — a toast names the synergy and announces the discovery. Discoveries are saved per player.
 - If a required buff expires or is removed, the synergy is removed too.
 - Synergies can be disabled globally in the config.
 
@@ -244,6 +247,9 @@ All commands require permission level 2 (op) by default — configurable via `co
 | `/florafare buff give <player> <targetId>` | Applies the configured buff for `targetId` (item id or `#tag`, quoted) to a player and unlocks its journal entry. |
 | `/florafare clear <player>` | Removes all active buffs and synergies from a player. |
 | `/florafare setbuff <duration> <nutrition> <saturation> <health> [<attr_id> <attr_amount> <attr_op>]` | Attaches a **custom buff to the item stack in your main hand** (via NBT). Anyone who eats that exact stack gets this buff instead of the normal config. Persists across restarts (`config/florafare_runtime.dat`). |
+| `/florafare journal give <player>` | Gives the player a Food Journal, for replacing one that was lost (dropped in lava, died without `keepInventory`, etc.) without needing creative mode. The journal is also craftable in survival — see [Items](#items). |
+| `/florafare repair <player>` | Strips any Florafare-namespaced attribute modifier from the player, scanning every registered attribute directly rather than relying on the mod's own tracked buff state. Use this to recover a player whose stats got stuck — e.g. after a corrupted save, a version migration, or Florafare being removed and reinstalled with buffs still active. |
+| `/florafare validate` | Diagnoses the currently loaded `food_buffs`/`food_synergies` configs for problems that don't show up as load-time errors: synergies that can never activate because they need more buffs than `maxBuffSlots` allows, requirements that can never be satisfied (non-edible item, excluded item, or empty tag), and datapack targets left ambiguous by a same-priority tie. Reports to chat and mirrors each finding to the server log. |
 | `/florafare dumpfoods` | Exports every edible item in the game (with recipe trees) to `florafare_edible_items_dump.txt` in the game directory — handy for building datapacks. |
 
 `/reload` re-reads all `food_buffs` and `food_synergies` files and re-syncs connected clients.
@@ -271,7 +277,8 @@ Every field below is editable in-game via **ModMenu** (if installed — Cloth Co
   "stripFoodTooltips": true,
   "hudLayout": "COMPACT",
   "hudIconSize": "LARGE",
-  "hudPosition": "BOTTOM_LEFT"
+  "hudPosition": "BOTTOM_LEFT",
+  "hudScale": 0.8
 }
 ```
 
@@ -293,16 +300,17 @@ Every field below is editable in-game via **ModMenu** (if installed — Cloth Co
 | Key | Values | Meaning |
 |---|---|---|
 | `commandPermissionLevel` | int `0`-`4`, default `2` | Permission level required for all `/florafare` subcommands. |
+| `ignoredFoodItems` | array of item ids, default `[]` | Items Florafare must never intercept — it leaves eating, tooltips, and always-edible handling entirely to vanilla or another mod for these ids. Applied at startup and synced to clients so tooltip stripping and hunger prediction stay consistent. See [Compatibility with other mods](#compatibility-with-other-mods). |
 
 ### Client-local (cosmetic, per-machine)
 
 | Key | Values | Meaning |
 |---|---|---|
 | `consumptionLogging` | `NONE` / `REDUCED` / `ALL` | Server-log detail: `ALL` logs every consumption and synergy with full stats, `REDUCED` only logs health-restoring foods (exploit tracking) and synergy activations, `NONE` disables logging. |
-| `enableDiscoveryToasts` | `true` / `false` | Whether discovering a new food/synergy shows a toast notification. |
+| `enableDiscoveryToasts` | `true` / `false` | Whether discovering a new food/synergy shows a toast notification naming it. |
 | `toastDisplayTimeMs` | int, default `5000` | How long discovery toasts stay on screen. |
 | `stripFoodTooltips` | `true` / `false` | Whether Florafare simplifies the tooltip of its managed foods (hiding vanilla nutrition/effect lines it has replaced). |
-| `hudLayout`, `hudIconSize`, `hudPosition` | see [HUD](#hud) | Client HUD appearance (also editable in-game with **H**). |
+| `hudLayout`, `hudIconSize`, `hudPosition`, `hudScale` | see [HUD](#hud) | Client HUD appearance (also editable in-game with **H**). |
 
 ---
 
@@ -312,10 +320,76 @@ With AppleSkin installed, hovering a food shows the **configured** nutrition/sat
 
 ---
 
+## Compatibility with other mods
+
+Florafare intercepts eating for any item it has a config for — including auto-generated
+fallback configs for *any* vanilla-style food (see [auto-generation](#auto-generation-config_generationjson)),
+so by default it will also handle foods added by other content/food mods. If another mod
+wants to keep handling one of its own items itself (a custom stew with special logic, for
+example), tell Florafare to leave it alone entirely:
+
+- **Server admin / modpack maker:** add the item id to `ignoredFoodItems` in `config/florafare.json`.
+- **Mod author:** call `FlorafareAPI.excludeFood("modid:item_id")` from your mod initializer.
+
+An excluded item is completely invisible to Florafare — no interception, no tooltip
+changes, no always-edible override, no auto-generated buff — on both server and client
+(the exclusion list is synced automatically, the same way configs and synergies are).
+
+## API for mod makers
+
+Add `florafare` as a `modImplementation` dependency (or `mavenLocal()` after running
+`./gradlew publishToMavenLocal`) to use these from your own mod.
+
+### `FlorafareAPI`
+
+```java
+import net.tend1tnuy.florafare.api.FlorafareAPI;
+```
+
+| Method | Description |
+|---|---|
+| `getBuffData(ItemStack)` | Resolves the `FoodBuffData` Florafare would apply for this stack (datapack/tag/namespace/auto-gen lookup), or `null`. |
+| `hasCustomCommandBuff(ItemStack)` | Whether the stack carries a `/florafare setbuff` NBT override. |
+| `applyBuffToPlayer(PlayerEntity, ItemStack, FoodBuffData)` | Applies a buff to a player as if they had eaten `stack`, without touching hunger. Server-side only. |
+| `excludeFood(String itemId)` / `includeFood(String itemId)` | Registers or clears a permanent exclusion — see [Compatibility with other mods](#compatibility-with-other-mods). |
+| `isFoodExcluded(ItemStack)` | Whether Florafare currently ignores this stack's item. |
+| `registerFoodBuff(String target, FoodBuffData)` / `registerSynergy(FoodSynergyData)` | Registers a buff/synergy config from code instead of a datapack JSON file. Same priority and target-matching rules apply. Call during mod init; already-connected clients pick up the change on their next join or `/reload`, same as a datapack edit. |
+| `getActiveBuffs(PlayerEntity)` / `getActiveSynergies(PlayerEntity)` | Read-only snapshot of the player's current buffs/synergies. |
+| `getDiscoveredFoods(PlayerEntity)` / `getDiscoveredSynergies(PlayerEntity)` | Read-only snapshot of the player's journal progress. |
+| `clearBuffs(PlayerEntity)` | Removes all active buffs and synergies, same as `/florafare clear`. |
+| `unlockFood(PlayerEntity, String itemId)` | Marks an item as discovered without granting its buff. |
+
+`FoodBuffData` also has a `FoodBuffData.builder(target)...build()` fluent builder, so you
+don't need to fill in the full 9-argument record constructor by hand.
+
+### `FlorafareEvents`
+
+```java
+import net.tend1tnuy.florafare.api.FlorafareEvents;
+```
+
+Informational hooks — none of them are cancellable, so listening to them never changes
+Florafare's own behavior. All fire on the logical server only.
+
+| Event | Fires when |
+|---|---|
+| `BUFF_APPLIED` | A buff is newly granted or refreshed on a player. |
+| `BUFF_REMOVED` | An active buff ends (expiry, Forgotten Mead, or `/florafare clear`). |
+| `SYNERGY_ACTIVATED` | A synergy's requirements become satisfied. |
+| `SYNERGY_ENDED` | An active synergy ends (expiry or a requirement no longer being met). |
+| `FOOD_DISCOVERED` | A player eats a food item for the first time. |
+
+```java
+FlorafareEvents.SYNERGY_ACTIVATED.register((player, synergy, buff) -> {
+    // e.g. spawn particles, grant an advancement, log analytics...
+});
+```
+
 ## Building from source
 
 ```bash
-sh gradlew build
+./gradlew build      # Linux / macOS
+gradlew.bat build     # Windows
 ```
 
 The built jar lands in `build/libs/`. Developed against Yarn mappings with Fabric Loom; see `gradle.properties` for exact versions.

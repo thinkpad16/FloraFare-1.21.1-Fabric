@@ -8,6 +8,10 @@ import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
+import net.minecraft.item.Items;
+import net.minecraft.registry.Registries;
+import net.minecraft.text.Text;
+import net.minecraft.util.Identifier;
 import net.tend1tnuy.florafare.client.FlorafareHud;
 import net.tend1tnuy.florafare.client.FoodJournalScreen;
 import net.tend1tnuy.florafare.client.HudConfigScreen;
@@ -20,9 +24,11 @@ import net.tend1tnuy.florafare.food.FoodSynergyManager;
 import net.tend1tnuy.florafare.network.FlorafareServerConfigSyncPayload;
 import net.tend1tnuy.florafare.network.FoodBuffSyncPayload;
 import net.tend1tnuy.florafare.network.FoodConfigSyncPayload;
+import net.tend1tnuy.florafare.network.FoodExclusionSyncPayload;
 import net.tend1tnuy.florafare.network.FoodSynergySyncPayload;
 import net.tend1tnuy.florafare.network.FoodUnlockedPayload;
 import net.tend1tnuy.florafare.network.OpenFoodJournalPayload;
+import net.tend1tnuy.florafare.network.SynergyUnlockedPayload;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -93,13 +99,36 @@ public class FlorafareClient implements ClientModInitializer {
                     FoodJournalScreen.invalidateCache();
                 }));
 
+        ClientPlayNetworking.registerGlobalReceiver(FoodExclusionSyncPayload.ID, (payload, context) ->
+                context.client().execute(() -> {
+                    FoodBuffManager.setExcludedItems(payload.toSet());
+                    FoodJournalScreen.invalidateCache();
+                }));
+
         ClientPlayNetworking.registerGlobalReceiver(FoodUnlockedPayload.ID, (payload, context) ->
                 context.client().execute(() -> {
                     // A new food was discovered — invalidate the cache so the journal
                     // shows the updated unlock state on next open (#7).
                     FoodJournalScreen.invalidateCache();
                     if (FlorafareConfig.enableDiscoveryToasts) {
-                        context.client().getToastManager().add(new FoodDiscoveryToast());
+                        Identifier itemId = Identifier.tryParse(payload.itemId());
+                        var stack = (itemId != null && Registries.ITEM.containsId(itemId))
+                                ? Registries.ITEM.get(itemId).getDefaultStack()
+                                : Items.APPLE.getDefaultStack();
+                        context.client().getToastManager().add(FoodDiscoveryToast.forFood(stack));
+                    }
+                }));
+
+        // Previously registered on the server but never listened for on the client, so
+        // synergy discoveries never showed a toast at all — wired up alongside the
+        // food-discovery toast above so both variants behave the same way.
+        ClientPlayNetworking.registerGlobalReceiver(SynergyUnlockedPayload.ID, (payload, context) ->
+                context.client().execute(() -> {
+                    FoodJournalScreen.invalidateCache();
+                    if (FlorafareConfig.enableDiscoveryToasts) {
+                        Text synergyName = Text.translatable(
+                                "synergy.florafare." + payload.synergyId().replace(":", "."));
+                        context.client().getToastManager().add(FoodDiscoveryToast.forSynergy(synergyName));
                     }
                 }));
 

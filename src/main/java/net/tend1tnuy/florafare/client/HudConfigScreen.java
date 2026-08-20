@@ -3,7 +3,9 @@ package net.tend1tnuy.florafare.client;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
+import net.minecraft.client.gui.widget.SliderWidget;
 import net.minecraft.text.Text;
+import net.minecraft.util.math.MathHelper;
 
 public class HudConfigScreen extends Screen {
 
@@ -37,6 +39,42 @@ public class HudConfigScreen extends Screen {
                     HudConfig.position = HudConfig.ScreenPosition.values()[nextOrd];
                     btn.setMessage(Text.translatable("gui.florafare.hud_config.position", HudConfig.position.name()));
                 }).dimensions(x, y + 50, 200, 20).build());
+
+        this.addDrawableChild(new ScaleSliderWidget(x, y + 75, 200, 20));
+    }
+
+    /**
+     * Lets the player resize the whole HUD overlay. The slider itself is dragged
+     * continuously, but the applied/displayed value is snapped to 5% steps so it
+     * always reads as a clean percentage instead of an odd fractional one.
+     */
+    private static class ScaleSliderWidget extends SliderWidget {
+        private static final float STEP = 0.05f;
+
+        ScaleSliderWidget(int x, int y, int width, int height) {
+            super(x, y, width, height, Text.empty(), normalize(HudConfig.scale));
+            this.updateMessage();
+        }
+
+        private static double normalize(float scale) {
+            return (scale - HudConfig.MIN_SCALE) / (HudConfig.MAX_SCALE - HudConfig.MIN_SCALE);
+        }
+
+        private float snappedScale() {
+            float raw = HudConfig.MIN_SCALE + (float) (this.value * (HudConfig.MAX_SCALE - HudConfig.MIN_SCALE));
+            return MathHelper.clamp(Math.round(raw / STEP) * STEP, HudConfig.MIN_SCALE, HudConfig.MAX_SCALE);
+        }
+
+        @Override
+        protected void updateMessage() {
+            this.setMessage(Text.translatable("gui.florafare.hud_config.scale",
+                    Math.round(snappedScale() * 100) + "%"));
+        }
+
+        @Override
+        protected void applyValue() {
+            HudConfig.scale = snappedScale();
+        }
     }
 
     @Override
