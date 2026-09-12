@@ -82,6 +82,12 @@ public class FlorafareModMenuIntegration implements ModMenuApi {
                     .setSaveConsumer(v -> FlorafareConfig.enableAlwaysEdibleOverride = v)
                     .build());
             balance.addEntry(entry.startBooleanToggle(
+                            Text.translatable("gui.florafare.config.allow_eating_when_full"),
+                            FlorafareConfig.allowEatingWhenFull)
+                    .setTooltip(Text.translatable("gui.florafare.config.allow_eating_when_full.tooltip"))
+                    .setSaveConsumer(v -> FlorafareConfig.allowEatingWhenFull = v)
+                    .build());
+            balance.addEntry(entry.startBooleanToggle(
                             Text.translatable("gui.florafare.config.respect_vanilla_food_effects"),
                             FlorafareConfig.respectVanillaFoodEffects)
                     .setSaveConsumer(v -> FlorafareConfig.respectVanillaFoodEffects = v)

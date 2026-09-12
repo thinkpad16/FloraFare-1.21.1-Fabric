@@ -268,6 +268,7 @@ Every field below is editable in-game via **ModMenu** (if installed — Cloth Co
   "autoGenDurationMultiplier": 1200,
   "autoGenHealthMultiplier": 0.5,
   "enableAlwaysEdibleOverride": true,
+  "allowEatingWhenFull": true,
   "respectVanillaFoodEffects": false,
   "enableForgottenMead": true,
   "grantJournalOnFirstJoin": true,
@@ -291,6 +292,7 @@ Every field below is editable in-game via **ModMenu** (if installed — Cloth Co
 | `autoGenDurationMultiplier` | int, default `1200` | Global default for auto-generated buff duration (`vanilla nutrition × this`), used when no `config_generation.json` overrides it. |
 | `autoGenHealthMultiplier` | double, default `0.5` | Global default for auto-generated buff health bonus. |
 | `enableAlwaysEdibleOverride` | `true` / `false` | Master switch for the per-food `always_edible` datapack flag. |
+| `allowEatingWhenFull` | `true` / `false`, default `true` | When `true`, **every** food can be eaten on a full hunger bar, not just the ones flagged `always_edible`. The whole FloraFare pipeline still runs — buff, health bonus, effects/attributes, synergies, journal discovery, consumption logging — only the surplus nutrition/saturation is clamped away by the vanilla hunger manager. Items listed in `ignoredFoodItems` keep vanilla's "only when hungry" gating. Set to `false` to restore vanilla's restriction. |
 | `respectVanillaFoodEffects` | `true` / `false` | When `true`, a Florafare-managed food's *vanilla* status effects (e.g. chorus fruit's own chance-based effects) also apply alongside its configured buff, instead of being suppressed. |
 | `enableForgottenMead` | `true` / `false` | Whether Forgotten Mead actually removes a buff when drunk. |
 | `grantJournalOnFirstJoin` | `true` / `false` | Whether new players are automatically given a Food Journal. |

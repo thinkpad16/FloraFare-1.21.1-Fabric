@@ -25,6 +25,18 @@ public class FlorafareConfig {
     public static int autoGenDurationMultiplier = 1200;
     public static double autoGenHealthMultiplier = 0.5;
     public static boolean enableAlwaysEdibleOverride = true;
+
+    /**
+     * On by default: every food is edible on a full hunger bar, not just the ones
+     * flagged {@code always_edible}. Florafare's own logic (buffs, health bonus,
+     * synergies, journal discovery) runs exactly as it does on a hungry player; only
+     * the surplus nutrition/saturation is clamped away by the vanilla hunger manager.
+     * Items on {@link #ignoredFoodItems} keep their vanilla gating, so mods that asked
+     * Florafare to keep its hands off an item stay in control of it. Set to false to
+     * restore vanilla's "only when hungry" restriction.
+     */
+    public static boolean allowEatingWhenFull = true;
+
     public static boolean respectVanillaFoodEffects = false;
     public static boolean enableForgottenMead = true;
     public static boolean grantJournalOnFirstJoin = true;
@@ -64,6 +76,7 @@ public class FlorafareConfig {
                     autoGenDurationMultiplier = data.autoGenDurationMultiplier;
                     autoGenHealthMultiplier = data.autoGenHealthMultiplier;
                     enableAlwaysEdibleOverride = data.enableAlwaysEdibleOverride;
+                    allowEatingWhenFull = data.allowEatingWhenFull;
                     respectVanillaFoodEffects = data.respectVanillaFoodEffects;
                     enableForgottenMead = data.enableForgottenMead;
                     grantJournalOnFirstJoin = data.grantJournalOnFirstJoin;
@@ -95,6 +108,7 @@ public class FlorafareConfig {
             data.autoGenDurationMultiplier = autoGenDurationMultiplier;
             data.autoGenHealthMultiplier = autoGenHealthMultiplier;
             data.enableAlwaysEdibleOverride = enableAlwaysEdibleOverride;
+            data.allowEatingWhenFull = allowEatingWhenFull;
             data.respectVanillaFoodEffects = respectVanillaFoodEffects;
             data.enableForgottenMead = enableForgottenMead;
             data.grantJournalOnFirstJoin = grantJournalOnFirstJoin;
@@ -120,6 +134,7 @@ public class FlorafareConfig {
         public int autoGenDurationMultiplier = 1200;
         public double autoGenHealthMultiplier = 0.5;
         public boolean enableAlwaysEdibleOverride = true;
+        public boolean allowEatingWhenFull = true;
         public boolean respectVanillaFoodEffects = false;
         public boolean enableForgottenMead = true;
         public boolean grantJournalOnFirstJoin = true;

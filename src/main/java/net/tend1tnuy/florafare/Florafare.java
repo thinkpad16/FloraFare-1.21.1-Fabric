@@ -154,6 +154,7 @@ public class Florafare implements ModInitializer {
                 net.tend1tnuy.florafare.config.FlorafareConfig.autoGenHealthMultiplier,
                 net.tend1tnuy.florafare.config.FlorafareConfig.enableSynergies,
                 net.tend1tnuy.florafare.config.FlorafareConfig.enableAlwaysEdibleOverride,
+                net.tend1tnuy.florafare.config.FlorafareConfig.allowEatingWhenFull,
                 net.tend1tnuy.florafare.config.FlorafareConfig.respectVanillaFoodEffects,
                 net.tend1tnuy.florafare.config.FlorafareConfig.enableForgottenMead
         );

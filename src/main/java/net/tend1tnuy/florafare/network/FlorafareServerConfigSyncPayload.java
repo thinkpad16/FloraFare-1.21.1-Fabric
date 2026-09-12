@@ -19,6 +19,7 @@ public record FlorafareServerConfigSyncPayload(
         double autoGenHealthMultiplier,
         boolean enableSynergies,
         boolean enableAlwaysEdibleOverride,
+        boolean allowEatingWhenFull,
         boolean respectVanillaFoodEffects,
         boolean enableForgottenMead
 ) implements CustomPayload {
@@ -34,6 +35,7 @@ public record FlorafareServerConfigSyncPayload(
                 buf.writeDouble(payload.autoGenHealthMultiplier());
                 buf.writeBoolean(payload.enableSynergies());
                 buf.writeBoolean(payload.enableAlwaysEdibleOverride());
+                buf.writeBoolean(payload.allowEatingWhenFull());
                 buf.writeBoolean(payload.respectVanillaFoodEffects());
                 buf.writeBoolean(payload.enableForgottenMead());
             },
@@ -41,6 +43,7 @@ public record FlorafareServerConfigSyncPayload(
                     buf.readVarInt(),
                     buf.readVarInt(),
                     buf.readDouble(),
+                    buf.readBoolean(),
                     buf.readBoolean(),
                     buf.readBoolean(),
                     buf.readBoolean(),

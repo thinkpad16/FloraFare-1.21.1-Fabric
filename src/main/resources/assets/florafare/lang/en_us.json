@@ -86,6 +86,8 @@
   "gui.florafare.config.auto_gen_duration_multiplier": "Auto-generated buff duration multiplier",
   "gui.florafare.config.auto_gen_health_multiplier": "Auto-generated buff health multiplier",
   "gui.florafare.config.enable_always_edible_override": "Allow always-edible foods override",
+  "gui.florafare.config.allow_eating_when_full": "Eat with a full hunger bar",
+  "gui.florafare.config.allow_eating_when_full.tooltip": "Lets every food be eaten even when hunger is full. Florafare buffs, health bonus, synergies and journal discoveries still apply; only the surplus hunger points are wasted. Items in ignoredFoodItems keep vanilla behaviour.",
   "gui.florafare.config.respect_vanilla_food_effects": "Also apply vanilla food effects",
   "gui.florafare.config.hud_layout": "HUD layout",
   "gui.florafare.config.hud_icon_size": "HUD icon size",

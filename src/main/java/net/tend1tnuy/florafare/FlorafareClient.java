@@ -93,6 +93,9 @@ public class FlorafareClient implements ClientModInitializer {
                     FlorafareConfig.autoGenHealthMultiplier = payload.autoGenHealthMultiplier();
                     FlorafareConfig.enableSynergies = payload.enableSynergies();
                     FlorafareConfig.enableAlwaysEdibleOverride = payload.enableAlwaysEdibleOverride();
+                    // Needed client-side too: Item#use runs on the client for prediction,
+                    // so without this the eating animation never starts on a full bar.
+                    FlorafareConfig.allowEatingWhenFull = payload.allowEatingWhenFull();
                     FlorafareConfig.respectVanillaFoodEffects = payload.respectVanillaFoodEffects();
                     FlorafareConfig.enableForgottenMead = payload.enableForgottenMead();
                     PlayerFoodComponent.MAX_BUFF_SLOTS = payload.maxBuffSlots();
