@@ -3,8 +3,18 @@ plugins {
 	id 'maven-publish'
 }
 
-version = project.mod_version
+// The Minecraft version travels in the SemVer build-metadata field, so the jar comes
+// out as florafare-1.3.0+1.21.1.jar and fabric.mod.json reports the same string. This
+// is the Fabric/Modrinth convention, and it is what lets one GitHub release hold
+// builds for several game versions without the files being told apart only by upload
+// order. Set before the first release on purpose — renaming published artifacts
+// afterwards breaks anyone's existing download links.
+version = "${project.mod_version}+${project.minecraft_version}"
 group = project.maven_group
+
+base {
+	archivesName = rootProject.name
+}
 
 repositories {
 	// AppleSkin (optional integration)
