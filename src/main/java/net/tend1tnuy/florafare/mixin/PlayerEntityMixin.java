@@ -6,6 +6,7 @@ import net.minecraft.entity.player.HungerManager;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
+import net.minecraft.nbt.NbtElement;
 import net.minecraft.world.World;
 import net.tend1tnuy.florafare.component.IFoodComponentProvider;
 import net.tend1tnuy.florafare.component.PlayerFoodComponent;
@@ -134,5 +135,25 @@ public abstract class PlayerEntityMixin implements IFoodComponentProvider {
     @Inject(method = "readCustomDataFromNbt", at = @At("TAIL"))
     private void onReadCustomDataFromNbt(NbtCompound nbt, CallbackInfo ci) {
         this.foodComponent.readFromNbt(nbt);
+
+        PlayerEntity self = (PlayerEntity) (Object) this;
+        if (self.getWorld() == null || self.getWorld().isClient) return;
+
+        // Buff modifiers are temporary, so they are absent from the attributes vanilla
+        // just deserialized and have to be rebuilt from our own saved buff list. The
+        // strip first clears any persistent modifier left in the save by a pre-1.3
+        // version, which would otherwise stack on top of the ones reapplied here.
+        this.foodComponent.stripFlorafareModifiers();
+        this.foodComponent.reapplyAttributes();
+
+        // LivingEntity#readCustomDataFromNbt applied the saved health before any of
+        // this, clamped against an unbuffed max — so a player who logged out at 24/24
+        // came back at 20/24 and lost the hearts permanently. Now that the max-health
+        // modifiers are back, restore what was saved (setHealth still clamps, so this
+        // can only ever give back health the player genuinely had).
+        if (nbt.contains("Health", NbtElement.NUMBER_TYPE)) {
+            float savedHealth = nbt.getFloat("Health");
+            if (savedHealth > self.getHealth()) self.setHealth(savedHealth);
+        }
     }
 }
