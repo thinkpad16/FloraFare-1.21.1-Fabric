@@ -49,6 +49,21 @@ dependencies {
 	// neither bundles it into the built jar or requires it at distribution time.
 	modCompileOnly "com.terraformersmc:modmenu:${project.modmenu_version}"
 	modLocalRuntime "com.terraformersmc:modmenu:${project.modmenu_version}"
+
+	// Unit tests for the pure logic — config resolution and NBT round-trips — which
+	// need Minecraft's NBT/Identifier classes on the classpath (Loom already puts them
+	// there) but never boot the game.
+	testImplementation platform("org.junit:junit-bom:${project.junit_version}")
+	testImplementation "org.junit.jupiter:junit-jupiter"
+	testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+}
+
+test {
+	useJUnitPlatform()
+	testLogging {
+		events "failed"
+		exceptionFormat "full"
+	}
 }
 
 processResources {

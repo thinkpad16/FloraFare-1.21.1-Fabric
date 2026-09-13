@@ -103,6 +103,15 @@ public class FoodBuffManager {
         }
     }
 
+    /**
+     * The config registered under an exact normalized target string, or null.
+     * Unlike {@link #getConfig(ItemStack)} this performs no tag/namespace/auto-gen
+     * resolution — it answers "what did a datapack define for this literal target".
+     */
+    public static FoodBuffData getConfigByTarget(String target) {
+        return target == null ? null : CONFIGS.get(target);
+    }
+
     /** Targets defined at the same priority by more than one source; see {@link #AMBIGUOUS_TARGETS}. */
     public static Set<String> getAmbiguousTargets() {
         return new HashSet<>(AMBIGUOUS_TARGETS);
@@ -223,7 +232,7 @@ public class FoodBuffManager {
      * Ranks configured tag entries when an item belongs to several of them.
      * Higher priority wins; on ties the more specific (deeper path) tag wins.
      */
-    private static boolean isBetterTagMatch(FoodBuffData candidate, FoodBuffData current) {
+    static boolean isBetterTagMatch(FoodBuffData candidate, FoodBuffData current) {
         if (current == null) return true;
         if (candidate.priority() != current.priority()) {
             return candidate.priority() > current.priority();

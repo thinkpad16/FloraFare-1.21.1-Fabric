@@ -21,6 +21,7 @@ import net.tend1tnuy.florafare.config.FlorafareConfig;
 import net.tend1tnuy.florafare.food.FoodBuffData;
 import net.tend1tnuy.florafare.food.FoodSynergyData;
 import net.tend1tnuy.florafare.food.FoodSynergyManager;
+import net.tend1tnuy.florafare.network.BuffStateSyncPayload;
 import net.tend1tnuy.florafare.network.FoodBuffSyncPayload;
 import net.tend1tnuy.florafare.network.FoodUnlockedPayload;
 import net.tend1tnuy.florafare.network.SynergyUnlockedPayload;
@@ -49,7 +50,11 @@ public class PlayerFoodComponent {
     // #11 — Map keyed by synergy id for O(1) "is this synergy already active?" lookup.
     private final Map<String, ActiveFoodBuff> activeSynergyMap = new HashMap<>();
 
-    // #15 — Dirty flag: only rebuild NBT when state has actually changed.
+    /**
+     * Set whenever buffs or synergies change, and flushed once at the end of the
+     * player's tick. Coalescing matters: a single bite can add a buff and activate a
+     * synergy, and each used to send its own full state packet.
+     */
     private boolean dirty = false;
 
     public PlayerFoodComponent(PlayerEntity player) {
@@ -73,8 +78,9 @@ public class PlayerFoodComponent {
 
     public boolean unlockFood(String itemId) {
         if (!discoveredFoods.add(itemId)) return false;
-        dirty = true;
-        syncIfDirty();
+        // Deliberately not marked dirty: the discovery list is the largest part of the
+        // state and never changes again once a food is known, so it travels in its own
+        // one-string payload below instead of riding along on every buff update.
         if (player instanceof ServerPlayerEntity serverPlayer) {
             ServerPlayNetworking.send(serverPlayer, new FoodUnlockedPayload(itemId));
         }
@@ -102,8 +108,7 @@ public class PlayerFoodComponent {
                 updateSynergies();
                 FlorafareEvents.BUFF_APPLIED.invoker().onBuffApplied(player, stack, buff);
             }
-            dirty = true;
-            syncIfDirty();
+            markDirty();
             return true;
         }
 
@@ -117,8 +122,7 @@ public class PlayerFoodComponent {
             updateSynergies();
             FlorafareEvents.BUFF_APPLIED.invoker().onBuffApplied(player, stack, buff);
         }
-        dirty = true;
-        syncIfDirty();
+        markDirty();
         return true;
     }
 
@@ -127,8 +131,7 @@ public class PlayerFoodComponent {
         ActiveFoodBuff buff = activeBuffs.remove(activeBuffs.size() - 1);
         removeBuffAttributes(buff);
         if (!player.getWorld().isClient) updateSynergies();
-        dirty = true;
-        syncIfDirty();
+        markDirty();
         return true;
     }
 
@@ -149,10 +152,7 @@ public class PlayerFoodComponent {
         }
         activeSynergyMap.clear();
 
-        if (changed) {
-            dirty = true;
-            syncIfDirty();
-        }
+        if (changed) markDirty();
     }
 
     // -------------------------------------------------------------------------
@@ -203,7 +203,12 @@ public class PlayerFoodComponent {
 
         instance.removeModifier(modifierId);
         try {
-            instance.addPersistentModifier(
+            // Temporary, never persistent: a persistent modifier is written into the
+            // player's own vanilla attribute NBT, so any mismatch between that copy and
+            // the buff list below leaves the stat stuck forever (and survives the mod
+            // being uninstalled). Temporary modifiers live only in memory and are
+            // rebuilt from our own saved buff list by reapplyAttributes() on load.
+            instance.addTemporaryModifier(
                     new EntityAttributeModifier(modifierId, amount, operation));
             Identifier registryId = Registries.ATTRIBUTE.getId(attribute.value());
             if (registryId != null) {
@@ -216,9 +221,47 @@ public class PlayerFoodComponent {
     }
 
     /**
+     * Strips every attribute modifier in the Florafare namespace from the player,
+     * scanning the registry directly rather than trusting the mod's own buff list.
+     *
+     * <p>Two jobs: it backs {@code /florafare repair}, and it runs on every load to
+     * migrate saves written by older versions, which used persistent modifiers that
+     * vanilla baked into the player's attribute NBT. Without it those old modifiers
+     * would load alongside the freshly reapplied temporary ones and double up.
+     *
+     * @return how many modifiers were removed
+     */
+    public int stripFlorafareModifiers() {
+        int removed = 0;
+        for (RegistryEntry<EntityAttribute> entry : Registries.ATTRIBUTE.streamEntries().toList()) {
+            EntityAttributeInstance instance = player.getAttributeInstance(entry);
+            if (instance == null) continue;
+
+            List<Identifier> toRemove = null;
+            for (EntityAttributeModifier modifier : instance.getModifiers()) {
+                if (!modifier.id().getNamespace().equals(Florafare.MOD_ID)) continue;
+                if (toRemove == null) toRemove = new ArrayList<>();
+                toRemove.add(modifier.id());
+            }
+            if (toRemove == null) continue;
+
+            for (Identifier modifierId : toRemove) {
+                instance.removeModifier(modifierId);
+                removed++;
+            }
+        }
+
+        if (player.getHealth() > player.getMaxHealth()) {
+            player.setHealth(player.getMaxHealth());
+        }
+        return removed;
+    }
+
+    /**
      * Reapplies the recorded attribute modifiers of every active buff and synergy.
-     * Needed after the player entity is recreated (returning from the End), because
-     * vanilla only copies BASE attribute values.
+     * Needed whenever the player entity is (re)built — loading from disk, or being
+     * recreated on a dimension change — because the modifiers are temporary and
+     * vanilla carries over only BASE attribute values.
      */
     public void reapplyAttributes() {
         if (player.getWorld().isClient) return;
@@ -234,7 +277,7 @@ public class PlayerFoodComponent {
                 if (instance == null) return;
                 instance.removeModifier(modId);
                 try {
-                    instance.addPersistentModifier(new EntityAttributeModifier(
+                    instance.addTemporaryModifier(new EntityAttributeModifier(
                             modId, modifier.amount(), mapOperation(modifier.operation())));
                 } catch (Exception e) {
                     Florafare.LOGGER.error("Failed to reapply attribute modifier: {}", modId, e);
@@ -399,6 +442,7 @@ public class PlayerFoodComponent {
                 changed = true;
             }
         }
+        if (changed) markDirty();
         return changed;
     }
 
@@ -429,19 +473,18 @@ public class PlayerFoodComponent {
     public void tick() {
         boolean isServer       = !player.getWorld().isClient;
         boolean buffsChanged   = false;
-        boolean synergiesChanged = false;
 
         for (int i = activeBuffs.size() - 1; i >= 0; i--) {
             ActiveFoodBuff buff = activeBuffs.get(i);
             buff.tick();
             if (buff.isExpired()) {
-                if (isServer) { removeBuffAttributes(buff); buffsChanged = true; }
+                if (isServer) { removeBuffAttributes(buff); buffsChanged = true; markDirty(); }
                 activeBuffs.remove(i);
             }
         }
 
         if (isServer && buffsChanged) {
-            synergiesChanged = updateSynergies();
+            updateSynergies();
         }
 
         for (int i = activeSynergies.size() - 1; i >= 0; i--) {
@@ -451,16 +494,14 @@ public class PlayerFoodComponent {
                 if (isServer) {
                     removeBuffAttributes(synergyBuff);
                     activeSynergyMap.remove(synergyBuff.getTarget()); // #11
-                    synergiesChanged = true;
+                    markDirty();
                 }
                 activeSynergies.remove(i);
             }
         }
 
-        if (isServer && (buffsChanged || synergiesChanged)) {
-            dirty = true;
-            syncIfDirty();
-        }
+        // One flush per tick, at the end, covering everything that changed during it.
+        flushIfDirty();
     }
 
     // -------------------------------------------------------------------------
@@ -500,17 +541,42 @@ public class PlayerFoodComponent {
     }
 
     // -------------------------------------------------------------------------
-    // SYNC  (#15 — dirty flag: only rebuild NBT when state changed)
+    // SYNC
+    //
+    // Two packet shapes, because the two halves of this component change at wildly
+    // different rates:
+    //
+    //   * the volatile half — active buffs and active synergies — changes constantly
+    //     (a buff expiring is a change every few seconds) and is small, so it goes out
+    //     on its own as BuffStateSyncPayload;
+    //   * the durable half — every food and synergy the player has ever discovered —
+    //     is by far the largest part of the state (hundreds of item ids in a big
+    //     modpack) yet only ever grows by one entry at a time, so it rides on the
+    //     full FoodBuffSyncPayload at join/respawn and on single-entry discovery
+    //     packets after that.
+    //
+    // Before the split, a buff ticking down to zero re-sent the entire discovery list
+    // to that player — kilobytes per expiry, per player.
     // -------------------------------------------------------------------------
 
-    /** Sends the current state to the client only if the dirty flag is set. */
-    private void syncIfDirty() {
-        if (!dirty) return;
-        sync();
-        dirty = false;
+    /** Flags the volatile half as changed; {@link #tick()} sends it once at tick end. */
+    private void markDirty() {
+        dirty = true;
     }
 
+    /** Sends the volatile half if anything changed this tick. */
+    private void flushIfDirty() {
+        if (!dirty) return;
+        dirty = false;
+        if (player instanceof ServerPlayerEntity serverPlayer) {
+            ServerPlayNetworking.send(serverPlayer,
+                    new BuffStateSyncPayload(writeBuffStateToNbt(new NbtCompound())));
+        }
+    }
+
+    /** Sends the complete state — used on join, respawn and dimension change. */
     public void sync() {
+        dirty = false;
         if (player instanceof ServerPlayerEntity serverPlayer) {
             ServerPlayNetworking.send(serverPlayer,
                     new FoodBuffSyncPayload(writeToNbt(new NbtCompound())));
@@ -521,10 +587,26 @@ public class PlayerFoodComponent {
     // NBT SERIALIZATION
     // -------------------------------------------------------------------------
 
-    public NbtCompound writeToNbt(NbtCompound nbt) {
+    /** The volatile half only: the active buffs and synergies. */
+    public NbtCompound writeBuffStateToNbt(NbtCompound nbt) {
         NbtList buffs = new NbtList();
         for (ActiveFoodBuff buff : activeBuffs) buffs.add(buff.toNbt());
         nbt.put(NBT_BUFFS_KEY, buffs);
+
+        NbtList activeSyn = new NbtList();
+        for (ActiveFoodBuff b : activeSynergies) activeSyn.add(b.toNbt());
+        nbt.put(NBT_ACTIVE_SYNERGIES_KEY, activeSyn);
+        return nbt;
+    }
+
+    /** Counterpart of {@link #writeBuffStateToNbt}; leaves the discovery lists alone. */
+    public void readBuffStateFromNbt(NbtCompound nbt) {
+        readActiveBuffs(nbt);
+        readActiveSynergies(nbt);
+    }
+
+    public NbtCompound writeToNbt(NbtCompound nbt) {
+        writeBuffStateToNbt(nbt);
 
         NbtList discovered = new NbtList();
         for (String id : discoveredFoods) discovered.add(NbtString.of(id));
@@ -534,15 +616,11 @@ public class PlayerFoodComponent {
         for (String synId : discoveredSynergies) discoveredSyn.add(NbtString.of(synId));
         nbt.put(NBT_DISCOVERED_SYNERGIES_KEY, discoveredSyn);
 
-        NbtList activeSyn = new NbtList();
-        for (ActiveFoodBuff b : activeSynergies) activeSyn.add(b.toNbt());
-        nbt.put(NBT_ACTIVE_SYNERGIES_KEY, activeSyn);
-
         nbt.putBoolean(NBT_JOURNAL_KEY, hasReceivedJournal);
         return nbt;
     }
 
-    public void readFromNbt(NbtCompound nbt) {
+    private void readActiveBuffs(NbtCompound nbt) {
         activeBuffs.clear();
         if (nbt.contains(NBT_BUFFS_KEY, NbtElement.LIST_TYPE)) {
             NbtList list = nbt.getList(NBT_BUFFS_KEY, NbtElement.COMPOUND_TYPE);
@@ -550,6 +628,24 @@ public class PlayerFoodComponent {
                 activeBuffs.add(ActiveFoodBuff.fromNbt(list.getCompound(i)));
             }
         }
+    }
+
+    private void readActiveSynergies(NbtCompound nbt) {
+        activeSynergies.clear();
+        activeSynergyMap.clear(); // #11
+        if (nbt.contains(NBT_ACTIVE_SYNERGIES_KEY, NbtElement.LIST_TYPE)) {
+            NbtList list = nbt.getList(NBT_ACTIVE_SYNERGIES_KEY, NbtElement.COMPOUND_TYPE);
+            for (int i = 0; i < list.size(); i++) {
+                ActiveFoodBuff b = ActiveFoodBuff.fromNbt(list.getCompound(i));
+                activeSynergies.add(b);
+                activeSynergyMap.put(b.getTarget(), b); // #11
+            }
+        }
+    }
+
+    public void readFromNbt(NbtCompound nbt) {
+        readActiveBuffs(nbt);
+        readActiveSynergies(nbt);
 
         discoveredFoods.clear();
         if (nbt.contains(NBT_DISCOVERED_KEY, NbtElement.LIST_TYPE)) {
@@ -561,17 +657,6 @@ public class PlayerFoodComponent {
         if (nbt.contains(NBT_DISCOVERED_SYNERGIES_KEY, NbtElement.LIST_TYPE)) {
             NbtList list = nbt.getList(NBT_DISCOVERED_SYNERGIES_KEY, NbtElement.STRING_TYPE);
             for (int i = 0; i < list.size(); i++) discoveredSynergies.add(list.getString(i));
-        }
-
-        activeSynergies.clear();
-        activeSynergyMap.clear(); // #11
-        if (nbt.contains(NBT_ACTIVE_SYNERGIES_KEY, NbtElement.LIST_TYPE)) {
-            NbtList list = nbt.getList(NBT_ACTIVE_SYNERGIES_KEY, NbtElement.COMPOUND_TYPE);
-            for (int i = 0; i < list.size(); i++) {
-                ActiveFoodBuff b = ActiveFoodBuff.fromNbt(list.getCompound(i));
-                activeSynergies.add(b);
-                activeSynergyMap.put(b.getTarget(), b); // #11
-            }
         }
 
         hasReceivedJournal = nbt.getBoolean(NBT_JOURNAL_KEY);

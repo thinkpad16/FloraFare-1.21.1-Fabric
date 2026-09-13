@@ -248,7 +248,7 @@ All commands require permission level 2 (op) by default — configurable via `co
 | `/florafare clear <player>` | Removes all active buffs and synergies from a player. |
 | `/florafare setbuff <duration> <nutrition> <saturation> <health> [<attr_id> <attr_amount> <attr_op>]` | Attaches a **custom buff to the item stack in your main hand** (via NBT). Anyone who eats that exact stack gets this buff instead of the normal config. Persists across restarts (`config/florafare_runtime.dat`). |
 | `/florafare journal give <player>` | Gives the player a Food Journal, for replacing one that was lost (dropped in lava, died without `keepInventory`, etc.) without needing creative mode. The journal is also craftable in survival — see [Items](#items). |
-| `/florafare repair <player>` | Strips any Florafare-namespaced attribute modifier from the player, scanning every registered attribute directly rather than relying on the mod's own tracked buff state. Use this to recover a player whose stats got stuck — e.g. after a corrupted save, a version migration, or Florafare being removed and reinstalled with buffs still active. |
+| `/florafare repair <player>` | Strips any Florafare-namespaced attribute modifier from the player, scanning every registered attribute directly rather than relying on the mod's own tracked buff state. Since 1.3 the same scan runs automatically on every player load, so stuck stats should no longer happen at all — this stays as a manual escape hatch for a player who got stuck without relogging. |
 | `/florafare validate` | Diagnoses the currently loaded `food_buffs`/`food_synergies` configs for problems that don't show up as load-time errors: synergies that can never activate because they need more buffs than `maxBuffSlots` allows, requirements that can never be satisfied (non-edible item, excluded item, or empty tag), and datapack targets left ambiguous by a same-priority tie. Reports to chat and mirrors each finding to the server log. |
 | `/florafare dumpfoods` | Exports every edible item in the game (with recipe trees) to `florafare_edible_items_dump.txt` in the game directory — handy for building datapacks. |
 
@@ -263,7 +263,7 @@ Every field below is editable in-game via **ModMenu** (if installed — Cloth Co
 ```json
 {
   "enableSynergies": true,
-  "consumptionLogging": "ALL",
+  "consumptionLogging": "NONE",
   "maxBuffSlots": 3,
   "autoGenDurationMultiplier": 1200,
   "autoGenHealthMultiplier": 0.5,
@@ -302,13 +302,13 @@ Every field below is editable in-game via **ModMenu** (if installed — Cloth Co
 | Key | Values | Meaning |
 |---|---|---|
 | `commandPermissionLevel` | int `0`-`4`, default `2` | Permission level required for all `/florafare` subcommands. |
+| `consumptionLogging` | `NONE` / `REDUCED` / `ALL`, default `NONE` | How much Florafare writes to the **server** log during play. `ALL` logs every consumption and synergy with full stats; `REDUCED` logs synergy activations plus every health-restoring food (exploit tracking) — note that covers roughly half the bundled foods, so it is only a little quieter than `ALL`; `NONE` (the default) keeps normal gameplay out of the log entirely. Read from the config of whichever side is running the logic, so on a dedicated server it is the **server's** `florafare.json` that decides — changing it client-side in ModMenu while connected to one has no effect. |
 | `ignoredFoodItems` | array of item ids, default `[]` | Items Florafare must never intercept — it leaves eating, tooltips, and always-edible handling entirely to vanilla or another mod for these ids. Applied at startup and synced to clients so tooltip stripping and hunger prediction stay consistent. See [Compatibility with other mods](#compatibility-with-other-mods). |
 
 ### Client-local (cosmetic, per-machine)
 
 | Key | Values | Meaning |
 |---|---|---|
-| `consumptionLogging` | `NONE` / `REDUCED` / `ALL` | Server-log detail: `ALL` logs every consumption and synergy with full stats, `REDUCED` only logs health-restoring foods (exploit tracking) and synergy activations, `NONE` disables logging. |
 | `enableDiscoveryToasts` | `true` / `false` | Whether discovering a new food/synergy shows a toast notification naming it. |
 | `toastDisplayTimeMs` | int, default `5000` | How long discovery toasts stay on screen. |
 | `stripFoodTooltips` | `true` / `false` | Whether Florafare simplifies the tooltip of its managed foods (hiding vanilla nutrition/effect lines it has replaced). |
@@ -362,7 +362,7 @@ import net.tend1tnuy.florafare.api.FlorafareAPI;
 | `unlockFood(PlayerEntity, String itemId)` | Marks an item as discovered without granting its buff. |
 
 `FoodBuffData` also has a `FoodBuffData.builder(target)...build()` fluent builder, so you
-don't need to fill in the full 9-argument record constructor by hand.
+don't need to fill in the full 10-argument record constructor by hand.
 
 ### `FlorafareEvents`
 
@@ -390,8 +390,14 @@ FlorafareEvents.SYNERGY_ACTIVATED.register((player, synergy, buff) -> {
 ## Building from source
 
 ```bash
-./gradlew build      # Linux / macOS
+./gradlew build      # Linux / macOS — compiles, runs the unit tests, builds the jar
 gradlew.bat build     # Windows
+./gradlew test       # unit tests only
 ```
+
+The unit tests in `src/test/java` cover the pure logic that datapacks and saves depend on —
+the `FoodBuffData`/`ActiveFoodBuff` NBT round-trips, target normalization, and the
+priority/tag-specificity resolution rules — without booting the game, so they run in a
+couple of seconds in CI.
 
 The built jar lands in `build/libs/`. Developed against Yarn mappings with Fabric Loom; see `gradle.properties` for exact versions.

@@ -61,6 +61,7 @@ public class Florafare implements ModInitializer {
         // 5. Network payload types (S2C)
         PayloadTypeRegistry.playS2C().register(FoodUnlockedPayload.ID,    FoodUnlockedPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(FoodBuffSyncPayload.ID,    FoodBuffSyncPayload.CODEC);
+        PayloadTypeRegistry.playS2C().register(BuffStateSyncPayload.ID,   BuffStateSyncPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(OpenFoodJournalPayload.ID, OpenFoodJournalPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(SynergyUnlockedPayload.ID, SynergyUnlockedPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(FoodConfigSyncPayload.ID,  FoodConfigSyncPayload.CODEC);
@@ -97,10 +98,20 @@ public class Florafare implements ModInitializer {
                     ((IFoodComponentProvider) newPlayer).florafare$getFoodComponent();
 
             if (alive) {
+                // ServerPlayerEntity#copyFrom has already run setHealth() against the
+                // new entity, whose max health is still the un-buffed 20 — so a player
+                // crossing a portal at 24/24 was silently clamped to 20 before the +4
+                // came back. Reapply first, then restore what they actually had.
+                float carriedHealth = oldPlayer.getHealth();
+
                 newComp.copyFrom(oldComp);
-                // Vanilla only copies BASE attribute values to the new entity, so
-                // buff-granted modifiers must be reapplied explicitly.
+                // Buff modifiers are temporary, and vanilla carries over only BASE
+                // attribute values, so they must be reapplied to the new entity.
                 newComp.reapplyAttributes();
+
+                if (carriedHealth > newPlayer.getHealth()) {
+                    newPlayer.setHealth(carriedHealth);
+                }
             } else {
                 // Journal progress and synergy discoveries persist through death.
                 newComp.getDiscoveredFoods().addAll(oldComp.getDiscoveredFoods());

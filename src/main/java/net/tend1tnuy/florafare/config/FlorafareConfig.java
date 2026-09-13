@@ -10,15 +10,32 @@ import java.io.FileReader;
 import java.io.FileWriter;
 
 public class FlorafareConfig {
-    private static final File FILE = new File(FabricLoader.getInstance().getConfigDir().toFile(), "florafare.json");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+
+    /**
+     * Resolved on demand rather than in a static initializer: touching FabricLoader
+     * while the class loads would make this config unusable anywhere the loader isn't
+     * running, which is exactly where the unit tests drive these fields from.
+     */
+    private static File configFile() {
+        return new File(FabricLoader.getInstance().getConfigDir().toFile(), "florafare.json");
+    }
 
     // Logging levels: NONE (disabled), REDUCED (less spam, only heals), ALL (everything)
     public enum LogLevel { NONE, REDUCED, ALL }
 
+    /**
+     * Off by default. Both other levels write an INFO line per consumption on the
+     * logical server — and {@code REDUCED} is not the escape hatch it sounds like,
+     * since it fires for every food with a positive {@code health_bonus}, which is
+     * roughly half of the bundled defaults. On a busy server that is thousands of
+     * lines an hour in {@code latest.log} for something nobody asked for, so an admin
+     * who wants the audit trail opts into it instead of opting out.
+     */
+    public static LogLevel consumptionLogging = LogLevel.NONE;
+
     // --- Main settings ---
     public static boolean enableSynergies = true;
-    public static LogLevel consumptionLogging = LogLevel.ALL;
 
     // --- Server-authoritative gameplay settings (synced to clients on join/reload) ---
     public static int maxBuffSlots = 3;
@@ -64,8 +81,9 @@ public class FlorafareConfig {
     public static float hudScale = 0.8f;
 
     public static void load() {
-        if (FILE.exists()) {
-            try (FileReader reader = new FileReader(FILE)) {
+        File file = configFile();
+        if (file.exists()) {
+            try (FileReader reader = new FileReader(file)) {
                 ConfigData data = GSON.fromJson(reader, ConfigData.class);
                 if (data != null) {
                     enableSynergies = data.enableSynergies;
@@ -100,7 +118,7 @@ public class FlorafareConfig {
     }
 
     public static void save() {
-        try (FileWriter writer = new FileWriter(FILE)) {
+        try (FileWriter writer = new FileWriter(configFile())) {
             ConfigData data = new ConfigData();
             data.enableSynergies = enableSynergies;
             data.consumptionLogging = consumptionLogging;
@@ -129,7 +147,7 @@ public class FlorafareConfig {
 
     private static class ConfigData {
         public boolean enableSynergies = true;
-        public LogLevel consumptionLogging = LogLevel.ALL;
+        public LogLevel consumptionLogging = LogLevel.NONE;
         public int maxBuffSlots = 3;
         public int autoGenDurationMultiplier = 1200;
         public double autoGenHealthMultiplier = 0.5;

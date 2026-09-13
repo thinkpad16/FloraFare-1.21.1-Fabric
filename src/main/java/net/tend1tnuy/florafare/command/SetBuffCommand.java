@@ -11,9 +11,6 @@ import net.minecraft.command.argument.EntityArgumentType;
 import net.minecraft.command.argument.IdentifierArgumentType;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.NbtComponent;
-import net.minecraft.entity.attribute.EntityAttribute;
-import net.minecraft.entity.attribute.EntityAttributeInstance;
-import net.minecraft.entity.attribute.EntityAttributeModifier;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
@@ -191,10 +188,7 @@ public class SetBuffCommand {
         // Normalize (trim, default namespace) so the input matches the registered config keys.
         String targetId = FoodBuffManager.normalizeTarget(StringArgumentType.getString(context, "targetId"));
 
-        FoodBuffData data = FoodBuffManager.getAllConfigs().stream()
-                .filter(config -> config.target().equals(targetId))
-                .findFirst()
-                .orElse(null);
+        FoodBuffData data = FoodBuffManager.getConfigByTarget(targetId);
 
         if (data != null) {
             PlayerFoodComponent component = ((IFoodComponentProvider) player).florafare$getFoodComponent();
@@ -232,30 +226,13 @@ public class SetBuffCommand {
     private static int executeRepair(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
         ServerPlayerEntity player = EntityArgumentType.getPlayer(context, "player");
 
-        int removed = 0;
-        for (RegistryEntry<EntityAttribute> entry : Registries.ATTRIBUTE.streamEntries().toList()) {
-            EntityAttributeInstance instance = player.getAttributeInstance(entry);
-            if (instance == null) continue;
+        // Same scan the component runs on every load; kept as a command because a
+        // player can also get stuck without relogging (a crash mid-buff, say).
+        int removed = ((IFoodComponentProvider) player).florafare$getFoodComponent()
+                .stripFlorafareModifiers();
 
-            List<Identifier> toRemove = new ArrayList<>();
-            for (EntityAttributeModifier modifier : instance.getModifiers()) {
-                if (modifier.id().getNamespace().equals(Florafare.MOD_ID)) {
-                    toRemove.add(modifier.id());
-                }
-            }
-            for (Identifier modifierId : toRemove) {
-                instance.removeModifier(modifierId);
-                removed++;
-            }
-        }
-
-        if (player.getHealth() > player.getMaxHealth()) {
-            player.setHealth(player.getMaxHealth());
-        }
-
-        int finalRemoved = removed;
         context.getSource().sendFeedback(() -> Text.translatable(
-                "command.florafare.repair.success", finalRemoved, player.getName().getString()), true);
+                "command.florafare.repair.success", removed, player.getName().getString()), true);
         return removed;
     }
 

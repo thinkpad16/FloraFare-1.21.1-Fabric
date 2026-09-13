@@ -21,6 +21,7 @@ import net.tend1tnuy.florafare.component.PlayerFoodComponent;
 import net.tend1tnuy.florafare.config.FlorafareConfig;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
 import net.tend1tnuy.florafare.food.FoodSynergyManager;
+import net.tend1tnuy.florafare.network.BuffStateSyncPayload;
 import net.tend1tnuy.florafare.network.FlorafareServerConfigSyncPayload;
 import net.tend1tnuy.florafare.network.FoodBuffSyncPayload;
 import net.tend1tnuy.florafare.network.FoodConfigSyncPayload;
@@ -61,6 +62,19 @@ public class FlorafareClient implements ClientModInitializer {
                     if (player != null) {
                         ((IFoodComponentProvider) player)
                                 .florafare$getFoodComponent().readFromNbt(payload.nbt());
+                    }
+                }));
+
+        // The volatile half (active buffs and synergies) — everything the journal
+        // discovery lists are deliberately left out of, so this arrives cheaply and
+        // often. Read through readBuffStateFromNbt, never readFromNbt, or it would
+        // wipe the discovery lists it doesn't carry.
+        ClientPlayNetworking.registerGlobalReceiver(BuffStateSyncPayload.ID, (payload, context) ->
+                context.client().execute(() -> {
+                    ClientPlayerEntity player = context.player();
+                    if (player != null) {
+                        ((IFoodComponentProvider) player)
+                                .florafare$getFoodComponent().readBuffStateFromNbt(payload.nbt());
                     }
                 }));
 
@@ -110,6 +124,14 @@ public class FlorafareClient implements ClientModInitializer {
 
         ClientPlayNetworking.registerGlobalReceiver(FoodUnlockedPayload.ID, (payload, context) ->
                 context.client().execute(() -> {
+                    // This packet is now the only thing that grows the client's
+                    // discovery list mid-session — the buff-state sync no longer
+                    // carries it — so record it here before anything reads it.
+                    ClientPlayerEntity player = context.player();
+                    if (player != null) {
+                        ((IFoodComponentProvider) player).florafare$getFoodComponent()
+                                .getDiscoveredFoods().add(payload.itemId());
+                    }
                     // A new food was discovered — invalidate the cache so the journal
                     // shows the updated unlock state on next open (#7).
                     FoodJournalScreen.invalidateCache();
@@ -127,6 +149,11 @@ public class FlorafareClient implements ClientModInitializer {
         // food-discovery toast above so both variants behave the same way.
         ClientPlayNetworking.registerGlobalReceiver(SynergyUnlockedPayload.ID, (payload, context) ->
                 context.client().execute(() -> {
+                    ClientPlayerEntity player = context.player();
+                    if (player != null) {
+                        ((IFoodComponentProvider) player).florafare$getFoodComponent()
+                                .getDiscoveredSynergies().add(payload.synergyId());
+                    }
                     FoodJournalScreen.invalidateCache();
                     if (FlorafareConfig.enableDiscoveryToasts) {
                         Text synergyName = Text.translatable(
