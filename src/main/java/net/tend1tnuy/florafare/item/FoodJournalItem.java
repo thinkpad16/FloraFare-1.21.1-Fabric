@@ -1,6 +1,6 @@
 package net.tend1tnuy.florafare.item;
 
-import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
+import net.tend1tnuy.florafare.Florafare;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
@@ -25,7 +25,7 @@ public class FoodJournalItem extends Item {
         ItemStack stack = user.getStackInHand(hand);
 
         if (!world.isClient && user instanceof ServerPlayerEntity serverPlayer) {
-            ServerPlayNetworking.send(serverPlayer, new OpenFoodJournalPayload());
+            Florafare.sendTo(serverPlayer, new OpenFoodJournalPayload());
         }
 
         return TypedActionResult.success(stack);

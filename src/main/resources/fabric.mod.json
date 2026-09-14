@@ -25,19 +25,23 @@
       ],
       "modmenu": [
         "net.tend1tnuy.florafare.compat.modmenu.FlorafareModMenuIntegration"
+      ],
+      "emi": [
+        "net.tend1tnuy.florafare.compat.emi.FlorafareEmiPlugin"
       ]
 	},
 	"mixins": [
 		"florafare.mixins.json"
 	],
 	"depends": {
-		"fabricloader": "*",
+		"fabricloader": ">=0.15.0",
 		"minecraft": "~1.21.1",
 		"java": ">=21",
 		"fabric-api": "*"
 	},
 	"suggests": {
 		"appleskin": "*",
-		"modmenu": "*"
+		"modmenu": "*",
+		"emi": "*"
 	}
 }

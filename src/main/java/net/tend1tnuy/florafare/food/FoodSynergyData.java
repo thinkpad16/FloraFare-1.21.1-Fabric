@@ -15,6 +15,13 @@ public record FoodSynergyData(
         List<FoodBuffData.EffectData> effects,
         List<FoodBuffData.AttributeData> attributes
 ) {
+    /** Defensive copies, for the same reason as {@link FoodBuffData}: every synergy is shared. */
+    public FoodSynergyData {
+        requirements = requirements == null ? List.of() : List.copyOf(requirements);
+        effects      = effects      == null ? List.of() : List.copyOf(effects);
+        attributes   = attributes   == null ? List.of() : List.copyOf(attributes);
+    }
+
     private static final String KEY_ID           = "id";
     private static final String KEY_DURATION     = "duration";
     private static final String KEY_HEALTH_BONUS = "healthBonus";

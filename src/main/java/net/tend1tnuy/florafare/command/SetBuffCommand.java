@@ -7,6 +7,7 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import net.minecraft.command.CommandRegistryAccess;
+import net.minecraft.command.CommandSource;
 import net.minecraft.command.argument.EntityArgumentType;
 import net.minecraft.command.argument.IdentifierArgumentType;
 import net.minecraft.component.DataComponentTypes;
@@ -22,9 +23,12 @@ import net.minecraft.registry.tag.TagKey;
 import net.minecraft.server.command.CommandManager;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.text.MutableText;
 import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
 import net.tend1tnuy.florafare.Florafare;
+import net.tend1tnuy.florafare.component.ActiveFoodBuff;
 import net.tend1tnuy.florafare.component.IFoodComponentProvider;
 import net.tend1tnuy.florafare.component.PlayerFoodComponent;
 import net.tend1tnuy.florafare.food.FoodBuffData;
@@ -35,6 +39,7 @@ import net.tend1tnuy.registry.ItemRegistry;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 /**
@@ -51,6 +56,13 @@ public class SetBuffCommand {
                         .requires(source -> source.hasPermissionLevel(
                                 net.tend1tnuy.florafare.config.FlorafareConfig.commandPermissionLevel))
 
+                        // Branch: /florafare buffs <player> (Lists what is active right now)
+                        .then(CommandManager.literal("buffs")
+                                .then(CommandManager.argument("player", EntityArgumentType.player())
+                                        .executes(SetBuffCommand::executeListBuffs)
+                                )
+                        )
+
                         // Branch: /florafare clear <player> (Clears all active buffs and synergies)
                         .then(CommandManager.literal("clear")
                                 .then(CommandManager.argument("player", EntityArgumentType.player())
@@ -66,8 +78,17 @@ public class SetBuffCommand {
                                                         .then(CommandManager.argument("health", DoubleArgumentType.doubleArg(0.0))
                                                                 .executes(context -> executeSetBuff(context, null, 0.0, null))
                                                                 .then(CommandManager.argument("attr_id", IdentifierArgumentType.identifier())
+                                                                        // Both arguments used to be free text, and a value neither
+                                                                        // registry nor operation recognised was accepted in silence:
+                                                                        // the buff was stamped onto the stack and then applied nothing,
+                                                                        // or quietly fell back to add_value. Suggested here and
+                                                                        // rejected in executeSetBuff.
+                                                                        .suggests((ctx, builder) -> CommandSource.suggestIdentifiers(
+                                                                                Registries.ATTRIBUTE.getIds(), builder))
                                                                         .then(CommandManager.argument("attr_amount", DoubleArgumentType.doubleArg())
                                                                                 .then(CommandManager.argument("attr_op", StringArgumentType.word())
+                                                                                        .suggests((ctx, builder) -> CommandSource.suggestMatching(
+                                                                                                VALID_OPERATIONS, builder))
                                                                                         .executes(context -> executeSetBuff(
                                                                                                 context,
                                                                                                 IdentifierArgumentType.getIdentifier(context, "attr_id"),
@@ -83,12 +104,25 @@ public class SetBuffCommand {
                                 )
                         )
 
-                        // Branch: /florafare buff give (Grant buff from datapack to player)
+                        // Branch: /florafare buff give|remove
+                        // One "buff" node with both children. Registering the literal
+                        // twice happened to work — Brigadier merges same-named literals
+                        // when it adds them — but it reads as two separate commands and
+                        // relied on that merge to not be two separate commands.
                         .then(CommandManager.literal("buff")
+                                // Grant a buff from a datapack config to a player.
                                 .then(CommandManager.literal("give")
                                         .then(CommandManager.argument("player", EntityArgumentType.player())
                                                 .then(CommandManager.argument("targetId", StringArgumentType.string())
                                                         .executes(SetBuffCommand::executeBuffGive)
+                                                )
+                                        )
+                                )
+                                // Drop one named buff.
+                                .then(CommandManager.literal("remove")
+                                        .then(CommandManager.argument("player", EntityArgumentType.player())
+                                                .then(CommandManager.argument("targetId", StringArgumentType.string())
+                                                        .executes(SetBuffCommand::executeBuffRemove)
                                                 )
                                         )
                                 )
@@ -115,6 +149,135 @@ public class SetBuffCommand {
                                 .executes(SetBuffCommand::executeValidate)
                         )
         );
+    }
+
+    /**
+     * Drops a single active buff, addressed by its config target or by the item that
+     * was eaten. Forgotten Mead only removes the newest, so this is the only way to
+     * clear one buff out of the middle of a full set.
+     */
+    private static int executeBuffRemove(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
+        ServerPlayerEntity player = EntityArgumentType.getPlayer(context, "player");
+        String rawTarget = StringArgumentType.getString(context, "targetId");
+        String target = FoodBuffManager.normalizeTarget(rawTarget);
+
+        PlayerFoodComponent component = ((IFoodComponentProvider) player).florafare$getFoodComponent();
+        boolean removed = component.removeBuff(target);
+
+        if (!removed) {
+            context.getSource().sendError(Text.translatable(
+                    "command.florafare.buff_remove.not_active", target, player.getName().getString()));
+            return 0;
+        }
+
+        context.getSource().sendFeedback(() -> Text.translatable(
+                "command.florafare.buff_remove.success", target, player.getName().getString()), true);
+        return 1;
+    }
+
+    /** The three operations {@code PlayerFoodComponent#mapOperation} understands. */
+    private static final List<String> VALID_OPERATIONS =
+            List.of("add_value", "add_multiplied_base", "add_multiplied_total");
+
+    /**
+     * Prints the buffs and synergies a player is carrying, with what each one is actually
+     * applying and how long it has left.
+     *
+     * <p>Until this existed the only way an admin could act on a player's buff state was
+     * {@code /florafare clear}, which destroys the very thing they were trying to look
+     * at. The attribute modifiers are read back off the buff itself rather than off the
+     * config it came from, so a buff that has drifted out of step with its config — the
+     * exact situation {@code /florafare repair} exists for — shows what is really on the
+     * player, not what should have been.
+     */
+    private static int executeListBuffs(CommandContext<ServerCommandSource> context)
+            throws CommandSyntaxException {
+        ServerPlayerEntity player = EntityArgumentType.getPlayer(context, "player");
+        ServerCommandSource source = context.getSource();
+        PlayerFoodComponent component =
+                ((IFoodComponentProvider) player).florafare$getFoodComponent();
+
+        // Snapshots: sendFeedback takes a supplier, which Brigadier may call later, and
+        // the component's own lists are mutated by the player tick as buffs expire.
+        List<ActiveFoodBuff> buffs     = List.copyOf(component.getActiveBuffs());
+        List<ActiveFoodBuff> synergies = List.copyOf(component.getActiveSynergies());
+        String playerName = player.getName().getString();
+
+        if (buffs.isEmpty() && synergies.isEmpty()) {
+            source.sendFeedback(() -> Text.translatable(
+                    "command.florafare.buffs.none", playerName), false);
+            return 0;
+        }
+
+        source.sendFeedback(() -> Text.translatable("command.florafare.buffs.header",
+                playerName, buffs.size(), PlayerFoodComponent.MAX_BUFF_SLOTS), false);
+        for (ActiveFoodBuff buff : buffs) {
+            source.sendFeedback(() -> describeBuff(buff, false), false);
+        }
+
+        if (!synergies.isEmpty()) {
+            source.sendFeedback(() -> Text.translatable(
+                    "command.florafare.buffs.synergies", synergies.size()), false);
+            for (ActiveFoodBuff synergy : synergies) {
+                source.sendFeedback(() -> describeBuff(synergy, true), false);
+            }
+        }
+        return buffs.size() + synergies.size();
+    }
+
+    /** One line: what the buff is, how long it has left, and what it is applying. */
+    private static Text describeBuff(ActiveFoodBuff buff, boolean isSynergy) {
+        MutableText line = Text.literal(" \u2022 ").formatted(Formatting.DARK_GRAY);
+        line.append(Text.literal(buff.getTarget())
+                .formatted(isSynergy ? Formatting.GOLD : Formatting.WHITE));
+
+        // Only when it adds something: for a plain item-id target the two are identical,
+        // and for a synergy the "consumed item" is just whichever icon the HUD picked.
+        if (!isSynergy && !buff.getTarget().equals(buff.getConsumedItemId())) {
+            line.append(Text.literal(" (" + buff.getConsumedItemId() + ")")
+                    .formatted(Formatting.GRAY));
+        }
+
+        line.append(Text.literal(" \u2014 " + ticksToMmss(buff.getDurationRemaining())
+                + " / " + ticksToMmss(buff.getInitialDuration())).formatted(Formatting.AQUA));
+
+        String modifiers = describeModifiers(buff);
+        if (!modifiers.isEmpty()) {
+            line.append(Text.literal(" \u00b7 " + modifiers).formatted(Formatting.BLUE));
+        }
+        return line;
+    }
+
+    private static String describeModifiers(ActiveFoodBuff buff) {
+        StringBuilder sb = new StringBuilder();
+        for (ActiveFoodBuff.AppliedModifier modifier : buff.getAppliedModifiers().values()) {
+            if (sb.length() > 0) sb.append(", ");
+            if (modifier.amount() > 0) sb.append('+');
+            sb.append(trim(modifier.amount()))
+              .append(' ')
+              .append(modifier.attributeId().getPath());
+            if (!"add_value".equals(modifier.operation())) {
+                sb.append(" (").append(modifier.operation()).append(')');
+            }
+        }
+        return sb.toString();
+    }
+
+    private static String trim(double value) {
+        return value == Math.rint(value) && !Double.isInfinite(value)
+                ? String.valueOf((long) value)
+                : String.valueOf(Math.round(value * 1000.0) / 1000.0);
+    }
+
+    /**
+     * {@code mm:ss} for a tick count. Deliberately duplicated from
+     * {@code BuffDescription#mmss} instead of reused: that class reads the local player's
+     * discovery set through {@code MinecraftClient} and must never be loaded on a
+     * dedicated server, which is exactly where this command runs.
+     */
+    private static String ticksToMmss(int ticks) {
+        int seconds = Math.max(0, ticks) / 20;
+        return String.format("%02d:%02d", seconds / 60, seconds % 60);
     }
 
     private static int executeJournalGive(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
@@ -153,6 +316,25 @@ public class SetBuffCommand {
             return 0;
         }
 
+        // Checked before anything is written. An unregistered attribute is skipped
+        // without a word by PlayerFoodComponent#applyBuffEffects, and an unrecognised
+        // operation silently becomes add_value — so the command reported success and
+        // stamped a UUID onto the stack for a buff that would never do what was asked.
+        if (attrId != null) {
+            if (!Registries.ATTRIBUTE.containsId(attrId)) {
+                source.sendError(Text.translatable(
+                        "command.florafare.error.unknown_attribute", attrId.toString()));
+                return 0;
+            }
+            String normalizedOp = op == null ? "" : op.toLowerCase(Locale.ROOT);
+            if (!VALID_OPERATIONS.contains(normalizedOp)) {
+                source.sendError(Text.translatable("command.florafare.error.unknown_operation",
+                        String.valueOf(op), String.join(", ", VALID_OPERATIONS)));
+                return 0;
+            }
+            op = normalizedOp;
+        }
+
         String uniqueId = UUID.randomUUID().toString();
 
         NbtCompound customData = stack.getOrDefault(DataComponentTypes.CUSTOM_DATA, NbtComponent.DEFAULT).copyNbt();
@@ -177,7 +359,7 @@ public class SetBuffCommand {
         );
 
         FoodBuffManager.setRuntimeStackConfig(uniqueId, data);
-        FoodBuffManager.saveRuntimeConfigs();
+        FoodBuffManager.saveRuntimeConfigs(source.getServer());
 
         source.sendFeedback(() -> Text.translatable("command.florafare.setbuff.success"), true);
         return 1;
@@ -192,16 +374,22 @@ public class SetBuffCommand {
 
         if (data != null) {
             PlayerFoodComponent component = ((IFoodComponentProvider) player).florafare$getFoodComponent();
-            component.unlockFood(targetId);
 
-            // Actually apply the buff (previously this only unlocked the journal entry).
             // Resolve a display stack for plain item targets so the HUD shows the right icon.
             ItemStack displayStack = Items.APPLE.getDefaultStack();
-            if (!targetId.startsWith("#")) {
-                Identifier itemId = Identifier.tryParse(targetId);
-                if (itemId != null && Registries.ITEM.containsId(itemId)) {
-                    displayStack = Registries.ITEM.get(itemId).getDefaultStack();
-                }
+            Identifier itemId = Identifier.tryParse(targetId);
+            boolean isConcreteItem = itemId != null && Registries.ITEM.containsId(itemId);
+            if (isConcreteItem) {
+                displayStack = Registries.ITEM.get(itemId).getDefaultStack();
+            }
+
+            // Only a concrete item has a journal entry. A "#tag", "namespace:" or
+            // "template:" target has none, and unlocking it left an id in the discovery
+            // set that no journal row and no toast could ever resolve — the toast fell
+            // back to showing an apple. Unlocked before the slot check, matching what
+            // eating does: the food still counts as tasted even with no room for a buff.
+            if (isConcreteItem) {
+                component.unlockFood(itemId.toString());
             }
 
             if (!component.tryAddBuff(displayStack, data)) {
@@ -298,6 +486,10 @@ public class SetBuffCommand {
                 }
             }
         }
+
+        // Sizing problems belong here too: they are invisible in-game until someone
+        // notices every tooltip is wrong.
+        issues.addAll(Florafare.syncPayloadIssues());
 
         for (String target : FoodBuffManager.getAmbiguousTargets()) {
             issues.add(String.format(

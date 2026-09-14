@@ -8,13 +8,20 @@ public class HudConfig {
     public enum IconSize      { SMALL, LARGE }
     public enum ScreenPosition { TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT }
 
-    public static final float MIN_SCALE = 0.5f;
-    public static final float MAX_SCALE = 1.5f;
+    // Mirrors of the shared bounds in FlorafareConfig, which is also what clamps a
+    // hand-edited config file on load — kept here so HUD code reads them off the HUD
+    // class, without the two drifting apart.
+    public static final float MIN_SCALE = FlorafareConfig.HUD_SCALE_MIN;
+    public static final float MAX_SCALE = FlorafareConfig.HUD_SCALE_MAX;
 
     public static LayoutMode     layoutMode = LayoutMode.COMPACT;
     public static IconSize       iconSize   = IconSize.LARGE;
     public static ScreenPosition position   = ScreenPosition.BOTTOM_LEFT;
     public static float          scale      = 0.8f;
+
+    /** Free pixel offset from the anchor corner, in the HUD's own scaled space. */
+    public static int            offsetX    = 0;
+    public static int            offsetY    = 0;
 
     /** Restores the HUD settings persisted in the mod config file. */
     public static void loadFromConfig() {
@@ -23,6 +30,8 @@ public class HudConfig {
         position   = parse(ScreenPosition.class, FlorafareConfig.hudPosition, ScreenPosition.BOTTOM_LEFT);
         // Clamped defensively in case a hand-edited config file has an out-of-range value.
         scale      = net.minecraft.util.math.MathHelper.clamp(FlorafareConfig.hudScale, MIN_SCALE, MAX_SCALE);
+        offsetX    = FlorafareConfig.hudOffsetX;
+        offsetY    = FlorafareConfig.hudOffsetY;
     }
 
     /** Writes the current HUD settings into the mod config file. */
@@ -31,6 +40,8 @@ public class HudConfig {
         FlorafareConfig.hudIconSize = iconSize.name();
         FlorafareConfig.hudPosition = position.name();
         FlorafareConfig.hudScale    = scale;
+        FlorafareConfig.hudOffsetX  = offsetX;
+        FlorafareConfig.hudOffsetY  = offsetY;
         FlorafareConfig.save();
     }
 

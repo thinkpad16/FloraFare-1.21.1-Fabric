@@ -3,6 +3,7 @@ package net.tend1tnuy.florafare.mixin;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.FoodComponent;
 import net.minecraft.entity.player.HungerManager;
+import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
@@ -73,9 +74,15 @@ public abstract class PlayerEntityMixin implements IFoodComponentProvider {
             // Items other mods asked Florafare to ignore keep their vanilla gating, so
             // this never fights a mod that owns the item's hunger behaviour. The
             // "no food in hand" case is CakeBlock#tryEat, the one other vanilla caller.
+            //
+            // Tested against "holds any food" rather than "holds an ignored food": today
+            // every food is exactly one of managed/ignored, so the two happen to agree,
+            // but only by accident. Should a third state ever appear — a food that is
+            // neither — the old test would have granted the exemption to an item
+            // Florafare had explicitly been kept away from.
             boolean holdsManagedFood = florafare$isManagedFood(mainHand) || florafare$isManagedFood(offHand);
-            boolean holdsIgnoredFood = florafare$isIgnoredFood(mainHand) || florafare$isIgnoredFood(offHand);
-            if (holdsManagedFood || !holdsIgnoredFood) {
+            boolean holdsAnyFood     = florafare$isFood(mainHand) || florafare$isFood(offHand);
+            if (holdsManagedFood || !holdsAnyFood) {
                 cir.setReturnValue(true);
                 return;
             }
@@ -87,20 +94,30 @@ public abstract class PlayerEntityMixin implements IFoodComponentProvider {
         }
     }
 
+    /** Any edible item, whoever ends up managing it. */
+    @Unique
+    private static boolean florafare$isFood(ItemStack stack) {
+        return stack.contains(DataComponentTypes.FOOD);
+    }
+
     /** A food item Florafare is allowed to manage. */
     @Unique
     private static boolean florafare$isManagedFood(ItemStack stack) {
-        return stack.contains(DataComponentTypes.FOOD) && !FoodBuffManager.isExcluded(stack);
-    }
-
-    /** A food item listed in {@code ignoredFoodItems} / excluded through the API. */
-    @Unique
-    private static boolean florafare$isIgnoredFood(ItemStack stack) {
-        return stack.contains(DataComponentTypes.FOOD) && FoodBuffManager.isExcluded(stack);
+        return florafare$isFood(stack) && !FoodBuffManager.isExcluded(stack);
     }
 
     /**
-     * Suppresses vanilla hunger/saturation application for foods that Florafare manages.
+     * Applies Florafare's configured nutrition and saturation in place of the item's own.
+     *
+     * <p>This is now <em>the</em> place the swap happens. It used to be dead code: the
+     * old {@code PlayerEntityEatMixin} cancelled {@code eatFood} at HEAD before this
+     * redirect could ever be reached, and did the same {@code add()} call itself. With
+     * the cancellation gone, vanilla's own call site is redirected instead — which is
+     * also the narrowest possible way to express "same method, different numbers".
+     *
+     * <p>{@code HungerManager#add} treats the float as a saturation <em>modifier</em>
+     * (added saturation = nutrition x modifier x 2), which is the same meaning the
+     * datapack field carries, so the value passes straight through.
      */
     @Redirect(
             method = "eatFood",
@@ -113,12 +130,38 @@ public abstract class PlayerEntityMixin implements IFoodComponentProvider {
                                              World world, ItemStack stack, FoodComponent foodComponent) {
         net.tend1tnuy.florafare.food.FoodBuffData data = FoodBuffManager.getConfig(stack);
         if (data != null) {
-            // Predict the configured values locally; the authoritative state
-            // still arrives with the next server hunger sync.
             hungerManager.add(data.nutrition(), data.saturation());
             return;
         }
         hungerManager.eat(food);
+    }
+
+    /**
+     * Drops the emptied bowl or bottle at the player's feet instead of deleting it when
+     * their inventory is full.
+     *
+     * <p>Vanilla calls {@code insertStack} here and discards the boolean it returns, so
+     * eating a stew with no free slot destroys the bowl. Florafare has always handed it
+     * back rather than eating it, from back when this mixin re-implemented the whole
+     * method; keeping that behaviour costs one redirect on the one call that decides it,
+     * and losing it would have been a silent regression for anyone already used to it.
+     *
+     * <p>Returning true unconditionally is correct: the caller ignores the value, and by
+     * that point the stack has either been inserted or dropped — in neither case is it
+     * gone.
+     */
+    @Redirect(
+            method = "eatFood",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/entity/player/PlayerInventory;insertStack(Lnet/minecraft/item/ItemStack;)Z"
+            )
+    )
+    private boolean florafare$dropContainerIfInventoryFull(PlayerInventory inventory,
+                                                           ItemStack container) {
+        if (inventory.insertStack(container)) return true;
+        ((PlayerEntity) (Object) this).dropItem(container, false);
+        return true;
     }
 
     /**

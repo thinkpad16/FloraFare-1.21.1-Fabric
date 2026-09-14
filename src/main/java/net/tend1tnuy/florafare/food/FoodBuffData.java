@@ -17,6 +17,22 @@ public record FoodBuffData(
         int priority,
         boolean alwaysEdible
 ) {
+    /**
+     * Defensive copies of the two lists, so a config handed out by
+     * {@code FoodBuffManager.getConfig} cannot be mutated by whoever received it.
+     *
+     * <p>Every config is shared: the resolution cache hands the same instance to the
+     * tooltip, the HUD, the journal, EMI and the eat path, and a datapack entry is
+     * shared by every item its target covers. One caller calling {@code add()} on
+     * {@code effects()} would therefore have silently changed the buff for everybody.
+     * {@link List#copyOf} also rejects nulls inside the list, which is why the
+     * null-list guard is spelled out rather than left to it.
+     */
+    public FoodBuffData {
+        effects    = effects    == null ? List.of() : List.copyOf(effects);
+        attributes = attributes == null ? List.of() : List.copyOf(attributes);
+    }
+
     private static final String KEY_TARGET      = "target";
     private static final String KEY_DURATION    = "duration";
     private static final String KEY_NUTRITION   = "nutrition";
@@ -89,8 +105,9 @@ public record FoodBuffData(
         }
 
         public FoodBuffData build() {
+            // No copies needed here any more: the canonical constructor makes its own.
             return new FoodBuffData(target, duration, nutrition, saturation, healthBonus,
-                    new ArrayList<>(effects), new ArrayList<>(attributes), priority, alwaysEdible);
+                    effects, attributes, priority, alwaysEdible);
         }
     }
 

@@ -43,8 +43,11 @@ dependencies {
 	// optional — our integration class is only loaded via AppleSkin's own "appleskin"
 	// entrypoint, which only fires when AppleSkin is installed.
 	modCompileOnly "squeek.appleskin:appleskin-fabric:${project.appleskin_version}"
-	// To test the AppleSkin integration in the dev client, uncomment this line:
-	//modLocalRuntime "squeek.appleskin:appleskin-fabric:${project.appleskin_version}"
+	// Present in the dev client so the integration is actually exercised by runClient:
+	// the tooltip row, the hunger-bar preview and the FoodValuesEvent hand-off all only
+	// happen when AppleSkin is really there. It stays modCompileOnly for distribution,
+	// so the built jar neither bundles nor requires it.
+	modLocalRuntime "squeek.appleskin:appleskin-fabric:${project.appleskin_version}"
 
 	// Cloth Config: bundled via jar-in-jar ("include") so the ModMenu config screen
 	// always has it available at runtime, without forcing users to install it
@@ -53,6 +56,13 @@ dependencies {
 		exclude group: "net.fabricmc.fabric-api"
 	}
 	include "me.shedaniel.cloth:cloth-config-fabric:${project.cloth_config_version}"
+
+	// EMI: optional, same shape as the AppleSkin integration. The ":api" classifier
+	// is a stub jar with only EMI's public API, which is exactly what the plugin
+	// class compiles against; the full jar goes in as a dev-runtime mod so the
+	// integration can actually be exercised in runClient.
+	modCompileOnly "dev.emi:emi-fabric:${project.emi_version}:api"
+	modLocalRuntime "dev.emi:emi-fabric:${project.emi_version}"
 
 	// ModMenu: genuinely optional. compileOnly so the "modmenu" entrypoint class
 	// compiles against its API, modLocalRuntime so it's present in the dev client;
@@ -70,6 +80,12 @@ dependencies {
 
 test {
 	useJUnitPlatform()
+
+	// Anything that logs through the mod's LOGGER goes out via Minecraft's log4j
+	// setup, which writes logs/latest.log relative to the working directory. Left at
+	// the default that drops a stray logs/ folder in the repo root on every test run.
+	workingDir = layout.buildDirectory.dir("test-run").get().asFile
+	doFirst { workingDir.mkdirs() }
 	testLogging {
 		events "failed"
 		exceptionFormat "full"
@@ -86,7 +102,11 @@ processResources {
 }
 
 tasks.withType(JavaCompile).configureEach {
-	it.options.release = 17
+	// Must match the toolchain and sourceCompatibility below, the mixin config's
+	// compatibilityLevel, and fabric.mod.json's "java" dependency. options.release
+	// wins over sourceCompatibility, so a stale 17 here silently compiled the whole
+	// mod to Java 17 bytecode while every other declaration claimed 21.
+	it.options.release = 21
 }
 
 java {

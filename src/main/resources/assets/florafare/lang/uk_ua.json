@@ -1,17 +1,13 @@
 {
   "item.florafare.food_journal": "Кулінарна книга",
   "item.florafare.forgotten_mead": "Забутий мід",
-
   "toast.florafare.discovery.title": "Кулінарна Книга",
   "toast.florafare.discovery.food": "Відкрито: %s!",
   "toast.florafare.discovery.synergy_title": "Нова синергія!",
   "toast.florafare.discovery.synergy": "Розблоковано: %s!",
-
   "gui.florafare.hud.empty": "",
-
   "tooltip.florafare.hud.remaining": "Залишилось: %s",
   "tooltip.florafare.hud.synergized": "Сприяє активній синергії",
-
   "gui.florafare.journal.title": "Кулінарна Книга",
   "gui.florafare.journal.subtitle": "%s з %s рецептів розкрито",
   "gui.florafare.journal.progress": "Відкрито страв: %s / %s",
@@ -28,7 +24,6 @@
   "gui.florafare.journal.tab.synergies_short": "Поєднання",
   "gui.florafare.journal.synergies_title": "Секретні комбінації",
   "gui.florafare.journal.dishes_title": "Страви",
-
   "synergy.florafare.florafare.hearty_lunch": "Ситний обід",
   "synergy.florafare.florafare.fresh_fruits": "Свіжі фрукти",
   "synergy.florafare.florafare.raw_meats": "Сире м'ясо",
@@ -54,7 +49,6 @@
   "synergy.florafare.florafare.light_lunch_and_rolls": "Легкий обід та роли",
   "synergy.florafare.florafare.celestial_starlight_feast": "Небесний зоряний бенкет",
   "synergy.florafare.florafare.royal_grand_banquet": "Королівський гранд-бенкет",
-
   "command.florafare.error.empty_hand": "Ви повинні тримати предмет у головній руці!",
   "command.florafare.setbuff.success": "Унікальний бафф успішно застосовано до цього предмета!",
   "command.florafare.buff_give.success": "§aБафф %s успішно видано гравцю %s",
@@ -63,7 +57,6 @@
   "command.florafare.clear.success": "Усі баффи та синергії Florafare для %s очищено",
   "command.florafare.journal_give.success": "§aКулінарний журнал видано гравцю %s",
   "command.florafare.repair.success": "§aВидалено %s осиротілих атрибутних модифікаторів Florafare у %s",
-
   "key.florafare.hud_config": "Відкрити налаштування HUD",
   "category.florafare.general": "Мод Florafare",
   "gui.florafare.hud_config.title": "Налаштування інтерфейсу (HUD)",
@@ -71,7 +64,6 @@
   "gui.florafare.hud_config.icons": "Розмір значків: %s",
   "gui.florafare.hud_config.position": "Позиція екрана: %s",
   "gui.florafare.hud_config.scale": "Масштаб HUD: %s",
-
   "gui.florafare.config.title": "Налаштування Florafare",
   "gui.florafare.config.category.general": "Загальні",
   "gui.florafare.config.category.balance": "Баланс",
@@ -95,9 +87,7 @@
   "gui.florafare.config.enable_discovery_toasts": "Показувати сповіщення про відкриття",
   "gui.florafare.config.toast_display_time_ms": "Тривалість сповіщення (мс)",
   "gui.florafare.config.strip_food_tooltips": "Спрощувати підказки їжі",
-
   "gui.florafare.journal.search.placeholder": "Пошук страв...",
-
   "florafare.attribute.movement_speed": "Швидкість",
   "florafare.attribute.attack_damage": "Шкода",
   "florafare.attribute.max_health": "Макс. здоров'я",
@@ -144,7 +134,6 @@
   "florafare.attribute.scale": "Розмір",
   "florafare.attribute.water_movement_efficiency": "Ефективність руху у воді",
   "florafare.attribute.player.block_break_speed": "Швидкість ламання блоків",
-
   "florafare.attribute.generic": "Потужність магії",
   "florafare.attribute.lightning": "Магія блискавки",
   "florafare.attribute.nature": "Магія природи",
@@ -158,7 +147,6 @@
   "florafare.attribute.water": "Магія води",
   "florafare.attribute.healing": "Сила зцілення",
   "florafare.attribute.frost": "Магія льоду",
-
   "florafare.attribute.freeze_chance": "Шанс замороження",
   "florafare.attribute.burning_chance": "Шанс підпалу",
   "florafare.attribute.frost_fuse_modifier": "Модифікатор злиття: Лід",
@@ -178,7 +166,6 @@
   "florafare.attribute.lifesteal_modifier": "Крадіжка здоров'я",
   "florafare.attribute.rage_modifier": "Модифікатор люті",
   "florafare.attribute.armor_piercing": "Пробивання броні",
-
   "florafare.attribute.rogue_weapon_damage": "Шкода зброї розбійника",
   "florafare.attribute.wand_damage": "Шкода від палички",
   "florafare.attribute.knuckles_damage": "Шкода кастетів",
@@ -195,24 +182,69 @@
   "florafare.attribute.glaive_damage": "Шкода глефи",
   "florafare.attribute.dagger_damage": "Шкода кинджала",
   "florafare.attribute.paladin_weapon_damage": "Шкода зброї паладина",
-
   "florafare.attribute.count": "Кількість перекатів",
   "florafare.attribute.distance": "Дистанція перекату",
   "florafare.attribute.recharge": "Відновлення перекату",
-
   "florafare.attribute.evasion_chance": "Шанс ухилення",
   "florafare.attribute.healing_taken": "Отримане зцілення",
   "florafare.attribute.damage_taken": "Отримана шкода",
-
   "florafare.attribute.velocity": "Швидкість снаряда",
   "florafare.attribute.damage": "Додаткова шкода",
   "florafare.attribute.pull_time": "Час натягування лука",
-
   "florafare.attribute.chance": "Додатковий шанс",
-
   "itemgroup.florafare.florafare_group": "Florafare",
-
   "command.florafare.dumpfoods.success": "Успішно експортовано %s предметів у файл: ",
   "command.florafare.dumpfoods.error": "Помилка запису файлу: %s",
-  "command.florafare.dumpfoods.hover.copy": "Натисніть, щоб скопіювати шлях до файлу на сервері"
+  "command.florafare.dumpfoods.hover.copy": "Натисніть, щоб скопіювати шлях до файлу на сервері",
+  "command.florafare.buff_remove.not_active": "У гравця %2$s немає активного бафа для %1$s",
+  "command.florafare.buff_remove.success": "§aЗнято баф %s у гравця %s",
+  "command.florafare.buffs.none": "У %s немає активних баффів або синергій Florafare.",
+  "command.florafare.buffs.header": "§6Баффи Florafare у %s §7(%s/%s слотів)",
+  "command.florafare.buffs.synergies": "§6Активні синергії §7(%s)",
+  "command.florafare.error.unknown_attribute": "Невідомий атрибут «%s» — його немає в реєстрі атрибутів, тож бафф нічого б не застосував.",
+  "command.florafare.error.unknown_operation": "Невідома операція «%s». Очікується одна з: %s",
+  "emi.category.florafare.food_buffs": "Бафи їжі",
+  "emi.category.florafare.synergies": "Синергії їжі",
+  "emi.florafare.not_managed": "Florafare не керує цим предметом",
+  "gui.florafare.button.cancel": "Скасувати",
+  "gui.florafare.button.done": "Готово",
+  "gui.florafare.button.reset": "Скинути",
+  "gui.florafare.config.enable_hud": "Показувати панель бафів",
+  "gui.florafare.config.enable_hud.tooltip": "Повністю вимикає екранну панель бафів. Бафи, синергії та журнал продовжують працювати.",
+  "gui.florafare.config.hud_offset_x": "Зсув HUD по X",
+  "gui.florafare.config.hud_offset_y": "Зсув HUD по Y",
+  "gui.florafare.config.hud_scale": "Масштаб HUD",
+  "gui.florafare.config.journal_shows_auto_generated": "Показувати автогенеровані страви",
+  "gui.florafare.config.journal_shows_auto_generated.tooltip": "Уключати їжу, баф якої згенеровано з ванільних характеристик, а не лише вказану в датапаку.",
+  "gui.florafare.config.server_overridden.tooltip": "Зараз це визначає сервер. Тут показано ваше власне значення — воно знову діятиме після відʼєднання.",
+  "gui.florafare.config.show_buff_tooltips": "Показувати бафи в підказках",
+  "gui.florafare.config.show_buff_tooltips.tooltip": "Додає баф Florafare до підказки предмета — після того, як ви з’їли його хоча б раз.",
+  "gui.florafare.config.strip_food_tooltips.tooltip": "Ховає власні ванільні ефекти предмета, які Florafare замінює. Лор, чари та рядки інших модів не чіпаються.",
+  "gui.florafare.hud_config.disabled_note": "Панель зараз прихована",
+  "gui.florafare.hud_config.enabled": "Показ бафів: %s",
+  "gui.florafare.hud_config.move": "Перемістити панель...",
+  "gui.florafare.hud_placement.anchor": "Прив’язано до: %s",
+  "gui.florafare.hud_placement.hint": "Перетягніть панель куди зручно",
+  "gui.florafare.hud_placement.title": "Розташування панелі бафів",
+  "gui.florafare.icon_size.large": "Великі",
+  "gui.florafare.icon_size.small": "Малі",
+  "gui.florafare.layout.compact": "Компактний",
+  "gui.florafare.layout.standard": "Звичайний",
+  "gui.florafare.position.bottom_left": "лівого нижнього кута",
+  "gui.florafare.position.bottom_right": "правого нижнього кута",
+  "gui.florafare.position.top_left": "лівого верхнього кута",
+  "gui.florafare.position.top_right": "правого верхнього кута",
+  "gui.florafare.toggle.off": "ВИМК.",
+  "gui.florafare.toggle.on": "УВІМК.",
+  "message.florafare.mead_disabled": "Забутий мед вимкнено на цьому сервері.",
+  "tooltip.florafare.buff.always_edible": "Можна їсти навіть ситим",
+  "tooltip.florafare.buff.attributes": "Поки діє:",
+  "tooltip.florafare.buff.duration": "Триває %s",
+  "tooltip.florafare.buff.effects": "Дає:",
+  "tooltip.florafare.buff.entry": "%s: %s",
+  "tooltip.florafare.buff.header": "З’ївши",
+  "tooltip.florafare.buff.health": "%s до макс. здоров’я",
+  "tooltip.florafare.buff.locked": "Незаписана страва",
+  "tooltip.florafare.buff.locked_hint": "З’їжте її раз, щоб записати властивості",
+  "tooltip.florafare.buff.nutrition": "Відновлює %s голоду, %s насичення"
 }

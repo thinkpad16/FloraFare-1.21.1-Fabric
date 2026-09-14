@@ -15,11 +15,34 @@ import java.util.Map;
 public class ActiveFoodBuff {
 
     /**
+     * Ceiling on any single buff or synergy duration, in ticks — 24 real-time hours.
+     *
+     * <p>A hard constant rather than a config option, deliberately. It is not a balance
+     * knob: nothing legitimate comes near it (the bundled foods run 2-5 minutes, and the
+     * longest auto-generated buff is about 20), so anything above it is a bug — an
+     * overflowed multiplication, a typo in a datapack, {@code /florafare setbuff} with a
+     * duration argument the size of an int. Being a constant also means the client and
+     * the server always agree on it without a config sync.
+     *
+     * <p>Applied in the constructor, so it covers every way a buff can come into being,
+     * {@link #fromNbt} included. That last one is the point: a buff that somehow did get
+     * stuck at a ludicrous duration is capped the next time the player's data loads, so a
+     * server restart clears it instead of preserving it forever.
+     */
+    public static final int MAX_DURATION_TICKS = 1_728_000;
+
+    /**
      * Full description of an applied attribute modifier so it can be removed
      * on expiry AND reapplied when the player entity is recreated
      * (e.g., returning from the End).
      */
     public record AppliedModifier(Identifier attributeId, double amount, String operation) {}
+
+    /** Forces a duration into [0, {@link #MAX_DURATION_TICKS}]. */
+    public static int clampDuration(int ticks) {
+        if (ticks < 0) return 0;
+        return Math.min(ticks, MAX_DURATION_TICKS);
+    }
 
     private final String target;
     private final String consumedItemId;
@@ -35,8 +58,10 @@ public class ActiveFoodBuff {
                           int durationRemaining, int initialDuration) {
         this.target            = target;
         this.consumedItemId    = consumedItemId;
-        this.durationRemaining = durationRemaining;
-        this.initialDuration   = initialDuration;
+        this.durationRemaining = clampDuration(durationRemaining);
+        // Never below the remaining time, or the HUD's progress bar divides by a smaller
+        // number than it counts down from and renders a permanently full slot.
+        this.initialDuration   = Math.max(clampDuration(initialDuration), this.durationRemaining);
     }
 
     public void tick() {
@@ -44,8 +69,8 @@ public class ActiveFoodBuff {
     }
 
     public void resetDuration(int newDuration) {
-        this.durationRemaining = newDuration;
-        this.initialDuration   = newDuration;
+        this.durationRemaining = clampDuration(newDuration);
+        this.initialDuration   = this.durationRemaining;
     }
 
     public void addModifierRecord(Identifier modifierId, Identifier attributeId,
@@ -62,25 +87,27 @@ public class ActiveFoodBuff {
     public boolean isExpired()            { return durationRemaining <= 0; }
 
     /**
-     * Returns the ItemStack for the consumed item.
-     * The result is cached after the first call because {@code consumedItemId}
-     * is effectively immutable after construction (#25).
+     * The ItemStack for the consumed item, for the HUD icon and the tooltips.
+     *
+     * <p>The registry lookup is cached, because {@code consumedItemId} never changes
+     * after construction and the HUD asks for this every frame (#25). The stack itself is
+     * copied on the way out: an {@link ItemStack} is mutable, and handing the same
+     * instance to the HUD renderer, the hover tooltip, EMI and the journal meant any one
+     * of them setting a count or a component would have changed what all the others drew
+     * — for the rest of the buff's life, since the cache is never rebuilt.
      */
     public ItemStack getConsumedItemStack() {
-        if (cachedItemStack != null) return cachedItemStack;
-
-        if (consumedItemId == null || consumedItemId.isEmpty()) {
-            cachedItemStack = Items.APPLE.getDefaultStack();
-            return cachedItemStack;
+        if (cachedItemStack == null) {
+            Identifier id = consumedItemId == null || consumedItemId.isEmpty()
+                    ? null : Identifier.tryParse(consumedItemId);
+            if (id != null && Registries.ITEM.containsId(id)) {
+                Item item = Registries.ITEM.get(id);
+                cachedItemStack = item.getDefaultStack();
+            } else {
+                cachedItemStack = Items.APPLE.getDefaultStack();
+            }
         }
-        Identifier id = Identifier.tryParse(consumedItemId);
-        if (id != null && Registries.ITEM.containsId(id)) {
-            Item item = Registries.ITEM.get(id);
-            cachedItemStack = item.getDefaultStack();
-        } else {
-            cachedItemStack = Items.APPLE.getDefaultStack();
-        }
-        return cachedItemStack;
+        return cachedItemStack.copy();
     }
 
     // -------------------------------------------------------------------------

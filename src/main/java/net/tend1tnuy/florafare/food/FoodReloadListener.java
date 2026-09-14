@@ -58,6 +58,11 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
         FoodBuffManager.clear();
         absentModTargets = 0;
 
+        // The serialized client payload is built from this map, so it is stale the
+        // moment the map is rebuilt. Done here rather than only in END_DATA_PACK_RELOAD
+        // because that event covers /reload alone — see Florafare#invalidateSyncPayloads.
+        Florafare.invalidateSyncPayloads();
+
         // Seed from the global config default; a datapack's own config_generation.json
         // (below) can still override it for this reload. Also fixes these statics
         // staying stale across /reload once no datapack defines the file anymore.

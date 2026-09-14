@@ -3,6 +3,7 @@ package net.tend1tnuy.florafare;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.minecraft.client.network.ClientPlayerEntity;
@@ -12,10 +13,13 @@ import net.minecraft.item.Items;
 import net.minecraft.registry.Registries;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
+import net.tend1tnuy.florafare.client.BuffDescription;
+import net.tend1tnuy.florafare.client.ClientConfigOverride;
 import net.tend1tnuy.florafare.client.FlorafareHud;
 import net.tend1tnuy.florafare.client.FoodJournalScreen;
 import net.tend1tnuy.florafare.client.HudConfigScreen;
 import net.tend1tnuy.florafare.client.toast.FoodDiscoveryToast;
+import net.tend1tnuy.florafare.compat.emi.EmiReloadBridge;
 import net.tend1tnuy.florafare.component.IFoodComponentProvider;
 import net.tend1tnuy.florafare.component.PlayerFoodComponent;
 import net.tend1tnuy.florafare.config.FlorafareConfig;
@@ -49,6 +53,20 @@ public class FlorafareClient implements ClientModInitializer {
                 GLFW.GLFW_KEY_H,
                 "category.florafare.general"
         ));
+
+        // A server overwrites the gameplay half of FlorafareConfig in place (see the
+        // FlorafareServerConfigSyncPayload receiver below). Snapshot this client's own
+        // values before that happens, and put them back when the connection ends, so a
+        // server's rules can't follow the player into their next singleplayer world.
+        ClientPlayConnectionEvents.INIT.register((handler, client) ->
+                ClientConfigOverride.rememberLocal());
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
+            if (ClientConfigOverride.restoreLocal()) {
+                // Only when the server had actually overridden something: the journal
+                // renders buff slots and synergy availability off these values.
+                FoodJournalScreen.invalidateCache();
+            }
+        });
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             while (hudConfigKey.wasPressed()) {
@@ -91,6 +109,10 @@ public class FlorafareClient implements ClientModInitializer {
                     FoodSynergyManager.loadSynergiesFromNbt(payload.nbt());
                     // Invalidate the journal cache so synergy data is also refreshed (#7).
                     FoodJournalScreen.invalidateCache();
+                    // EMI has already finished building its recipe list by the time this
+                    // packet lands on join, so its Synergies category would otherwise be
+                    // empty until something else made it reload. No-op without EMI.
+                    EmiReloadBridge.requestReload();
                 }));
 
         ClientPlayNetworking.registerGlobalReceiver(OpenFoodJournalPayload.ID, (payload, context) ->
@@ -105,6 +127,17 @@ public class FlorafareClient implements ClientModInitializer {
                     FlorafareConfig.maxBuffSlots = payload.maxBuffSlots();
                     FlorafareConfig.autoGenDurationMultiplier = payload.autoGenDurationMultiplier();
                     FlorafareConfig.autoGenHealthMultiplier = payload.autoGenHealthMultiplier();
+                    // FoodBuffManager keeps its own copy of the multipliers, and on a
+                    // dedicated server nothing else ever sets it: the reload listener that
+                    // normally does is SERVER_DATA and never runs here. Without this the
+                    // client generated fallback buffs off its own florafare.json, so
+                    // tooltips and the journal disagreed with the server about how long a
+                    // buff lasts and how much health it grants.
+                    FoodBuffManager.AUTO_GEN_DURATION_MULT = payload.autoGenDurationMultiplier();
+                    FoodBuffManager.AUTO_GEN_HEALTH_MULT = payload.autoGenHealthMultiplier();
+                    // Auto-generated results are memoized, so the ones built with the old
+                    // multipliers have to go.
+                    FoodBuffManager.invalidateResolutionCache();
                     FlorafareConfig.enableSynergies = payload.enableSynergies();
                     FlorafareConfig.enableAlwaysEdibleOverride = payload.enableAlwaysEdibleOverride();
                     // Needed client-side too: Item#use runs on the client for prediction,
@@ -156,8 +189,13 @@ public class FlorafareClient implements ClientModInitializer {
                     }
                     FoodJournalScreen.invalidateCache();
                     if (FlorafareConfig.enableDiscoveryToasts) {
-                        Text synergyName = Text.translatable(
-                                "synergy.florafare." + payload.synergyId().replace(":", "."));
+                        // Through BuffDescription, which falls back to the raw id when the
+                        // key is untranslated. Building the key inline here meant a synergy
+                        // from any datapack but this mod's own announced itself as
+                        // "synergy.florafare.mypack.foo" in the toast, while the journal and
+                        // the EMI panel — both of which already went through the helper —
+                        // showed it properly.
+                        Text synergyName = BuffDescription.synergyName(payload.synergyId());
                         context.client().getToastManager().add(FoodDiscoveryToast.forSynergy(synergyName));
                     }
                 }));

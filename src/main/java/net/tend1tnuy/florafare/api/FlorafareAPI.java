@@ -13,7 +13,6 @@ import net.tend1tnuy.florafare.food.FoodSynergyData;
 import net.tend1tnuy.florafare.food.FoodSynergyManager;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 
@@ -103,7 +102,7 @@ public final class FlorafareAPI {
      */
     public static void registerFoodBuff(String target, FoodBuffData data) {
         String normalized = FoodBuffManager.normalizeTarget(target);
-        FoodBuffManager.putConfig(normalized, data);
+        FoodBuffManager.putApiConfig(normalized, data);
     }
 
     /**
@@ -111,27 +110,45 @@ public final class FlorafareAPI {
      * See {@link #registerFoodBuff(String, FoodBuffData)} for the same timing caveat.
      */
     public static void registerSynergy(FoodSynergyData data) {
-        FoodSynergyManager.putSynergy(data);
+        FoodSynergyManager.putApiSynergy(data);
     }
 
-    /** The buffs currently active on this player. Read-only snapshot; mutate via the other API methods. */
+    /**
+     * The buffs currently active on this player.
+     *
+     * <p>A genuine copy, not a read-only view of the live list. These four accessors used
+     * to hand back unmodifiable wrappers around the component's own collections, which
+     * the player tick mutates as buffs expire — so a caller iterating one across ticks,
+     * or from anywhere but the server thread, could take a
+     * {@link java.util.ConcurrentModificationException} through no fault of its own.
+     */
     public static List<ActiveFoodBuff> getActiveBuffs(PlayerEntity player) {
-        return Collections.unmodifiableList(component(player).getActiveBuffs());
+        return List.copyOf(component(player).getActiveBuffs());
     }
 
-    /** The synergies currently active on this player. Read-only snapshot. */
+    /** The synergies currently active on this player. Snapshot; see {@link #getActiveBuffs}. */
     public static List<ActiveFoodBuff> getActiveSynergies(PlayerEntity player) {
-        return Collections.unmodifiableList(component(player).getActiveSynergies());
+        return List.copyOf(component(player).getActiveSynergies());
     }
 
-    /** Item ids this player has discovered (eaten at least once). Read-only snapshot. */
+    /** Item ids this player has discovered (eaten at least once). Snapshot. */
     public static Set<String> getDiscoveredFoods(PlayerEntity player) {
-        return Collections.unmodifiableSet(component(player).getDiscoveredFoods());
+        return Set.copyOf(component(player).getDiscoveredFoods());
     }
 
-    /** Synergy ids this player has discovered (activated at least once). Read-only snapshot. */
+    /** Synergy ids this player has discovered (activated at least once). Snapshot. */
     public static Set<String> getDiscoveredSynergies(PlayerEntity player) {
-        return Collections.unmodifiableSet(component(player).getDiscoveredSynergies());
+        return Set.copyOf(component(player).getDiscoveredSynergies());
+    }
+
+    /**
+     * Removes a single active buff, addressed either by the config target it came from
+     * ("#c:foods/berry") or by the item that was eaten ("minecraft:sweet_berries").
+     *
+     * @return true if such a buff was active and has been removed
+     */
+    public static boolean removeBuff(PlayerEntity player, String targetOrItemId) {
+        return component(player).removeBuff(targetOrItemId);
     }
 
     /** Removes every active buff and synergy from the player, same as {@code /florafare clear}. */

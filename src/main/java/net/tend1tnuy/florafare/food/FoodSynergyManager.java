@@ -11,8 +11,23 @@ import java.util.concurrent.ConcurrentHashMap;
 public class FoodSynergyManager {
     private static final Map<String, FoodSynergyData> SYNERGIES = new ConcurrentHashMap<>();
 
+    /**
+     * Synergies registered from code through
+     * {@link net.tend1tnuy.florafare.api.FlorafareAPI#registerSynergy}, replayed after
+     * every datapack reload. Without this they were dropped by the {@link #clear()}
+     * below, which runs on world load — after every mod initializer has already run.
+     */
+    private static final Map<String, FoodSynergyData> API_SYNERGIES = new ConcurrentHashMap<>();
+
     public static void clear() {
         SYNERGIES.clear();
+        SYNERGIES.putAll(API_SYNERGIES);
+    }
+
+    /** Registers a synergy that survives datapack reloads. See {@link #API_SYNERGIES}. */
+    public static void putApiSynergy(FoodSynergyData synergy) {
+        API_SYNERGIES.put(synergy.id(), synergy);
+        SYNERGIES.put(synergy.id(), synergy);
     }
 
     public static NbtCompound serializeSynergies() {
