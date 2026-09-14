@@ -1,0 +1,19 @@
+{
+  "parent": "minecraft:recipes/root",
+  "criteria": {
+    "has_fermented_spider_eye": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": {
+        "items": [
+          { "items": ["minecraft:fermented_spider_eye"] }
+        ]
+      }
+    }
+  },
+  "requirements": [
+    ["has_fermented_spider_eye"]
+  ],
+  "rewards": {
+    "recipes": ["florafare:forgotten_mead"]
+  }
+}

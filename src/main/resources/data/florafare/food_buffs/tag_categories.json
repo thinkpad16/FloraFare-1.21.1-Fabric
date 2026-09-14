@@ -1,0 +1,69 @@
+{
+  "_comment": [
+    "Category hooks for datapack and modpack authors.",
+    "",
+    "Each entry below targets one of Florafare's own item tags, and every one of those",
+    "tags ships EMPTY - so out of the box this file changes nothing at all. Add your",
+    "mod's food to data/<your_pack>/tags/item/florafare/<category>.json and it picks up",
+    "that category's buff, with no need to copy or override any of Florafare's files.",
+    "",
+    "Priority 1 matches the per-item files, so these win against a broad catch-all tag",
+    "left at the default priority of 0, and lose to anything a pack deliberately raises",
+    "above them. A named entry for the item itself always wins regardless: the item-id",
+    "lookup runs before tags are considered at all. Put an item in one category only -",
+    "two matching tags at the same priority resolve deterministically, but by tag name",
+    "rather than by anything meaningful.",
+    "",
+    "The numbers are the medians of the matching bundled category, so a food joining a",
+    "category lands in the middle of it rather than at either extreme."
+  ],
+  "priority": 1,
+  "entries": [
+    {
+      "id": "#florafare:fruits_and_vegetables",
+      "duration": 1800,
+      "nutrition": 2,
+      "saturation": 0.3,
+      "attributes": [
+        { "attribute": "minecraft:generic.movement_speed", "amount": 0.02, "operation": "add_multiplied_base" }
+      ]
+    },
+    {
+      "id": "#florafare:meats",
+      "duration": 1200,
+      "nutrition": 3,
+      "saturation": 0.45,
+      "attributes": [
+        { "attribute": "minecraft:generic.attack_damage", "amount": 1.0, "operation": "add_value" }
+      ]
+    },
+    {
+      "id": "#florafare:seafood",
+      "duration": 1500,
+      "nutrition": 3,
+      "saturation": 0.45,
+      "health_bonus": 0.5,
+      "attributes": [
+        { "attribute": "minecraft:generic.water_movement_efficiency", "amount": 0.1, "operation": "add_multiplied_base" }
+      ]
+    },
+    {
+      "id": "#florafare:breads_and_baked",
+      "duration": 3000,
+      "nutrition": 5,
+      "saturation": 0.45,
+      "health_bonus": 1.0
+    },
+    {
+      "id": "#florafare:golden_foods",
+      "duration": 6000,
+      "nutrition": 4,
+      "saturation": 1.2,
+      "health_bonus": 4.0,
+      "always_edible": true,
+      "effects": [
+        { "id": "minecraft:absorption", "duration": 2400, "amplifier": 0 }
+      ]
+    }
+  ]
+}
