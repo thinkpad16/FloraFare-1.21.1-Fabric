@@ -40,12 +40,12 @@ public class FoodSynergyReloadListener extends JsonDataLoader implements Identif
             try {
                 if (jsonElement.isJsonObject()) {
                     JsonObject obj = jsonElement.getAsJsonObject();
-                    if (obj.has("entries") && obj.get("entries").isJsonArray()) {
+                    if (JsonFields.hasArray(obj, "entries")) {
                         for (JsonElement element : obj.getAsJsonArray("entries")) {
-                            parseAndRegister(element.getAsJsonObject(), id);
+                            parseEntry(element, id);
                         }
                     } else {
-                        parseAndRegister(obj, id);
+                        parseEntry(obj, id);
                     }
                 }
             } catch (Exception e) {
@@ -56,19 +56,43 @@ public class FoodSynergyReloadListener extends JsonDataLoader implements Identif
         Florafare.LOGGER.info("Loaded {} secret food synergies!", FoodSynergyManager.getAllSynergies().size());
     }
 
-    private void parseAndRegister(JsonObject json, Identifier fileId) {
-        if (!json.has("id")) {
+    /**
+     * Parses one synergy, keeping its failure to itself.
+     *
+     * <p>Same reason as in {@code FoodReloadListener}: the only {@code catch} was around
+     * the whole file, so one bad entry discarded every synergy after it and the log named
+     * only the file.
+     */
+    private void parseEntry(JsonElement element, Identifier fileId) {
+        if (element == null || !element.isJsonObject()) {
             Florafare.LOGGER.error(
-                    "Error in file {}: Missing 'id' field! Synergy skipped.", fileId);
+                    "Error in file {}: a synergy entry is not a JSON object! Entry skipped.", fileId);
             return;
         }
-        String id = json.get("id").getAsString();
+        JsonObject json = element.getAsJsonObject();
+        try {
+            parseAndRegister(json, fileId);
+        } catch (Exception e) {
+            Florafare.LOGGER.error(
+                    "Error in file {}: synergy '{}' could not be parsed and was skipped. "
+                            + "The rest of the file is unaffected.",
+                    fileId, JsonFields.getString(json, "id", "<no id>"), e);
+        }
+    }
+
+    private void parseAndRegister(JsonObject json, Identifier fileId) {
+        String id = JsonFields.getString(json, "id");
+        if (id == null) {
+            Florafare.LOGGER.error(
+                    "Error in file {}: Missing or non-string 'id' field! Synergy skipped.", fileId);
+            return;
+        }
 
         // A synergy with no requirements is satisfied by everything, so it would switch
         // on the moment it loaded and never switch off — and with no requirement to read
         // a remaining duration from, it took Integer.MAX_VALUE ticks and became
         // permanent. Rejected here rather than left for the component to guard against.
-        if (!json.has("requirements") || !json.get("requirements").isJsonArray()
+        if (!JsonFields.hasArray(json, "requirements")
                 || json.getAsJsonArray("requirements").isEmpty()) {
             Florafare.LOGGER.error(
                     "Error in file {}: Synergy '{}' has no 'requirements' array! "
@@ -80,13 +104,28 @@ public class FoodSynergyReloadListener extends JsonDataLoader implements Identif
         List<String> requirements = new ArrayList<>();
         JsonArray reqArray = json.getAsJsonArray("requirements");
         for (JsonElement re : reqArray) {
+            if (!re.isJsonPrimitive()) {
+                Florafare.LOGGER.error(
+                        "Error in file {}: synergy '{}' has a requirement that is not a string! "
+                                + "Requirement skipped.", fileId, id);
+                continue;
+            }
             // Normalize so requirements match the canonical food target keys
             // (bare item ids / "#" tag ids).
             requirements.add(FoodBuffManager.normalizeTarget(re.getAsString()));
         }
+        // Every requirement could have been thrown out above, which puts us back at the
+        // "satisfied by everything, permanently active" case the check further up exists
+        // to prevent.
+        if (requirements.isEmpty()) {
+            Florafare.LOGGER.error(
+                    "Error in file {}: synergy '{}' has no usable requirements left. Skipped.",
+                    fileId, id);
+            return;
+        }
 
-        int duration = json.has("duration") ? json.get("duration").getAsInt() : 2400;
-        double healthBonus = json.has("health_bonus") ? json.get("health_bonus").getAsDouble() : 0.0;
+        int duration = JsonFields.getInt(json, "duration", 2400);
+        double healthBonus = JsonFields.getDouble(json, "health_bonus", 0.0);
 
         // Both lists are validated exactly the way FoodReloadListener validates a food
         // buff's. They used to be parsed with Identifier.of and no registry check at all,
@@ -96,11 +135,12 @@ public class FoodSynergyReloadListener extends JsonDataLoader implements Identif
         // dropped without a word by the ifPresent in PlayerFoodComponent#applyEffect.
         // Either way a typo cost a synergy its effects with nothing in the log naming it.
         List<FoodBuffData.EffectData> effects = new ArrayList<>();
-        if (json.has("effects")) {
+        if (JsonFields.hasArray(json, "effects")) {
             for (JsonElement e : json.getAsJsonArray("effects")) {
+                if (!e.isJsonObject()) continue;
                 JsonObject effObj = e.getAsJsonObject();
-                String rawId = effObj.get("id").getAsString();
-                Identifier effId = Identifier.tryParse(rawId);
+                String rawId = JsonFields.getString(effObj, "id");
+                Identifier effId = rawId == null ? null : Identifier.tryParse(rawId);
                 if (effId == null
                         || !net.minecraft.registry.Registries.STATUS_EFFECT.containsId(effId)) {
                     Florafare.LOGGER.error(
@@ -108,20 +148,24 @@ public class FoodSynergyReloadListener extends JsonDataLoader implements Identif
                                     + "Effect skipped.", fileId, id, rawId);
                     continue;
                 }
+                // Defaults to the synergy's own duration — which is also what the
+                // component rewrites it to when the synergy activates, so an omitted
+                // value here was never going to mean anything else.
                 effects.add(new FoodBuffData.EffectData(
                         effId,
-                        effObj.get("duration").getAsInt(),
-                        effObj.has("amplifier") ? effObj.get("amplifier").getAsInt() : 0
+                        JsonFields.getInt(effObj, "duration", duration),
+                        JsonFields.getInt(effObj, "amplifier", 0)
                 ));
             }
         }
 
         List<FoodBuffData.AttributeData> attributes = new ArrayList<>();
-        if (json.has("attributes")) {
+        if (JsonFields.hasArray(json, "attributes")) {
             for (JsonElement e : json.getAsJsonArray("attributes")) {
+                if (!e.isJsonObject()) continue;
                 JsonObject attrObj = e.getAsJsonObject();
-                String rawId = attrObj.get("attribute").getAsString();
-                Identifier attrId = Identifier.tryParse(rawId);
+                String rawId = JsonFields.getString(attrObj, "attribute");
+                Identifier attrId = rawId == null ? null : Identifier.tryParse(rawId);
                 if (attrId == null
                         || !net.minecraft.registry.Registries.ATTRIBUTE.containsId(attrId)) {
                     Florafare.LOGGER.error(
@@ -131,8 +175,8 @@ public class FoodSynergyReloadListener extends JsonDataLoader implements Identif
                 }
                 attributes.add(new FoodBuffData.AttributeData(
                         attrId,
-                        attrObj.get("amount").getAsDouble(),
-                        attrObj.get("operation").getAsString()
+                        JsonFields.getDouble(attrObj, "amount", 0.0),
+                        JsonFields.getString(attrObj, "operation", "add_value")
                 ));
             }
         }

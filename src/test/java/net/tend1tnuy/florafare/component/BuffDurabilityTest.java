@@ -75,6 +75,31 @@ class BuffDurabilityTest {
         }
 
         @Test
+        @DisplayName("a refreshed synergy keeps the elapsed position of the buff it mirrors")
+        void resetKeepsSeparateInitial() {
+            // A synergy has no length of its own: it mirrors the shortest buff feeding
+            // it, and so inherits how far through that buff already is. Folding both
+            // numbers into one made the bar jump back to full on every refresh.
+            ActiveFoodBuff synergy =
+                    ActiveFoodBuff.synergy("florafare:hearty_stew", "minecraft:bread", 3600, 3600);
+            synergy.resetDuration(1000, 3600);
+
+            assertEquals(1000, synergy.getDurationRemaining());
+            assertEquals(3600, synergy.getInitialDuration(),
+                    "the bar has to read 1000/3600, not 1000/1000");
+        }
+
+        @Test
+        @DisplayName("the two-argument reset enforces the same initial >= remaining invariant")
+        void resetInitialNeverBelowRemaining() {
+            ActiveFoodBuff buff = new ActiveFoodBuff("minecraft:apple", "minecraft:apple", 600, 600);
+            buff.resetDuration(1200, 10);
+
+            assertEquals(1200, buff.getDurationRemaining());
+            assertEquals(1200, buff.getInitialDuration());
+        }
+
+        @Test
         @DisplayName("ordinary durations pass through untouched")
         void normalDurationsUnchanged() {
             ActiveFoodBuff buff = new ActiveFoodBuff("minecraft:bread", "minecraft:bread", 6000, 6000);

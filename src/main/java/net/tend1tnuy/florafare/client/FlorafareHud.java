@@ -32,7 +32,7 @@ public class FlorafareHud implements HudRenderCallback {
 
     /** Resizes {@link #slots} to match the current (server-synced) buff slot count. */
     private SlotState[] slots() {
-        int maxSlots = Math.max(1, PlayerFoodComponent.MAX_BUFF_SLOTS);
+        int maxSlots = PlayerFoodComponent.getMaxBuffSlots();
         if (slots.length != maxSlots) {
             SlotState[] resized = new SlotState[maxSlots];
             for (int i = 0; i < maxSlots; i++) {
@@ -198,7 +198,7 @@ public class FlorafareHud implements HudRenderCallback {
         // same space mouseX/mouseY were computed in — so the tooltip isn't itself
         // scaled or offset by the HUD's own zoom.
         if (hoveredBuff != null) {
-            FoodBuffData data = FoodBuffManager.getConfig(hoveredBuff.getConsumedItemStack());
+            FoodBuffData data = FoodBuffManager.getConfig(hoveredBuff.peekConsumedItemStack());
             if (data != null) {
                 context.drawTooltip(client.textRenderer,
                         buildTooltipLines(hoveredBuff, data, hoveredSynergized),
@@ -218,7 +218,7 @@ public class FlorafareHud implements HudRenderCallback {
     private static List<Text> buildTooltipLines(ActiveFoodBuff buff, FoodBuffData data,
                                                  boolean isSynergized) {
         List<Text> lines = new ArrayList<>();
-        lines.add(buff.getConsumedItemStack().getName());
+        lines.add(buff.peekConsumedItemStack().getName());
         lines.add(Text.translatable("tooltip.florafare.hud.remaining",
                 BuffDescription.mmss(buff.getDurationRemaining())).formatted(Formatting.GRAY));
 
@@ -334,7 +334,7 @@ public class FlorafareHud implements HudRenderCallback {
         // back down as it slides away), layered on top of the compact/normal icon scale.
         float popScale = 0.7f + 0.3f * MathHelper.clamp(appearProgress, 0.0f, 1.0f);
 
-        ItemStack stack = buff.getConsumedItemStack();
+        ItemStack stack = buff.peekConsumedItemStack();
         context.getMatrices().push();
         if (HudConfig.iconSize == HudConfig.IconSize.SMALL) {
             float scale    = 0.75f * popScale;

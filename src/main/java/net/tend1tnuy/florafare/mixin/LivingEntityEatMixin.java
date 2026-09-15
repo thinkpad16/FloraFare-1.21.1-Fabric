@@ -2,7 +2,9 @@ package net.tend1tnuy.florafare.mixin;
 
 import net.minecraft.component.type.FoodComponent;
 import net.minecraft.entity.LivingEntity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
+import net.tend1tnuy.florafare.component.PlayerFoodComponent;
 import net.tend1tnuy.florafare.config.FlorafareConfig;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
 import org.spongepowered.asm.mixin.Mixin;
@@ -44,6 +46,14 @@ public abstract class LivingEntityEatMixin {
 
         LivingEntity self = (LivingEntity) (Object) this;
 
+        // Players only. Florafare's replacement buff is granted from
+        // PlayerEntityEatMixin, which hooks PlayerEntity#eatFood — so for any other
+        // LivingEntity that reaches LivingEntity#eatFood (a mod's creature, an entity fed
+        // through tryEatFood) this hook took the food's vanilla effects away and put
+        // nothing at all in their place. Taking something away is only correct where
+        // something replaces it.
+        if (!(self instanceof PlayerEntity player)) return;
+
         // The stack on its way down. LivingEntity#consumeItem passes its own
         // activeItemStack to finishUsing and only clears it afterwards, and the decrement
         // happens after this call, so during eatFood this is exactly the stack being
@@ -56,6 +66,12 @@ public abstract class LivingEntityEatMixin {
         // Not a food Florafare manages (excluded, or owned by another mod): its vanilla
         // effects are the only ones it has, so they must still fire.
         if (FoodBuffManager.getConfig(stack) == null) return;
+
+        // Managed, but this particular bite was handed back to vanilla — a BUFF_APPLYING
+        // listener vetoed the buff whose effects would have replaced these ones. Same
+        // rule as the non-player guard above, applied to the other way a replacement can
+        // fail to happen.
+        if (!PlayerFoodComponent.handlesCurrentBite(player)) return;
 
         ci.cancel();
     }

@@ -210,7 +210,7 @@ public class SetBuffCommand {
         }
 
         source.sendFeedback(() -> Text.translatable("command.florafare.buffs.header",
-                playerName, buffs.size(), PlayerFoodComponent.MAX_BUFF_SLOTS), false);
+                playerName, buffs.size(), PlayerFoodComponent.getMaxBuffSlots()), false);
         for (ActiveFoodBuff buff : buffs) {
             source.sendFeedback(() -> describeBuff(buff, false), false);
         }
@@ -434,7 +434,7 @@ public class SetBuffCommand {
     private static int executeValidate(CommandContext<ServerCommandSource> context) {
         ServerCommandSource source = context.getSource();
         List<String> issues = new ArrayList<>();
-        int maxSlots = PlayerFoodComponent.MAX_BUFF_SLOTS;
+        int maxSlots = PlayerFoodComponent.getMaxBuffSlots();
 
         for (FoodSynergyData synergy : FoodSynergyManager.getAllSynergies()) {
             if (synergy.requirements().size() > maxSlots) {

@@ -1,5 +1,7 @@
 package net.tend1tnuy.florafare.mixin;
 
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.FoodComponent;
 import net.minecraft.entity.player.HungerManager;
@@ -16,7 +18,6 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
@@ -111,15 +112,33 @@ public abstract class PlayerEntityMixin implements IFoodComponentProvider {
      *
      * <p>This is now <em>the</em> place the swap happens. It used to be dead code: the
      * old {@code PlayerEntityEatMixin} cancelled {@code eatFood} at HEAD before this
-     * redirect could ever be reached, and did the same {@code add()} call itself. With
-     * the cancellation gone, vanilla's own call site is redirected instead — which is
-     * also the narrowest possible way to express "same method, different numbers".
+     * hook could ever be reached, and did the same {@code add()} call itself. With the
+     * cancellation gone, vanilla's own call site is wrapped instead — which is also the
+     * narrowest possible way to express "same method, different numbers".
      *
      * <p>{@code HungerManager#add} treats the float as a saturation <em>modifier</em>
      * (added saturation = nutrition x modifier x 2), which is the same meaning the
      * datapack field carries, so the value passes straight through.
+     *
+     * <p>Gated on {@link PlayerFoodComponent#handlesCurrentBite} and not merely on "the
+     * item has a config". A {@code BUFF_APPLYING} listener can refuse the buff these
+     * numbers come packaged with, and applying them anyway left the player with the
+     * datapack's hunger, no Florafare buff and — via {@link LivingEntityEatMixin} — no
+     * vanilla food effects either: strictly worse than both of the outcomes the veto
+     * chooses between.
+     *
+     * <p>A {@code @WrapOperation} and not a {@code @Redirect}, for the reason spelled out
+     * at length in {@link LivingEntityEatMixin}: two mods redirecting one call site is a
+     * hard apply-time conflict, and {@code HungerManager#eat} inside {@code eatFood} is
+     * precisely the call another food or hunger mod wants. Wrappers compose — each one
+     * wraps the previous — so the mod that gets there second still runs.
+     *
+     * <p>Which is also why the fall-through goes through {@code original.call} rather
+     * than invoking {@code hungerManager.eat(food)} directly. Calling the method by hand
+     * would reach vanilla while stepping over every other wrapper in the chain, quietly
+     * undoing the other mod's change on exactly the bites Florafare declines to touch.
      */
-    @Redirect(
+    @WrapOperation(
             method = "eatFood",
             at = @At(
                     value = "INVOKE",
@@ -127,13 +146,15 @@ public abstract class PlayerEntityMixin implements IFoodComponentProvider {
             )
     )
     private void florafare$skipVanillaHunger(HungerManager hungerManager, FoodComponent food,
+                                             Operation<Void> original,
                                              World world, ItemStack stack, FoodComponent foodComponent) {
         net.tend1tnuy.florafare.food.FoodBuffData data = FoodBuffManager.getConfig(stack);
-        if (data != null) {
+        if (data != null
+                && PlayerFoodComponent.handlesCurrentBite((PlayerEntity) (Object) this)) {
             hungerManager.add(data.nutrition(), data.saturation());
             return;
         }
-        hungerManager.eat(food);
+        original.call(hungerManager, food);
     }
 
     /**
@@ -143,14 +164,19 @@ public abstract class PlayerEntityMixin implements IFoodComponentProvider {
      * <p>Vanilla calls {@code insertStack} here and discards the boolean it returns, so
      * eating a stew with no free slot destroys the bowl. Florafare has always handed it
      * back rather than eating it, from back when this mixin re-implemented the whole
-     * method; keeping that behaviour costs one redirect on the one call that decides it,
-     * and losing it would have been a silent regression for anyone already used to it.
+     * method; keeping that behaviour costs one hook on the one call that decides it, and
+     * losing it would have been a silent regression for anyone already used to it.
      *
      * <p>Returning true unconditionally is correct: the caller ignores the value, and by
      * that point the stack has either been inserted or dropped — in neither case is it
      * gone.
+     *
+     * <p>{@code @WrapOperation} for the same compatibility reason as the hunger hook
+     * above, and {@code original.call} for the same reason too: an inventory mod that
+     * wraps {@code insertStack} must still decide whether the bowl fits before this
+     * decides what to do when it does not.
      */
-    @Redirect(
+    @WrapOperation(
             method = "eatFood",
             at = @At(
                     value = "INVOKE",
@@ -158,8 +184,9 @@ public abstract class PlayerEntityMixin implements IFoodComponentProvider {
             )
     )
     private boolean florafare$dropContainerIfInventoryFull(PlayerInventory inventory,
-                                                           ItemStack container) {
-        if (inventory.insertStack(container)) return true;
+                                                           ItemStack container,
+                                                           Operation<Boolean> original) {
+        if (original.call(inventory, container)) return true;
         ((PlayerEntity) (Object) this).dropItem(container, false);
         return true;
     }

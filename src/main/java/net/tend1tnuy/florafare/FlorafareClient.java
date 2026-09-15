@@ -54,12 +54,16 @@ public class FlorafareClient implements ClientModInitializer {
                 "category.florafare.general"
         ));
 
-        // A server overwrites the gameplay half of FlorafareConfig in place (see the
-        // FlorafareServerConfigSyncPayload receiver below). Snapshot this client's own
-        // values before that happens, and put them back when the connection ends, so a
-        // server's rules can't follow the player into their next singleplayer world.
+        // A remote server overwrites the gameplay half of FlorafareConfig in place (see
+        // the FlorafareServerConfigSyncPayload receiver below). Snapshot this client's
+        // own values before that happens, and put them back when the connection ends, so
+        // a server's rules can't follow the player into their next singleplayer world.
+        // Skipped in singleplayer, where the "server" is this player's own config.
         ClientPlayConnectionEvents.INIT.register((handler, client) ->
-                ClientConfigOverride.rememberLocal());
+                // getServer() rather than isInSingleplayer(): a world opened to LAN is
+                // still this player's own game reading their own config, but
+                // isInSingleplayer() answers false for it the moment it is published.
+                ClientConfigOverride.rememberLocal(client.getServer() != null));
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
             if (ClientConfigOverride.restoreLocal()) {
                 // Only when the server had actually overridden something: the journal
@@ -81,6 +85,13 @@ public class FlorafareClient implements ClientModInitializer {
                         ((IFoodComponentProvider) player)
                                 .florafare$getFoodComponent().readFromNbt(payload.nbt());
                     }
+                    // This packet replaces the discovery lists wholesale, and the
+                    // journal's static cache stores each entry's unlocked flag. It only
+                    // ever happened to stay correct because the config sync — which does
+                    // invalidate — arrives right after this one on join. On respawn and
+                    // on a dimension change this packet is sent alone, and nothing else
+                    // was dropping the cache.
+                    FoodJournalScreen.invalidateCache();
                 }));
 
         // The volatile half (active buffs and synergies) — everything the journal
@@ -145,7 +156,7 @@ public class FlorafareClient implements ClientModInitializer {
                     FlorafareConfig.allowEatingWhenFull = payload.allowEatingWhenFull();
                     FlorafareConfig.respectVanillaFoodEffects = payload.respectVanillaFoodEffects();
                     FlorafareConfig.enableForgottenMead = payload.enableForgottenMead();
-                    PlayerFoodComponent.MAX_BUFF_SLOTS = payload.maxBuffSlots();
+                    PlayerFoodComponent.setMaxBuffSlots(payload.maxBuffSlots());
                     FoodJournalScreen.invalidateCache();
                 }));
 

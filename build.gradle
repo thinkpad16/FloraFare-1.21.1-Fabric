@@ -70,6 +70,23 @@ dependencies {
 	modCompileOnly "com.terraformersmc:modmenu:${project.modmenu_version}"
 	modLocalRuntime "com.terraformersmc:modmenu:${project.modmenu_version}"
 
+	// MixinExtras, for @WrapOperation in PlayerEntityMixin. Two mods cannot @Redirect
+	// the same call site — it is a hard apply-time conflict — and the two calls this mod
+	// takes over inside PlayerEntity#eatFood (HungerManager#eat and the container
+	// insertStack) are exactly the ones another food/hunger mod is likeliest to want.
+	// @WrapOperation composes instead: each wrapper wraps the previous one.
+	//
+	// compileOnly, never "include": Fabric Loader has bundled MixinExtras since 0.15.0
+	// — the version below is the build Loader 0.19.2 ships — and fabric.mod.json already
+	// requires >=0.15.0, so every user already has it. Bundling a second copy is how you
+	// get two MixinExtras on the classpath.
+	//
+	// The annotationProcessor line is not optional: Mixin's AP has to resolve the
+	// annotation to write these two injectors into the refmap, and without it the
+	// production (remapped) jar silently loses them while the dev client keeps working.
+	compileOnly "io.github.llamalad7:mixinextras-fabric:${project.mixinextras_version}"
+	annotationProcessor "io.github.llamalad7:mixinextras-fabric:${project.mixinextras_version}"
+
 	// Unit tests for the pure logic — config resolution and NBT round-trips — which
 	// need Minecraft's NBT/Identifier classes on the classpath (Loom already puts them
 	// there) but never boot the game.

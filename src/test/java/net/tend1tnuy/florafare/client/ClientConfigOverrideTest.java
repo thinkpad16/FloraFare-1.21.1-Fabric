@@ -22,6 +22,11 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class ClientConfigOverrideTest {
 
+    /** What {@code rememberLocal} is told when the connection is to someone else's server. */
+    private static final boolean REMOTE_SERVER = false;
+    /** ...and when it is to this client's own integrated server. */
+    private static final boolean LOCALLY_HOSTED = true;
+
     /** Puts the fields into a known "this client's own settings" state. */
     @BeforeEach
     void resetToLocalDefaults() {
@@ -33,7 +38,7 @@ class ClientConfigOverrideTest {
         FlorafareConfig.allowEatingWhenFull        = true;
         FlorafareConfig.respectVanillaFoodEffects  = false;
         FlorafareConfig.enableForgottenMead        = true;
-        PlayerFoodComponent.MAX_BUFF_SLOTS         = 3;
+        PlayerFoodComponent.setMaxBuffSlots(3);
         FoodBuffManager.setExcludedItems(Set.of("minecraft:cake"));
 
         // Drop any snapshot a previous test left behind.
@@ -46,7 +51,7 @@ class ClientConfigOverrideTest {
         FlorafareConfig.enableSynergies            = true;
         FlorafareConfig.allowEatingWhenFull        = true;
         FlorafareConfig.enableForgottenMead        = true;
-        PlayerFoodComponent.MAX_BUFF_SLOTS         = 3;
+        PlayerFoodComponent.setMaxBuffSlots(3);
         FoodBuffManager.setExcludedItems(Set.of("minecraft:cake"));
     }
 
@@ -57,21 +62,21 @@ class ClientConfigOverrideTest {
         FlorafareConfig.allowEatingWhenFull       = false;
         FlorafareConfig.enableForgottenMead       = false;
         FlorafareConfig.autoGenHealthMultiplier   = 2.0;
-        PlayerFoodComponent.MAX_BUFF_SLOTS        = 1;
+        PlayerFoodComponent.setMaxBuffSlots(1);
         FoodBuffManager.setExcludedItems(Set.of("someothermod:stew"));
     }
 
     @Test
     @DisplayName("leaving a server puts this client's own settings back")
     void restoresAfterServerOverride() {
-        ClientConfigOverride.rememberLocal();
+        ClientConfigOverride.rememberLocal(REMOTE_SERVER);
         serverOverrides();
 
         assertTrue(ClientConfigOverride.restoreLocal(),
                 "restore should report that the server had overridden something");
 
         assertEquals(3, FlorafareConfig.maxBuffSlots);
-        assertEquals(3, PlayerFoodComponent.MAX_BUFF_SLOTS,
+        assertEquals(3, PlayerFoodComponent.getMaxBuffSlots(),
                 "the component's slot count is what actually gates buffs, so it must follow too");
         assertTrue(FlorafareConfig.enableSynergies);
         assertTrue(FlorafareConfig.allowEatingWhenFull);
@@ -82,7 +87,7 @@ class ClientConfigOverrideTest {
     @Test
     @DisplayName("the exclusion set is restored, since nothing else rebuilds it client-side")
     void restoresExclusions() {
-        ClientConfigOverride.rememberLocal();
+        ClientConfigOverride.rememberLocal(REMOTE_SERVER);
         serverOverrides();
 
         ClientConfigOverride.restoreLocal();
@@ -91,15 +96,35 @@ class ClientConfigOverrideTest {
     }
 
     @Test
-    @DisplayName("a singleplayer exit changes nothing and reports no override")
-    void singleplayerExitIsANoOp() {
-        ClientConfigOverride.rememberLocal();
-        // The integrated server syncs back the very values just captured.
+    @DisplayName("a server that overrides nothing reports no restore")
+    void unchangedServerIsANoOp() {
+        ClientConfigOverride.rememberLocal(REMOTE_SERVER);
+        // The server syncs back the very values just captured.
 
         assertFalse(ClientConfigOverride.restoreLocal(),
                 "nothing differed, so the disconnect handler should not report a restore");
         assertEquals(3, FlorafareConfig.maxBuffSlots);
         assertTrue(FlorafareConfig.enableSynergies);
+    }
+
+    @Test
+    @DisplayName("a locally hosted world takes no snapshot, so the config screen edits the live fields")
+    void singleplayerTakesNoSnapshot() {
+        ClientConfigOverride.rememberLocal(LOCALLY_HOSTED);
+
+        // This is the whole point: with a snapshot in force, ModMenu writes land on the
+        // snapshot and applyAndSave() skips the step that makes them take effect — so the
+        // Balance tab looked like a set of dead switches until the player left the world.
+        assertFalse(FlorafareConfig.isServerOverridden(),
+                "this player's own integrated server is not 'a server overriding them'");
+
+        FlorafareConfig.setLocalMaxBuffSlots(6);
+        assertEquals(6, FlorafareConfig.maxBuffSlots,
+                "an edit in singleplayer must reach the live field immediately");
+
+        assertFalse(ClientConfigOverride.restoreLocal(),
+                "there is nothing to restore, and the edit must not be rolled back");
+        assertEquals(6, FlorafareConfig.maxBuffSlots);
     }
 
     @Test
@@ -116,7 +141,7 @@ class ClientConfigOverrideTest {
     @Test
     @DisplayName("while a server is connected, the local accessors still report this client's own values")
     void localAccessorsIgnoreTheServersValues() {
-        ClientConfigOverride.rememberLocal();
+        ClientConfigOverride.rememberLocal(REMOTE_SERVER);
         serverOverrides();
 
         // The live fields must hold the server's values — gameplay and the client's own
@@ -138,7 +163,7 @@ class ClientConfigOverrideTest {
     @Test
     @DisplayName("an edit made while connected lands on this client's settings, not the server's")
     void editsWhileConnectedGoToTheLocalSnapshot() {
-        ClientConfigOverride.rememberLocal();
+        ClientConfigOverride.rememberLocal(REMOTE_SERVER);
         serverOverrides();
 
         // The player opens the config screen mid-session and changes their own preference.
@@ -170,20 +195,20 @@ class ClientConfigOverrideTest {
     @Test
     @DisplayName("each connect re-snapshots, so ModMenu edits between sessions survive")
     void snapshotFollowsLaterLocalEdits() {
-        ClientConfigOverride.rememberLocal();
+        ClientConfigOverride.rememberLocal(REMOTE_SERVER);
         serverOverrides();
         ClientConfigOverride.restoreLocal();
 
         // Player changes a setting in the main menu, then joins a server again.
         FlorafareConfig.maxBuffSlots       = 5;
-        PlayerFoodComponent.MAX_BUFF_SLOTS = 5;
+        PlayerFoodComponent.setMaxBuffSlots(5);
 
-        ClientConfigOverride.rememberLocal();
+        ClientConfigOverride.rememberLocal(REMOTE_SERVER);
         serverOverrides();
         ClientConfigOverride.restoreLocal();
 
         assertEquals(5, FlorafareConfig.maxBuffSlots,
                 "the second snapshot must capture the edited value, not the startup one");
-        assertEquals(5, PlayerFoodComponent.MAX_BUFF_SLOTS);
+        assertEquals(5, PlayerFoodComponent.getMaxBuffSlots());
     }
 }

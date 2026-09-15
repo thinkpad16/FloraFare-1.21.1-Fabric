@@ -50,8 +50,8 @@ public class Florafare implements ModInitializer {
 
         // 1. Config
         net.tend1tnuy.florafare.config.FlorafareConfig.load();
-        net.tend1tnuy.florafare.component.PlayerFoodComponent.MAX_BUFF_SLOTS =
-                net.tend1tnuy.florafare.config.FlorafareConfig.maxBuffSlots;
+        net.tend1tnuy.florafare.component.PlayerFoodComponent.setMaxBuffSlots(
+                net.tend1tnuy.florafare.config.FlorafareConfig.maxBuffSlots);
         for (String itemId : net.tend1tnuy.florafare.config.FlorafareConfig.ignoredFoodItems) {
             FoodBuffManager.excludeItem(itemId);
         }
@@ -223,6 +223,18 @@ public class Florafare implements ModInitializer {
     private static boolean oversizedSynergies;
 
     /**
+     * Whether {@link #buildSyncPayloads()} has run since the last invalidation.
+     *
+     * <p>Needed because a null payload field means two different things: "not built yet"
+     * and "built, and deliberately not sent because it is over the size limit". Testing
+     * the fields for null conflated the two, so a pack whose maps were BOTH oversized
+     * re-serialized the entire config tree on every single player connection — and wrote
+     * two ERROR lines to the log each time — for payloads it had already decided not to
+     * send.
+     */
+    private static boolean syncPayloadsBuilt;
+
+    /**
      * Drops the memoized datapack payloads so the next send rebuilds them.
      *
      * <p>Public, and called from the two reload listeners rather than only from
@@ -240,6 +252,7 @@ public class Florafare implements ModInitializer {
         cachedSynergyPayload = null;
         oversizedConfigs     = false;
         oversizedSynergies   = false;
+        syncPayloadsBuilt    = false;
     }
 
     /**
@@ -251,9 +264,7 @@ public class Florafare implements ModInitializer {
      * explaining why scrolled out of view.
      */
     public static List<String> syncPayloadIssues() {
-        if (cachedConfigPayload == null && cachedSynergyPayload == null) {
-            buildSyncPayloads();
-        }
+        ensureSyncPayloads();
         List<String> issues = new ArrayList<>();
         if (oversizedConfigs) {
             issues.add("the food_buffs config map is too large to send to clients "
@@ -270,14 +281,19 @@ public class Florafare implements ModInitializer {
 
     /** Sends the datapack-driven config and synergy maps, skipping either if it is too large. */
     private static void sendDatapackSync(ServerPlayerEntity player) {
-        if (cachedConfigPayload == null && cachedSynergyPayload == null) {
-            buildSyncPayloads();
-        }
+        ensureSyncPayloads();
         if (cachedConfigPayload  != null) sendTo(player, cachedConfigPayload);
         if (cachedSynergyPayload != null) sendTo(player, cachedSynergyPayload);
     }
 
+    /** Builds the memoized payloads once per invalidation, oversized results included. */
+    private static void ensureSyncPayloads() {
+        if (syncPayloadsBuilt) return;
+        buildSyncPayloads();
+    }
+
     private static void buildSyncPayloads() {
+        syncPayloadsBuilt = true;
         NbtCompound configs = FoodBuffManager.serializeConfigs();
         int configBytes = encodedSize(configs);
         oversizedConfigs = configBytes > MAX_SYNC_PAYLOAD_BYTES;

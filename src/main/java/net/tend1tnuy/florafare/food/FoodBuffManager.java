@@ -119,8 +119,19 @@ public class FoodBuffManager {
         return server.getSavePath(WorldSavePath.ROOT).resolve(RUNTIME_FILE_NAME);
     }
 
-    public static int    AUTO_GEN_DURATION_MULT = 1200;
-    public static double AUTO_GEN_HEALTH_MULT   = 0.5;
+    /**
+     * Multipliers the auto-generation path applies to a vanilla FoodComponent.
+     *
+     * <p>{@code volatile} for the same reason {@code PlayerFoodComponent.maxBuffSlots}
+     * is: they are written from the datapack reload, from the server's config packet and
+     * from the ModMenu screen, and read from the render thread every time a food tooltip
+     * is drawn. Nothing here needs atomicity across the pair — a torn read would only
+     * mean one tooltip frame built from a half-applied config — but a long-lived stale
+     * read on a thread that never sees the write is worth ruling out for the price of a
+     * keyword.
+     */
+    public static volatile int    AUTO_GEN_DURATION_MULT = 1200;
+    public static volatile double AUTO_GEN_HEALTH_MULT   = 0.5;
 
     /**
      * Entries registered from code through

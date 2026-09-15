@@ -46,11 +46,23 @@ public final class ClientConfigOverride {
 
     /**
      * Snapshots this client's own settings, immediately before a server is given the
-     * chance to overwrite them. Called on connect, including in singleplayer — where
-     * the restore is a no-op, since the integrated server syncs back the very values
-     * being saved here.
+     * chance to overwrite them.
+     *
+     * <p><b>Not for a locally hosted world.</b> An integrated server is this player's own game
+     * reading this player's own config file, so there is nothing to protect them from —
+     * and taking the snapshot anyway did active harm. Every edit in the ModMenu screen
+     * went into the snapshot instead of the live fields, and {@code applyAndSave} skips
+     * the "make it take effect now" step whenever an override is in force. The result was
+     * a Balance tab where changing the buff slot count or the auto-generation multipliers
+     * appeared to do nothing at all until the player left the world and came back, and
+     * where every one of those settings carried a tooltip claiming a server was
+     * overriding it.
+     *
+     * @param locallyHosted whether the connection being opened is to this client's own
+     *                      integrated server (a singleplayer world, or one opened to LAN)
      */
-    public static void rememberLocal() {
+    public static void rememberLocal(boolean locallyHosted) {
+        if (locallyHosted) return;
         FlorafareConfig.beginServerOverride();
         excludedItems = new HashSet<>(FoodBuffManager.getExcludedItems());
         captured = true;
@@ -76,7 +88,7 @@ public final class ClientConfigOverride {
         // server's sync packet.
         FoodBuffManager.setExcludedItems(excludedItems);
 
-        PlayerFoodComponent.MAX_BUFF_SLOTS = FlorafareConfig.maxBuffSlots;
+        PlayerFoodComponent.setMaxBuffSlots(FlorafareConfig.maxBuffSlots);
 
         // The server's sync writes these too (they drive auto-generated buffs), and on a
         // dedicated server they are the only thing that ever sets them client-side — so

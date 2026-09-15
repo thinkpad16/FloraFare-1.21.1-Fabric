@@ -60,8 +60,18 @@ public class ForgottenMeadItem extends Item {
         if (user instanceof PlayerEntity player && !player.getAbilities().creativeMode) {
             ItemStack bottle = new ItemStack(Items.GLASS_BOTTLE);
             if (result.isEmpty()) {
+                // Replacing the emptied stack in place is safe on both sides: it is the
+                // return value of finishUsing, which each side applies to its own copy of
+                // the hand slot, exactly as vanilla does for a drunk potion.
                 return bottle;
-            } else if (!player.getInventory().insertStack(bottle)) {
+            }
+            // Putting a SECOND item into the inventory is not. Vanilla guards the
+            // equivalent insertStack in PlayerEntity#eatFood with !world.isClient()
+            // precisely because finishUsing runs on the client too: without the guard the
+            // client invented a bottle in a slot the server never filled, and it sat there
+            // as a ghost until something else made the server re-send that slot.
+            if (world.isClient) return result;
+            if (!player.getInventory().insertStack(bottle)) {
                 player.dropItem(bottle, false);
             }
         }

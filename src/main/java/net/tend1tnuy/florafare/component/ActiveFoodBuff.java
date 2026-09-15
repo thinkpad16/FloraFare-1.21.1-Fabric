@@ -8,6 +8,7 @@ import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtList;
 import net.minecraft.registry.Registries;
 import net.minecraft.util.Identifier;
+import org.jetbrains.annotations.ApiStatus;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -46,6 +47,7 @@ public class ActiveFoodBuff {
 
     private final String target;
     private final String consumedItemId;
+    private final boolean synergy;
     private int durationRemaining;
     private int initialDuration;
 
@@ -54,10 +56,28 @@ public class ActiveFoodBuff {
     // #25 — Lazily cached ItemStack so the registry is not queried every render frame.
     private ItemStack cachedItemStack = null;
 
+    /** A food buff, granted by eating an item. */
     public ActiveFoodBuff(String target, String consumedItemId,
                           int durationRemaining, int initialDuration) {
+        this(target, consumedItemId, durationRemaining, initialDuration, false);
+    }
+
+    /**
+     * A synergy, keyed by its own id.
+     *
+     * <p>Named rather than a bare boolean at the call site, because "true" there reads as
+     * nothing at all.
+     */
+    public static ActiveFoodBuff synergy(String synergyId, String iconItemId,
+                                         int durationRemaining, int initialDuration) {
+        return new ActiveFoodBuff(synergyId, iconItemId, durationRemaining, initialDuration, true);
+    }
+
+    public ActiveFoodBuff(String target, String consumedItemId,
+                          int durationRemaining, int initialDuration, boolean synergy) {
         this.target            = target;
         this.consumedItemId    = consumedItemId;
+        this.synergy           = synergy;
         this.durationRemaining = clampDuration(durationRemaining);
         // Never below the remaining time, or the HUD's progress bar divides by a smaller
         // number than it counts down from and renders a permanently full slot.
@@ -68,9 +88,24 @@ public class ActiveFoodBuff {
         if (durationRemaining > 0) durationRemaining--;
     }
 
+    /** Restarts the buff: it now has {@code newDuration} left, out of that same total. */
     public void resetDuration(int newDuration) {
+        resetDuration(newDuration, newDuration);
+    }
+
+    /**
+     * Sets both halves of the progress bar independently.
+     *
+     * <p>For a synergy, which does not have a length of its own — it mirrors the shortest
+     * buff feeding it, and so inherits that buff's <em>elapsed</em> position too. Folding
+     * the two together (as the single-argument form does) made every refreshed synergy
+     * render as a full bar that then jumped, because it was told it had just started when
+     * in fact it was two thirds through its ingredient's life.
+     */
+    public void resetDuration(int newDuration, int newInitial) {
         this.durationRemaining = clampDuration(newDuration);
-        this.initialDuration   = this.durationRemaining;
+        // Same invariant the constructor enforces, for the same reason.
+        this.initialDuration   = Math.max(clampDuration(newInitial), this.durationRemaining);
     }
 
     public void addModifierRecord(Identifier modifierId, Identifier attributeId,
@@ -87,16 +122,43 @@ public class ActiveFoodBuff {
     public boolean isExpired()            { return durationRemaining <= 0; }
 
     /**
-     * The ItemStack for the consumed item, for the HUD icon and the tooltips.
+     * Whether this entry is a synergy rather than a food buff.
+     *
+     * <p>Carried on the entry itself instead of being inferred by asking
+     * {@code FoodSynergyManager} whether anything is registered under {@link #getTarget()}.
+     * That inference was wrong in both directions: a food buff whose datapack target
+     * happened to match a synergy id was treated as a synergy on removal — firing
+     * {@code SYNERGY_ENDED} and stripping status effects against the wrong data — while a
+     * synergy whose definition had been removed by a {@code /reload} stopped being
+     * recognised as one. The two id spaces are unrelated and nothing stops them from
+     * colliding, so the answer is recorded at construction and persisted.
+     */
+    public boolean isSynergy()            { return synergy; }
+
+    /**
+     * The ItemStack for the consumed item — the HUD icon, and whatever an addon wants to
+     * do with a buff it got from {@code FlorafareAPI}.
      *
      * <p>The registry lookup is cached, because {@code consumedItemId} never changes
-     * after construction and the HUD asks for this every frame (#25). The stack itself is
-     * copied on the way out: an {@link ItemStack} is mutable, and handing the same
-     * instance to the HUD renderer, the hover tooltip, EMI and the journal meant any one
-     * of them setting a count or a component would have changed what all the others drew
-     * — for the rest of the buff's life, since the cache is never rebuilt.
+     * after construction. The stack itself is copied on the way out: an {@link ItemStack}
+     * is mutable, so handing out the cached instance would let any one caller setting a
+     * count or a component change what every other caller sees — for the rest of the
+     * buff's life, since the cache is never rebuilt.
      */
     public ItemStack getConsumedItemStack() {
+        return peekConsumedItemStack().copy();
+    }
+
+    /**
+     * The same stack without the defensive copy. <b>Internal; never mutate it.</b>
+     *
+     * <p>This is the cache itself, shared by every subsequent caller for the life of the
+     * buff — which is why {@link #getConsumedItemStack()}, the method addons are meant to
+     * call, hands back a copy instead. The HUD renderer takes this one because it asks
+     * several times per frame per slot and only ever draws and measures the result.
+     */
+    @ApiStatus.Internal
+    public ItemStack peekConsumedItemStack() {
         if (cachedItemStack == null) {
             Identifier id = consumedItemId == null || consumedItemId.isEmpty()
                     ? null : Identifier.tryParse(consumedItemId);
@@ -107,7 +169,7 @@ public class ActiveFoodBuff {
                 cachedItemStack = Items.APPLE.getDefaultStack();
             }
         }
-        return cachedItemStack.copy();
+        return cachedItemStack;
     }
 
     // -------------------------------------------------------------------------
@@ -120,6 +182,9 @@ public class ActiveFoodBuff {
         nbt.putString("ConsumedItem",    consumedItemId);
         nbt.putInt("Duration",           durationRemaining);
         nbt.putInt("InitialDuration",    initialDuration);
+        // Only written when true: a food buff is the overwhelmingly common case, and
+        // leaving the key off keeps the per-buff tag the size it has always been.
+        if (synergy) nbt.putBoolean("Synergy", true);
 
         NbtList modList = new NbtList();
         appliedModifiers.forEach((modId, modifier) -> {
@@ -136,6 +201,17 @@ public class ActiveFoodBuff {
     }
 
     public static ActiveFoodBuff fromNbt(NbtCompound nbt) {
+        return fromNbt(nbt, false);
+    }
+
+    /**
+     * @param forceSynergy read the entry as a synergy whatever the tag says. Used when
+     *                     deserializing the synergy list, whose entries are synergies by
+     *                     construction — saves written before the flag existed carry no
+     *                     "Synergy" key at all, and reading those back as food buffs
+     *                     would lose the distinction on the first relog.
+     */
+    public static ActiveFoodBuff fromNbt(NbtCompound nbt, boolean forceSynergy) {
         String consumed = nbt.contains("ConsumedItem")
                 ? nbt.getString("ConsumedItem") : "minecraft:apple";
 
@@ -143,7 +219,8 @@ public class ActiveFoodBuff {
                 nbt.getString("Target"),
                 consumed,
                 nbt.getInt("Duration"),
-                nbt.getInt("InitialDuration")
+                nbt.getInt("InitialDuration"),
+                forceSynergy || nbt.getBoolean("Synergy")
         );
 
         if (nbt.contains("Modifiers", NbtElement.LIST_TYPE)) {

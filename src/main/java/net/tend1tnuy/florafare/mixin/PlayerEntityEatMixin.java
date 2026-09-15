@@ -51,12 +51,25 @@ public abstract class PlayerEntityEatMixin {
     @Inject(method = "eatFood", at = @At("HEAD"))
     private void florafare$applyFoodBuff(World world, ItemStack stack, FoodComponent food,
                                          CallbackInfoReturnable<ItemStack> cir) {
-        if (world.isClient || !((Object) this instanceof ServerPlayerEntity player)) return;
+        if (world.isClient) return;
+
+        PlayerEntity self = (PlayerEntity) (Object) this;
+        PlayerFoodComponent component =
+                ((IFoodComponentProvider) self).florafare$getFoodComponent();
+
+        // First thing, ahead of every early return below: until tryAddBuff says
+        // otherwise, this bite belongs to vanilla and neither the hunger redirect nor
+        // the effect suppression may touch it.
+        component.beginBite();
 
         FoodBuffData data = FoodBuffManager.getConfig(stack);
         if (data == null) return;
 
-        PlayerFoodComponent component = ((IFoodComponentProvider) player).florafare$getFoodComponent();
+        // Another mod's fake player, or anything else that is a PlayerEntity without
+        // being a real connected one: Florafare has no buff overlay, no journal and no
+        // sync for it, so it has nothing to put in vanilla's place and leaves the bite
+        // alone — the same rule LivingEntityEatMixin applies to non-players.
+        if (!(self instanceof ServerPlayerEntity player)) return;
 
         // Record the concrete item, not data.target(): tag/namespace/template targets
         // have no journal entry of their own — the journal lists foods per item, so each
@@ -64,10 +77,17 @@ public abstract class PlayerEntityEatMixin {
         String itemId = Registries.ITEM.getId(stack.getItem()).toString();
         component.unlockFood(itemId);
 
-        // Returns false when every slot is taken, which is not treated as anything worth
-        // telling the player about: the buff overlay is on screen the whole time and
-        // already shows the slots are full, so an action-bar line on top of it is one
-        // more thing crossing the view every time someone eats while topped up.
+        // Returns false for two quite different reasons, and only one of them is a
+        // "Florafare stays out of this bite":
+        //
+        //   * every slot is taken — Florafare is still managing the food, the player
+        //     just cannot hold another buff, so the datapack's nutrition and the effect
+        //     suppression stand. Not treated as anything worth telling the player about
+        //     either: the overlay is on screen the whole time and already shows the
+        //     slots are full;
+        //   * a BUFF_APPLYING listener vetoed it — that is a mod asking Florafare to
+        //     keep its hands off, so tryAddBuff records it and the bite reverts to
+        //     vanilla in full.
         component.tryAddBuff(stack, data);
 
         florafare$logConsumption(player, itemId, data);

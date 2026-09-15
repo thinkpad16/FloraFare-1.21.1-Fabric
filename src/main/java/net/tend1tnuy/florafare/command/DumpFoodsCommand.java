@@ -16,6 +16,7 @@ import net.minecraft.registry.Registries;
 import net.minecraft.registry.RegistryWrapper;
 import net.minecraft.server.command.CommandManager;
 import net.minecraft.server.command.ServerCommandSource;
+import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.ClickEvent;
 import net.minecraft.text.HoverEvent;
 import net.minecraft.text.MutableText;
@@ -55,11 +56,11 @@ public class DumpFoodsCommand {
     }
 
     private static int executeDump(CommandContext<ServerCommandSource> context) {
-        List<Item> foodItems = new ArrayList<>();
         ServerCommandSource source = context.getSource();
         RecipeManager recipeManager = source.getServer().getRecipeManager();
         RegistryWrapper.WrapperLookup registries = source.getRegistryManager();
 
+        List<Item> foodItems = new ArrayList<>();
         for (Identifier id : Registries.ITEM.getIds()) {
             Item item = Registries.ITEM.get(id);
             if (item.getComponents().contains(DataComponentTypes.FOOD)) {
@@ -67,86 +68,162 @@ public class DumpFoodsCommand {
             }
         }
 
+        // One pass over the recipe list, not one pass per item.
+        //
+        // getRecipeInfo used to scan every recipe in the game to answer "how is this one
+        // item made", and it was called once per food AND again for every ingredient of
+        // every food as the tree was expanded. On a modpack with several thousand recipes
+        // and a few hundred foods that is tens of millions of Recipe#getResult calls, all
+        // on the server thread, all while the server is not ticking. Indexing the recipes
+        // by their result item once makes the whole command linear in the recipe count.
+        Map<Item, RecipeInfo> recipeIndex = indexRecipesByResult(recipeManager, registries);
+
+        StringBuilder out = new StringBuilder(1 << 16);
+        out.append("=================================================================================\n");
+        out.append("=== FLORAFARE FOODS RECIPE TREE DUMP ===\n");
+        out.append("Total edible items found: ").append(foodItems.size()).append('\n');
+        out.append("=================================================================================\n\n");
+
+        for (Item food : foodItems) {
+            out.append("ITEM ID: ").append(Registries.ITEM.getId(food)).append('\n');
+
+            RecipeInfo info = recipeIndex.get(food);
+            if (info == null) {
+                out.append("-> Direct Recipe: None (Raw item / drops / special condition)\n");
+            } else {
+                String typeStr  = info.typeId() != null ? info.typeId().toString() : "unknown";
+                String yieldStr = info.outputCount() > 1
+                        ? " (Yields " + info.outputCount() + ")" : "";
+                out.append("-> Direct Ingredients").append(yieldStr)
+                   .append(" [").append(typeStr).append("]: ")
+                   .append(formatItemList(info.ingredients())).append('\n');
+                out.append("-> Full Crafting Tree:\n");
+
+                Set<Item>    alreadyExpanded = new HashSet<>();
+                List<String> recipeHistory   = new ArrayList<>();
+                buildTree(food, recipeIndex, alreadyExpanded, recipeHistory, 3);
+
+                for (String line : recipeHistory) out.append(line).append('\n');
+            }
+            out.append("---------------------------------------------------------------------------------\n\n");
+        }
+
         File dumpFile = new File(
                 FabricLoader.getInstance().getGameDir().toFile(),
                 "florafare_edible_items_dump.txt");
 
-        try (FileWriter writer = new FileWriter(dumpFile)) {
-            writer.write("=================================================================================\n");
-            writer.write("=== FLORAFARE FOODS RECIPE TREE DUMP ===\n");
-            writer.write("Total edible items found: " + foodItems.size() + "\n");
-            writer.write("=================================================================================\n\n");
+        // Written off the server thread. Everything above needed the recipe manager and
+        // the registries, so it has to happen here; the file I/O does not, and on a big
+        // pack the dump is megabytes.
+        final String contents = out.toString();
+        final int    count    = foodItems.size();
+        // Auto-open only for the person actually sitting at this machine. On a LAN world
+        // any player with the permission level could previously pop a text editor onto
+        // the host's desktop, which is not something a chat command should be able to do.
+        final boolean openWhenDone = isLocalHost(source);
 
-            for (Item food : foodItems) {
-                Identifier foodId = Registries.ITEM.getId(food);
-                writer.write("ITEM ID: " + foodId.toString() + "\n");
-
-                RecipeInfo info = getRecipeInfo(food, recipeManager, registries);
-
-                if (info == null) {
-                    writer.write("-> Direct Recipe: None (Raw item / drops / special condition)\n");
-                } else {
-                    String typeStr  = info.typeId() != null ? info.typeId().toString() : "unknown";
-                    // Prefix the yield count when a recipe produces more than one item.
-                    String yieldStr = info.outputCount() > 1
-                            ? " (Yields " + info.outputCount() + ")" : "";
-                    writer.write("-> Direct Ingredients" + yieldStr
-                            + " [" + typeStr + "]: "
-                            + formatItemList(info.ingredients()) + "\n");
-                    writer.write("-> Full Crafting Tree:\n");
-
-                    Set<Item>    alreadyExpanded = new HashSet<>();
-                    List<String> recipeHistory   = new ArrayList<>();
-                    buildTree(food, recipeManager, registries,
-                            alreadyExpanded, recipeHistory, 3);
-
-                    for (String line : recipeHistory) writer.write(line + "\n");
-                }
-                writer.write("---------------------------------------------------------------------------------\n\n");
+        Util.getIoWorkerExecutor().execute(() -> {
+            try (FileWriter writer = new FileWriter(dumpFile)) {
+                writer.write(contents);
+            } catch (IOException e) {
+                Florafare.LOGGER.error("Failed to dump food recipe trees", e);
+                source.getServer().execute(() -> source.sendError(Text.translatable(
+                        "command.florafare.dumpfoods.error", String.valueOf(e.getMessage()))
+                        .formatted(Formatting.RED)));
+                return;
             }
 
-            // Open the file automatically on integrated (non-dedicated) servers.
-            if (!source.getServer().isDedicated()) {
-                Util.getOperatingSystem().open(dumpFile);
-            }
-
-            MutableText fileLink = Text.literal(dumpFile.getName())
-                    .formatted(Formatting.UNDERLINE, Formatting.AQUA)
-                    .styled(style -> style
-                            .withClickEvent(new ClickEvent(
-                                    ClickEvent.Action.COPY_TO_CLIPBOARD,
-                                    dumpFile.getAbsolutePath()))
-                            .withHoverEvent(new HoverEvent(
-                                    HoverEvent.Action.SHOW_TEXT,
-                                    Text.translatable("command.florafare.dumpfoods.hover.copy")))
-                    );
-
-            MutableText successMessage = Text.translatable(
-                            "command.florafare.dumpfoods.success", foodItems.size())
-                    .formatted(Formatting.GREEN)
-                    .append(fileLink);
-
-            source.sendFeedback(() -> successMessage, false);
+            if (openWhenDone) Util.getOperatingSystem().open(dumpFile);
             Florafare.LOGGER.info("Exported {} items with recipe tree to {}",
-                    foodItems.size(), dumpFile.getAbsolutePath());
+                    count, dumpFile.getAbsolutePath());
 
-        } catch (IOException e) {
-            source.sendError(Text.translatable(
-                    "command.florafare.dumpfoods.error", e.getMessage())
-                    .formatted(Formatting.RED));
-            Florafare.LOGGER.error("Failed to dump food recipe trees", e);
-        }
+            source.getServer().execute(() -> {
+                MutableText fileLink = Text.literal(dumpFile.getName())
+                        .formatted(Formatting.UNDERLINE, Formatting.AQUA)
+                        .styled(style -> style
+                                .withClickEvent(new ClickEvent(
+                                        ClickEvent.Action.COPY_TO_CLIPBOARD,
+                                        dumpFile.getAbsolutePath()))
+                                .withHoverEvent(new HoverEvent(
+                                        HoverEvent.Action.SHOW_TEXT,
+                                        Text.translatable("command.florafare.dumpfoods.hover.copy")))
+                        );
+                source.sendFeedback(() -> Text.translatable(
+                                "command.florafare.dumpfoods.success", count)
+                        .formatted(Formatting.GREEN)
+                        .append(fileLink), false);
+            });
+        });
 
         return 1;
     }
 
-    private static void buildTree(Item item, RecipeManager recipeManager,
-                                  RegistryWrapper.WrapperLookup registries,
-                                  Set<Item> alreadyExpanded, List<String> history, int depth) {
-        if (alreadyExpanded.contains(item)) return;
-        alreadyExpanded.add(item);
+    /**
+     * Whether the command came from the player running the integrated server — i.e. the
+     * one person for whom opening a file in their desktop's default application is a
+     * convenience rather than a surprise.
+     */
+    private static boolean isLocalHost(ServerCommandSource source) {
+        if (source.getServer().isDedicated()) return false;
+        ServerPlayerEntity player = source.getPlayer();
+        // A console/command-block source on an integrated server is the host's own game.
+        return player == null || source.getServer().isHost(player.getGameProfile());
+    }
 
-        RecipeInfo info = getRecipeInfo(item, recipeManager, registries);
+    /**
+     * Best recipe per result item, resolved in a single pass over the recipe list.
+     * "Best" is the same ranking {@link #scoreRecipeType} always applied.
+     */
+    private static Map<Item, RecipeInfo> indexRecipesByResult(
+            RecipeManager recipeManager, RegistryWrapper.WrapperLookup registries) {
+
+        Map<Item, RecipeInfo> best      = new HashMap<>();
+        Map<Item, Integer>    bestScore = new HashMap<>();
+
+        for (RecipeEntry<?> entry : recipeManager.values()) {
+            Recipe<?> recipe = entry.value();
+            try {
+                ItemStack result = recipe.getResult(registries);
+                if (result.isEmpty()) continue;
+                Item resultItem = result.getItem();
+
+                Map<Item, Integer> ingredientCounts = new LinkedHashMap<>();
+                for (Ingredient ingredient : recipe.getIngredients()) {
+                    if (ingredient.isEmpty()) continue;
+                    ItemStack[] matchingStacks = ingredient.getMatchingStacks();
+                    if (matchingStacks.length == 0) continue;
+                    Item ingItem = matchingStacks[0].getItem();
+                    if (ingItem == Items.AIR) continue;
+                    ingredientCounts.merge(ingItem, 1, Integer::sum);
+                }
+                if (ingredientCounts.isEmpty()) continue;
+
+                Identifier typeId = Registries.RECIPE_TYPE.getId(recipe.getType());
+                int score = scoreRecipeType(typeId == null ? "" : typeId.getPath());
+
+                // Penalize recipes that require a tool (damageable item) as an ingredient.
+                for (Item ing : ingredientCounts.keySet()) {
+                    if (ing.getComponents().contains(DataComponentTypes.MAX_DAMAGE)) {
+                        score -= 200;
+                        break;
+                    }
+                }
+
+                if (score > bestScore.getOrDefault(resultItem, -999)) {
+                    bestScore.put(resultItem, score);
+                    best.put(resultItem,
+                            new RecipeInfo(ingredientCounts, typeId, result.getCount()));
+                }
+            } catch (Exception ignored) {}
+        }
+        return best;
+    }
+
+    private static void buildTree(Item item, Map<Item, RecipeInfo> recipeIndex,
+                                  Set<Item> alreadyExpanded, List<String> history, int depth) {
+        if (!alreadyExpanded.add(item)) return;
+
+        RecipeInfo info = recipeIndex.get(item);
         if (info == null) return;
 
         StringBuilder indent = new StringBuilder();
@@ -161,59 +238,8 @@ public class DumpFoodsCommand {
                 + typeStr + " requires: " + formatItemList(info.ingredients()));
 
         for (Item subItem : info.ingredients().keySet()) {
-            buildTree(subItem, recipeManager, registries, alreadyExpanded, history, depth + 4);
+            buildTree(subItem, recipeIndex, alreadyExpanded, history, depth + 4);
         }
-    }
-
-    private static RecipeInfo getRecipeInfo(Item item, RecipeManager recipeManager,
-                                            RegistryWrapper.WrapperLookup registries) {
-        RecipeInfo bestInfo  = null;
-        int        bestScore = -999;
-
-        for (RecipeEntry<?> entry : recipeManager.values()) {
-            Recipe<?> recipe = entry.value();
-            try {
-                ItemStack result = recipe.getResult(registries);
-                if (!result.isOf(item)) continue;
-
-                // Number of items produced by this recipe.
-                int outputCount = result.getCount();
-
-                Map<Item, Integer> ingredientCounts = new LinkedHashMap<>();
-                for (Ingredient ingredient : recipe.getIngredients()) {
-                    if (!ingredient.isEmpty()) {
-                        ItemStack[] matchingStacks = ingredient.getMatchingStacks();
-                        if (matchingStacks.length > 0) {
-                            Item ingItem = matchingStacks[0].getItem();
-                            if (ingItem != Items.AIR) {
-                                ingredientCounts.put(ingItem,
-                                        ingredientCounts.getOrDefault(ingItem, 0) + 1);
-                            }
-                        }
-                    }
-                }
-
-                if (!ingredientCounts.isEmpty()) {
-                    Identifier typeId = Registries.RECIPE_TYPE.getId(recipe.getType());
-                    int        score  = scoreRecipeType(typeId.getPath());
-
-                    // Penalize recipes that require a tool (damageable item) as an ingredient.
-                    for (Item ing : ingredientCounts.keySet()) {
-                        if (ing.getComponents().contains(DataComponentTypes.MAX_DAMAGE)) {
-                            score -= 200;
-                            break;
-                        }
-                    }
-
-                    if (score > bestScore) {
-                        bestScore = score;
-                        bestInfo  = new RecipeInfo(
-                                new LinkedHashMap<>(ingredientCounts), typeId, outputCount);
-                    }
-                }
-            } catch (Exception ignored) {}
-        }
-        return bestInfo;
     }
 
     private static int scoreRecipeType(String type) {

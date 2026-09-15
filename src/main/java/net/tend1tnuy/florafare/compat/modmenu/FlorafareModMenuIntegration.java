@@ -209,7 +209,7 @@ public class FlorafareModMenuIntegration implements ModMenuApi {
         HudConfig.saveToConfig();
 
         if (!FlorafareConfig.isServerOverridden()) {
-            PlayerFoodComponent.MAX_BUFF_SLOTS = FlorafareConfig.maxBuffSlots;
+            PlayerFoodComponent.setMaxBuffSlots(FlorafareConfig.maxBuffSlots);
             FoodBuffManager.AUTO_GEN_DURATION_MULT = FlorafareConfig.autoGenDurationMultiplier;
             FoodBuffManager.AUTO_GEN_HEALTH_MULT   = FlorafareConfig.autoGenHealthMultiplier;
             // Auto-generated buffs are memoized, so the ones built with the old

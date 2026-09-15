@@ -11,6 +11,7 @@ import net.tend1tnuy.florafare.food.FoodBuffData;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
 import net.tend1tnuy.florafare.food.FoodSynergyData;
 import net.tend1tnuy.florafare.food.FoodSynergyManager;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
@@ -33,7 +34,7 @@ public final class FlorafareAPI {
      * @return The buff data, or null if no buff is configured.
      */
     @Nullable
-    public static FoodBuffData getBuffData(ItemStack stack) {
+    public static FoodBuffData getBuffData(@NotNull ItemStack stack) {
         return FoodBuffManager.getConfig(stack);
     }
 
@@ -43,7 +44,7 @@ public final class FlorafareAPI {
      * @param stack The item to check.
      * @return True if the item contains a custom command-based buff identifier.
      */
-    public static boolean hasCustomCommandBuff(ItemStack stack) {
+    public static boolean hasCustomCommandBuff(@NotNull ItemStack stack) {
         NbtComponent customData = stack.get(DataComponentTypes.CUSTOM_DATA);
         return customData != null && customData.copyNbt().contains("FlorafareBuffId");
     }
@@ -51,14 +52,20 @@ public final class FlorafareAPI {
     /**
      * Applies a food buff to the player based on the provided configuration.
      *
+     * <p>Server-side only; a call on the client is a no-op. Can fail for two reasons that
+     * are not errors: every buff slot is taken, or a listener on
+     * {@link FlorafareEvents#BUFF_APPLYING} vetoed it.
+     *
      * @param player The player receiving the buff.
-     * @param stack  The consumed item.
-     * @param data   The buff configuration data.
+     * @param stack  The consumed item, used for the buff's identity and HUD icon.
+     * @param data   The buff configuration data; null is accepted and does nothing.
+     * @return true if the buff is now active on the player
      */
-    public static void applyBuffToPlayer(PlayerEntity player, ItemStack stack, FoodBuffData data) {
-        if (data != null && !player.getWorld().isClient()) {
-            ((IFoodComponentProvider) player).florafare$getFoodComponent().tryAddBuff(stack, data);
-        }
+    public static boolean applyBuffToPlayer(@NotNull PlayerEntity player, @NotNull ItemStack stack,
+                                            @Nullable FoodBuffData data) {
+        if (data == null || player.getWorld().isClient()) return false;
+        return ((IFoodComponentProvider) player).florafare$getFoodComponent()
+                .tryAddBuff(stack, data);
     }
 
     /**
@@ -75,17 +82,17 @@ public final class FlorafareAPI {
      *
      * @param itemId The item id to exclude, e.g. {@code "modid:custom_stew"}.
      */
-    public static void excludeFood(String itemId) {
+    public static void excludeFood(@Nullable String itemId) {
         FoodBuffManager.excludeItem(itemId);
     }
 
     /** Reverses a previous {@link #excludeFood(String)} call. */
-    public static void includeFood(String itemId) {
+    public static void includeFood(@Nullable String itemId) {
         FoodBuffManager.includeItem(itemId);
     }
 
     /** Whether Florafare has been told to fully ignore this stack's item. */
-    public static boolean isFoodExcluded(ItemStack stack) {
+    public static boolean isFoodExcluded(@NotNull ItemStack stack) {
         return FoodBuffManager.isExcluded(stack);
     }
 
@@ -100,7 +107,7 @@ public final class FlorafareAPI {
      * connect. Already-connected clients only see the change after the next
      * {@code /reload} or rejoin, same as a datapack edit would require.
      */
-    public static void registerFoodBuff(String target, FoodBuffData data) {
+    public static void registerFoodBuff(@NotNull String target, @NotNull FoodBuffData data) {
         String normalized = FoodBuffManager.normalizeTarget(target);
         FoodBuffManager.putApiConfig(normalized, data);
     }
@@ -109,7 +116,7 @@ public final class FlorafareAPI {
      * Registers a food synergy in code instead of via a datapack JSON file.
      * See {@link #registerFoodBuff(String, FoodBuffData)} for the same timing caveat.
      */
-    public static void registerSynergy(FoodSynergyData data) {
+    public static void registerSynergy(@NotNull FoodSynergyData data) {
         FoodSynergyManager.putApiSynergy(data);
     }
 
@@ -122,22 +129,26 @@ public final class FlorafareAPI {
      * or from anywhere but the server thread, could take a
      * {@link java.util.ConcurrentModificationException} through no fault of its own.
      */
-    public static List<ActiveFoodBuff> getActiveBuffs(PlayerEntity player) {
+    @NotNull
+    public static List<ActiveFoodBuff> getActiveBuffs(@NotNull PlayerEntity player) {
         return List.copyOf(component(player).getActiveBuffs());
     }
 
     /** The synergies currently active on this player. Snapshot; see {@link #getActiveBuffs}. */
-    public static List<ActiveFoodBuff> getActiveSynergies(PlayerEntity player) {
+    @NotNull
+    public static List<ActiveFoodBuff> getActiveSynergies(@NotNull PlayerEntity player) {
         return List.copyOf(component(player).getActiveSynergies());
     }
 
     /** Item ids this player has discovered (eaten at least once). Snapshot. */
-    public static Set<String> getDiscoveredFoods(PlayerEntity player) {
+    @NotNull
+    public static Set<String> getDiscoveredFoods(@NotNull PlayerEntity player) {
         return Set.copyOf(component(player).getDiscoveredFoods());
     }
 
     /** Synergy ids this player has discovered (activated at least once). Snapshot. */
-    public static Set<String> getDiscoveredSynergies(PlayerEntity player) {
+    @NotNull
+    public static Set<String> getDiscoveredSynergies(@NotNull PlayerEntity player) {
         return Set.copyOf(component(player).getDiscoveredSynergies());
     }
 
@@ -147,12 +158,12 @@ public final class FlorafareAPI {
      *
      * @return true if such a buff was active and has been removed
      */
-    public static boolean removeBuff(PlayerEntity player, String targetOrItemId) {
+    public static boolean removeBuff(@NotNull PlayerEntity player, @Nullable String targetOrItemId) {
         return component(player).removeBuff(targetOrItemId);
     }
 
     /** Removes every active buff and synergy from the player, same as {@code /florafare clear}. */
-    public static void clearBuffs(PlayerEntity player) {
+    public static void clearBuffs(@NotNull PlayerEntity player) {
         component(player).clearAllBuffs();
     }
 
@@ -162,11 +173,11 @@ public final class FlorafareAPI {
      *
      * @return true if this item was newly discovered, false if it already was.
      */
-    public static boolean unlockFood(PlayerEntity player, String itemId) {
+    public static boolean unlockFood(@NotNull PlayerEntity player, @NotNull String itemId) {
         return component(player).unlockFood(itemId);
     }
 
-    private static PlayerFoodComponent component(PlayerEntity player) {
+    private static PlayerFoodComponent component(@NotNull PlayerEntity player) {
         return ((IFoodComponentProvider) player).florafare$getFoodComponent();
     }
 }

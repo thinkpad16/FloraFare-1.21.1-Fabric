@@ -70,7 +70,7 @@ public class HudPlacementScreen extends Screen {
     // -------------------------------------------------------------------------
 
     private int slotCount() {
-        return Math.max(1, PlayerFoodComponent.MAX_BUFF_SLOTS);
+        return PlayerFoodComponent.getMaxBuffSlots();
     }
 
     private boolean isCompact() {

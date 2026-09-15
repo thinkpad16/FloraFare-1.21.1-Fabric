@@ -76,14 +76,10 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
                 // Global auto-generation settings file.
                 if (id.getPath().equals(CONFIG_GEN_KEY)) {
                     JsonObject json = jsonElement.getAsJsonObject();
-                    if (json.has("duration_multiplier")) {
-                        FoodBuffManager.AUTO_GEN_DURATION_MULT =
-                                json.get("duration_multiplier").getAsInt();
-                    }
-                    if (json.has("health_multiplier")) {
-                        FoodBuffManager.AUTO_GEN_HEALTH_MULT =
-                                json.get("health_multiplier").getAsDouble();
-                    }
+                    FoodBuffManager.AUTO_GEN_DURATION_MULT = JsonFields.getInt(
+                            json, "duration_multiplier", FoodBuffManager.AUTO_GEN_DURATION_MULT);
+                    FoodBuffManager.AUTO_GEN_HEALTH_MULT = JsonFields.getDouble(
+                            json, "health_multiplier", FoodBuffManager.AUTO_GEN_HEALTH_MULT);
                     Florafare.LOGGER.info("Loaded global auto-generation config!");
                     return;
                 }
@@ -92,24 +88,29 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
                 if (jsonElement.isJsonArray()) {
                     JsonArray array = jsonElement.getAsJsonArray();
                     for (JsonElement element : array) {
-                        parseAndRegister(element.getAsJsonObject(), null, id, 0, false);
+                        parseEntry(element, null, id, 0, false);
                     }
                 } else if (jsonElement.isJsonObject()) {
                     JsonObject obj = jsonElement.getAsJsonObject();
 
-                    int filePriority = obj.has(KEY_PRIORITY)
-                            ? obj.get(KEY_PRIORITY).getAsInt() : 0;
-                    boolean fileAlwaysEdible = obj.has(KEY_ALWAYS_EDIBLE)
-                            && obj.get(KEY_ALWAYS_EDIBLE).getAsBoolean();
+                    // Through JsonFields like every other read. These two are the
+                    // file-level defaults, so a bare getAsInt/getAsBoolean on a
+                    // misspelled value ("priority": "high") threw out to the catch
+                    // below and discarded the whole file — which is the exact failure
+                    // JsonFields exists to stop, missed here because these are read
+                    // before the per-entry parsing starts.
+                    int filePriority = JsonFields.getInt(obj, KEY_PRIORITY, 0);
+                    boolean fileAlwaysEdible =
+                            JsonFields.getBoolean(obj, KEY_ALWAYS_EDIBLE, false);
 
                     if (obj.has(KEY_ENTRIES) && obj.get(KEY_ENTRIES).isJsonArray()) {
                         // Standard multi-entry format.
                         for (JsonElement element : obj.getAsJsonArray(KEY_ENTRIES)) {
-                            parseAndRegister(element.getAsJsonObject(), null, id, filePriority, fileAlwaysEdible);
+                            parseEntry(element, null, id, filePriority, fileAlwaysEdible);
                         }
                     } else if (obj.has(KEY_ID)) {
                         // Single-entry object at the root.
-                        parseAndRegister(obj, id.toString().replace("/", ":"), id, filePriority, fileAlwaysEdible);
+                        parseEntry(obj, defaultTargetFor(id), id, filePriority, fileAlwaysEdible);
                     }
                 }
 
@@ -127,6 +128,49 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
         }
     }
 
+    /**
+     * The implicit target for a file that holds a single entry with no {@code id}.
+     *
+     * <p>Only the file NAME can stand in for an item id, and only its last path segment:
+     * a resource id like {@code mypack:meats/beef} used to be turned into a target by
+     * replacing every "/" with ":", which produced {@code mypack:meats:beef} — two colons,
+     * not a valid identifier, and a buff that could never match anything. The namespace
+     * comes from the file's own, so {@code mypack:meats/beef.json} now means
+     * {@code mypack:beef}, which is the item the author was plainly naming.
+     */
+    static String defaultTargetFor(Identifier fileId) {
+        String path = fileId.getPath();
+        int lastSlash = path.lastIndexOf('/');
+        String name = lastSlash >= 0 ? path.substring(lastSlash + 1) : path;
+        return fileId.getNamespace() + ":" + name;
+    }
+
+    /**
+     * Parses one entry, keeping its failure to itself.
+     *
+     * <p>The only {@code catch} used to be around the whole file, so one malformed entry
+     * took every entry after it down with it — silently, since the log line named the
+     * file and not the entry. A pack author saw "Failed to parse food buff datapack file"
+     * and a category of foods that simply did nothing.
+     */
+    private void parseEntry(JsonElement element, String defaultTargetFallback,
+                            Identifier fileId, int filePriority, boolean fileAlwaysEdible) {
+        if (element == null || !element.isJsonObject()) {
+            Florafare.LOGGER.error(
+                    "Error in file {}: an entry is not a JSON object! Entry skipped.", fileId);
+            return;
+        }
+        JsonObject json = element.getAsJsonObject();
+        try {
+            parseAndRegister(json, defaultTargetFallback, fileId, filePriority, fileAlwaysEdible);
+        } catch (Exception e) {
+            Florafare.LOGGER.error(
+                    "Error in file {}: entry '{}' could not be parsed and was skipped. "
+                            + "The rest of the file is unaffected.",
+                    fileId, JsonFields.getString(json, KEY_ID, "<no id>"), e);
+        }
+    }
+
     private void parseAndRegister(JsonObject json, String defaultTargetFallback,
                                   Identifier fileId, int filePriority, boolean fileAlwaysEdible) {
         if (!json.has(KEY_ID) && defaultTargetFallback == null) {
@@ -135,8 +179,12 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
             return;
         }
 
-        String rawTarget = json.has(KEY_ID)
-                ? json.get(KEY_ID).getAsString() : defaultTargetFallback;
+        String rawTarget = JsonFields.getString(json, KEY_ID, defaultTargetFallback);
+        if (rawTarget == null) {
+            Florafare.LOGGER.error(
+                    "Error in file {}: 'id' is present but not a string! Buff skipped.", fileId);
+            return;
+        }
         String target = FoodBuffManager.normalizeTarget(rawTarget);
 
         // Validate plain item-id targets.
@@ -162,50 +210,61 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
             }
         }
 
-        int    duration    = json.has(KEY_DURATION)    ? json.get(KEY_DURATION).getAsInt()    : 6000;
-        int    nutrition   = json.has(KEY_NUTRITION)   ? json.get(KEY_NUTRITION).getAsInt()   : 0;
-        float  saturation  = json.has(KEY_SATURATION)  ? json.get(KEY_SATURATION).getAsFloat() : 0.0f;
-        double healthBonus = json.has(KEY_HEALTH_BONUS) ? json.get(KEY_HEALTH_BONUS).getAsDouble() : 0.0;
-        int    priority    = json.has(KEY_PRIORITY)    ? json.get(KEY_PRIORITY).getAsInt()    : filePriority;
+        int    duration    = JsonFields.getInt(json, KEY_DURATION, 6000);
+        int    nutrition   = JsonFields.getInt(json, KEY_NUTRITION, 0);
+        float  saturation  = JsonFields.getFloat(json, KEY_SATURATION, 0.0f);
+        double healthBonus = JsonFields.getDouble(json, KEY_HEALTH_BONUS, 0.0);
+        int    priority    = JsonFields.getInt(json, KEY_PRIORITY, filePriority);
 
-        boolean alwaysEdible = json.has(KEY_ALWAYS_EDIBLE)
-                ? json.get(KEY_ALWAYS_EDIBLE).getAsBoolean() : fileAlwaysEdible;
+        boolean alwaysEdible = JsonFields.getBoolean(json, KEY_ALWAYS_EDIBLE, fileAlwaysEdible);
 
         List<FoodBuffData.EffectData> effects = new ArrayList<>();
-        if (json.has(KEY_EFFECTS)) {
+        if (JsonFields.hasArray(json, KEY_EFFECTS)) {
             for (JsonElement e : json.getAsJsonArray(KEY_EFFECTS)) {
+                if (!e.isJsonObject()) continue;
                 JsonObject effObj = e.getAsJsonObject();
-                Identifier effId  = Identifier.tryParse(effObj.get(KEY_ID).getAsString());
-                if (effId != null
-                        && net.minecraft.registry.Registries.STATUS_EFFECT.containsId(effId)) {
-                    effects.add(new FoodBuffData.EffectData(
-                            effId,
-                            effObj.get(KEY_DURATION).getAsInt(),
-                            effObj.has(KEY_AMPLIFIER) ? effObj.get(KEY_AMPLIFIER).getAsInt() : 0));
-                } else {
+                String     rawId  = JsonFields.getString(effObj, KEY_ID);
+                Identifier effId  = rawId == null ? null : Identifier.tryParse(rawId);
+                if (effId == null
+                        || !net.minecraft.registry.Registries.STATUS_EFFECT.containsId(effId)) {
                     Florafare.LOGGER.error(
-                            "Error in file {}: Effect '{}' does not exist! Effect skipped.",
-                            fileId, effObj.get(KEY_ID).getAsString());
+                            "Error in file {}: entry '{}' lists effect '{}', which does not exist! "
+                                    + "Effect skipped.", fileId, target, rawId);
+                    continue;
                 }
+                // Defaults to the buff's own duration. An effect is granted alongside the
+                // buff that carries it, so "for as long as the buff" is the only sensible
+                // reading of an omitted duration — and it beats throwing, which used to
+                // discard every remaining entry in the file.
+                effects.add(new FoodBuffData.EffectData(
+                        effId,
+                        JsonFields.getInt(effObj, KEY_DURATION, duration),
+                        JsonFields.getInt(effObj, KEY_AMPLIFIER, 0)));
             }
         }
 
         List<FoodBuffData.AttributeData> attributes = new ArrayList<>();
-        if (json.has(KEY_ATTRIBUTES)) {
+        if (JsonFields.hasArray(json, KEY_ATTRIBUTES)) {
             for (JsonElement e : json.getAsJsonArray(KEY_ATTRIBUTES)) {
+                if (!e.isJsonObject()) continue;
                 JsonObject attrObj = e.getAsJsonObject();
-                Identifier attrId  = Identifier.tryParse(attrObj.get(KEY_ATTRIBUTE).getAsString());
-                if (attrId != null
-                        && net.minecraft.registry.Registries.ATTRIBUTE.containsId(attrId)) {
-                    attributes.add(new FoodBuffData.AttributeData(
-                            attrId,
-                            attrObj.get(KEY_AMOUNT).getAsDouble(),
-                            attrObj.get(KEY_OPERATION).getAsString()));
-                } else {
+                String     rawId   = JsonFields.getString(attrObj, KEY_ATTRIBUTE);
+                Identifier attrId  = rawId == null ? null : Identifier.tryParse(rawId);
+                if (attrId == null
+                        || !net.minecraft.registry.Registries.ATTRIBUTE.containsId(attrId)) {
                     Florafare.LOGGER.error(
-                            "Error in file {}: Attribute '{}' does not exist! Attribute skipped.",
-                            fileId, attrObj.get(KEY_ATTRIBUTE).getAsString());
+                            "Error in file {}: entry '{}' lists attribute '{}', which does not "
+                                    + "exist! Attribute skipped.", fileId, target, rawId);
+                    continue;
                 }
+                // "add_value" is both the commonest operation and the one mapOperation
+                // already falls back to for anything it does not recognise, so defaulting
+                // to it here changes no behaviour — it only stops the omission throwing.
+                String operation = JsonFields.getString(attrObj, KEY_OPERATION, "add_value");
+                attributes.add(new FoodBuffData.AttributeData(
+                        attrId,
+                        JsonFields.getDouble(attrObj, KEY_AMOUNT, 0.0),
+                        operation));
             }
         }
 
