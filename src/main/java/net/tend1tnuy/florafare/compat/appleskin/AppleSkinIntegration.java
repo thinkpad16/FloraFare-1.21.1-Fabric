@@ -5,10 +5,14 @@ import net.minecraft.item.ItemStack;
 import net.tend1tnuy.florafare.food.FoodBuffData;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
 
+import net.tend1tnuy.florafare.client.BuffDescription;
+
 import java.util.IdentityHashMap;
 import java.util.Map;
 import squeek.appleskin.api.AppleSkinApi;
 import squeek.appleskin.api.event.FoodValuesEvent;
+import squeek.appleskin.api.event.HUDOverlayEvent;
+import squeek.appleskin.api.event.TooltipOverlayEvent;
 
 /**
  * AppleSkin compatibility.
@@ -19,13 +23,25 @@ import squeek.appleskin.api.event.FoodValuesEvent;
  * would confidently draw the vanilla ones — the drumstick preview and the tooltip would
  * both be wrong for every managed food on the server.
  *
- * <p>What it deliberately no longer does is hide AppleSkin. It used to cancel the tooltip
- * overlay and report zeroes for any food the player had not eaten yet, to keep the
- * journal's discovery mechanic airtight. On a server with AppleSkin installed that read
- * as AppleSkin being broken: its display simply vanished for most items in the inventory,
- * with nothing to explain why. The mystery Florafare means to preserve is what BUFF a
- * dish grants — that is still gated, in the buff block on the tooltip — not how filling
- * it is, which AppleSkin is installed precisely to show.
+ * <p>The second job is to keep AppleSkin inside the discovery gate. A food's nutrition
+ * and saturation are part of what the journal asks the player to find out by eating it,
+ * so AppleSkin drawing them on an undiscovered dish handed over exactly what Florafare's
+ * own tooltip was busy withholding two lines above — the locked placeholder said
+ * "unrecorded", and the drumstick row underneath printed the numbers anyway.
+ *
+ * <p>So the three AppleSkin surfaces that describe <em>one particular food</em> are
+ * cancelled until that food has been eaten once: the tooltip row, the hunger-bar preview
+ * and the estimated-health preview. Cancelling the render rather than reporting zeroes
+ * is deliberate — a zero is a lie that other consumers of {@code FoodValuesEvent} would
+ * go on to compute with, whereas an absent row is merely absent, and the line directly
+ * above it on the same tooltip explains why.
+ *
+ * <p>The player's own saturation and exhaustion overlays are left alone. They describe
+ * the player, not a dish, so there is nothing about them to discover — and they are a
+ * large part of why AppleSkin is installed at all.
+ *
+ * <p>Foods Florafare does not manage are never touched: an excluded item, or one no
+ * config resolves to, keeps whatever AppleSkin worked out for it.
  *
  * <p>No conflict with Florafare's own tooltip block, either: AppleSkin appends its
  * component through {@code ItemTooltipCallback} and positions it relative to itself,
@@ -37,6 +53,42 @@ public class AppleSkinIntegration implements AppleSkinApi {
     @Override
     public void registerEvents() {
         FoodValuesEvent.EVENT.register(AppleSkinIntegration::onFoodValues);
+
+        // Registered here and not in FlorafareClient: AppleSkin fires this entrypoint
+        // from its own ClientModInitializer, so these three client-only event classes
+        // are never touched on a dedicated server.
+        TooltipOverlayEvent.Pre.EVENT.register(AppleSkinIntegration::onTooltipOverlay);
+        HUDOverlayEvent.HungerRestored.EVENT.register(AppleSkinIntegration::onHungerRestored);
+        HUDOverlayEvent.HealthRestored.EVENT.register(AppleSkinIntegration::onHealthRestored);
+    }
+
+    /**
+     * Whether AppleSkin should say nothing about this stack: Florafare manages it, and
+     * this player has not eaten it yet.
+     *
+     * <p>Answers false for anything Florafare does not manage, so the gate can never
+     * blank out a food that belongs to another mod.
+     */
+    private static boolean isUndiscoveredManagedFood(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) return false;
+        FoodBuffData data = FoodBuffManager.getConfig(stack);
+        if (data == null) return false;
+        return !BuffDescription.isDiscovered(stack, data);
+    }
+
+    /** Hides the drumstick/saturation row on the tooltip of an undiscovered dish. */
+    private static void onTooltipOverlay(TooltipOverlayEvent.Pre event) {
+        if (isUndiscoveredManagedFood(event.itemStack)) event.isCanceled = true;
+    }
+
+    /** Hides the hunger-bar preview drawn while holding an undiscovered dish. */
+    private static void onHungerRestored(HUDOverlayEvent.HungerRestored event) {
+        if (isUndiscoveredManagedFood(event.itemStack)) event.isCanceled = true;
+    }
+
+    /** Hides the estimated-health preview for an undiscovered dish. */
+    private static void onHealthRestored(HUDOverlayEvent.HealthRestored event) {
+        if (isUndiscoveredManagedFood(event.itemStack)) event.isCanceled = true;
     }
 
     /**
