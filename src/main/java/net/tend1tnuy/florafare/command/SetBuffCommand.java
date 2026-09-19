@@ -6,10 +6,13 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import com.mojang.brigadier.suggestion.Suggestions;
+import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import net.minecraft.command.CommandRegistryAccess;
 import net.minecraft.command.CommandSource;
 import net.minecraft.command.argument.EntityArgumentType;
 import net.minecraft.command.argument.IdentifierArgumentType;
+import net.minecraft.command.argument.ItemStackArgumentType;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.NbtComponent;
 import net.minecraft.item.Item;
@@ -38,9 +41,15 @@ import net.tend1tnuy.florafare.food.FoodSynergyManager;
 import net.tend1tnuy.registry.ItemRegistry;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 /**
  * Handles the registration and execution of all /florafare administration commands.
@@ -113,7 +122,12 @@ public class SetBuffCommand {
                                 // Grant a buff from a datapack config to a player.
                                 .then(CommandManager.literal("give")
                                         .then(CommandManager.argument("player", EntityArgumentType.player())
-                                                .then(CommandManager.argument("targetId", StringArgumentType.string())
+                                                // Greedy, like the journal arguments below, so a
+                                                // "mod:item" id can be typed — and click-completed —
+                                                // without quotes. Quoted input still works, see unquote().
+                                                .then(CommandManager.argument("targetId", StringArgumentType.greedyString())
+                                                        .suggests((ctx, builder) ->
+                                                                suggestTargets(configuredTargets(), builder))
                                                         .executes(SetBuffCommand::executeBuffGive)
                                                 )
                                         )
@@ -121,18 +135,103 @@ public class SetBuffCommand {
                                 // Drop one named buff.
                                 .then(CommandManager.literal("remove")
                                         .then(CommandManager.argument("player", EntityArgumentType.player())
-                                                .then(CommandManager.argument("targetId", StringArgumentType.string())
+                                                .then(CommandManager.argument("targetId", StringArgumentType.greedyString())
+                                                        // Only what that player is actually carrying can be
+                                                        // removed, so that is the list worth offering.
+                                                        .suggests((ctx, builder) ->
+                                                                suggestTargets(activeBuffTargets(ctx), builder))
                                                         .executes(SetBuffCommand::executeBuffRemove)
                                                 )
                                         )
                                 )
                         )
 
-                        // Branch: /florafare journal give (Replaces a lost Food Journal)
+                        // Branch: /florafare journal … (Journal item, and the discovery
+                        // list behind it: what the player has "tasted" and can read.)
+                        //
+                        // Discovery is normally only ever written by eating, which makes
+                        // testing anything downstream of it — a journal page, a tooltip
+                        // that unlocks, a synergy hint — a matter of finding and eating
+                        // the right item. These put the same list under direct control.
                         .then(CommandManager.literal("journal")
                                 .then(CommandManager.literal("give")
                                         .then(CommandManager.argument("player", EntityArgumentType.player())
                                                 .executes(SetBuffCommand::executeJournalGive)
+                                        )
+                                )
+
+                                // /florafare journal list <player> [filter]
+                                .then(CommandManager.literal("list")
+                                        .then(CommandManager.argument("player", EntityArgumentType.player())
+                                                .executes(context -> executeJournalList(context, null))
+                                                .then(CommandManager.argument("filter", StringArgumentType.greedyString())
+                                                        .executes(context -> executeJournalList(context,
+                                                                unquote(StringArgumentType.getString(context, "filter"))))
+                                                )
+                                        )
+                                )
+
+                                // /florafare journal unlock <player> all|<food>
+                                //
+                                // "all" is a literal child, and Brigadier matches literals
+                                // ahead of arguments, so it wins over the string argument
+                                // below without either having to know about the other.
+                                .then(CommandManager.literal("unlock")
+                                        .then(CommandManager.argument("player", EntityArgumentType.player())
+                                                .then(CommandManager.literal("all")
+                                                        .executes(SetBuffCommand::executeJournalUnlockAll)
+                                                )
+                                                .then(CommandManager.argument("target", StringArgumentType.greedyString())
+                                                        .suggests((ctx, builder) ->
+                                                                suggestTargets(journalTargets(), builder))
+                                                        .executes(SetBuffCommand::executeJournalUnlock)
+                                                )
+                                        )
+                                )
+
+                                // /florafare journal lock <player> all|<food>
+                                .then(CommandManager.literal("lock")
+                                        .then(CommandManager.argument("player", EntityArgumentType.player())
+                                                .then(CommandManager.literal("all")
+                                                        .executes(SetBuffCommand::executeJournalLockAll)
+                                                )
+                                                .then(CommandManager.argument("target", StringArgumentType.greedyString())
+                                                        // Suggested from what this player actually knows — the
+                                                        // only list that can be locked, and the short one.
+                                                        .suggests((ctx, builder) -> suggestTargets(
+                                                                discoveredOf(ctx, PlayerFoodComponent::getDiscoveredFoods),
+                                                                builder))
+                                                        .executes(SetBuffCommand::executeJournalLock)
+                                                )
+                                        )
+                                )
+
+                                // /florafare journal synergy unlock|lock <player> all|<synergy>
+                                .then(CommandManager.literal("synergy")
+                                        .then(CommandManager.literal("unlock")
+                                                .then(CommandManager.argument("player", EntityArgumentType.player())
+                                                        .then(CommandManager.literal("all")
+                                                                .executes(SetBuffCommand::executeSynergyUnlockAll)
+                                                        )
+                                                        .then(CommandManager.argument("target", StringArgumentType.greedyString())
+                                                                .suggests((ctx, builder) ->
+                                                                        suggestTargets(synergyIds(), builder))
+                                                                .executes(SetBuffCommand::executeSynergyUnlock)
+                                                        )
+                                                )
+                                        )
+                                        .then(CommandManager.literal("lock")
+                                                .then(CommandManager.argument("player", EntityArgumentType.player())
+                                                        .then(CommandManager.literal("all")
+                                                                .executes(SetBuffCommand::executeSynergyLockAll)
+                                                        )
+                                                        .then(CommandManager.argument("target", StringArgumentType.greedyString())
+                                                                .suggests((ctx, builder) -> suggestTargets(
+                                                                        discoveredOf(ctx, PlayerFoodComponent::getDiscoveredSynergies),
+                                                                        builder))
+                                                                .executes(SetBuffCommand::executeSynergyLock)
+                                                        )
+                                                )
                                         )
                                 )
                         )
@@ -148,6 +247,20 @@ public class SetBuffCommand {
                         .then(CommandManager.literal("validate")
                                 .executes(SetBuffCommand::executeValidate)
                         )
+
+                        // Branch: /florafare explain [item] (Why does THIS item have THIS buff?)
+                        //
+                        // /florafare validate answers "is anything wrong with the pack";
+                        // this answers "why did my entry do nothing", which is a different
+                        // question and the one that costs pack authors their afternoon. With
+                        // no argument it reads the stack in hand, components and all, so a
+                        // command-stamped or renamed stack can be interrogated directly.
+                        .then(CommandManager.literal("explain")
+                                .executes(SetBuffCommand::executeExplainHeld)
+                                .then(CommandManager.argument("item", ItemStackArgumentType.itemStack(registryAccess))
+                                        .executes(SetBuffCommand::executeExplain)
+                                )
+                        )
         );
     }
 
@@ -158,7 +271,7 @@ public class SetBuffCommand {
      */
     private static int executeBuffRemove(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
         ServerPlayerEntity player = EntityArgumentType.getPlayer(context, "player");
-        String rawTarget = StringArgumentType.getString(context, "targetId");
+        String rawTarget = unquote(StringArgumentType.getString(context, "targetId"));
         String target = FoodBuffManager.normalizeTarget(rawTarget);
 
         PlayerFoodComponent component = ((IFoodComponentProvider) player).florafare$getFoodComponent();
@@ -295,6 +408,374 @@ public class SetBuffCommand {
         return 1;
     }
 
+    // -------------------------------------------------------------------------
+    // JOURNAL DISCOVERY
+    //
+    // The journal's unlocked state is the player's discovery set, and the only thing
+    // that normally writes to it is eating. Everything below edits it directly, so a
+    // journal page, an unlocking tooltip or a synergy hint can be put into any state
+    // without hunting down and eating the item that would have produced it.
+    // -------------------------------------------------------------------------
+
+    /** How many discovered ids one {@code journal list} prints before it stops. */
+    private static final int LIST_LIMIT = 30;
+
+    /**
+     * Completes an id argument the way vanilla completes one.
+     *
+     * <p>{@code CommandSource.suggestMatching} only ever matches from the front of the
+     * whole string, so with nothing typed it offers every candidate but the moment you
+     * type "bacon" it offers nothing at all — every id starts with its namespace. Vanilla
+     * does not behave that way: {@code /give @s bacon} finds {@code farmersdelight:bacon},
+     * because {@link CommandSource#forEachMatching} matches the path as well as the
+     * namespace, and offers bare "namespace:" entries to narrow with. That is what this
+     * runs the identifier-shaped candidates through.
+     *
+     * <p>Anything that is not a plain {@code namespace:path} — a {@code #tag}, a
+     * {@code potion:} target, {@code template:default}, an id left behind by a mod that
+     * has since been removed — cannot go through that matcher, so it keeps the simple
+     * prefix match.
+     */
+    private static CompletableFuture<Suggestions> suggestTargets(Iterable<String> targets,
+                                                                 SuggestionsBuilder builder) {
+        String remaining = builder.getRemaining().toLowerCase(Locale.ROOT);
+        List<Identifier> ids = new ArrayList<>();
+
+        for (String target : targets) {
+            // Tested for a ":" first, and against the round trip: Identifier.tryParse
+            // would just as happily turn a bare "hearty_lunch" into "minecraft:hearty_lunch"
+            // and suggest an id that matches nothing.
+            Identifier id = target.indexOf(':') >= 0 ? Identifier.tryParse(target) : null;
+            if (id != null && id.toString().equals(target)) {
+                ids.add(id);
+            } else if (CommandSource.shouldSuggest(remaining, target.toLowerCase(Locale.ROOT))) {
+                builder.suggest(target);
+            }
+        }
+
+        CommandSource.forEachMatching(ids, remaining, id -> id, id -> builder.suggest(id.toString()));
+        return builder.buildFuture();
+    }
+
+    // -------------------------------------------------------------------------
+    // SUGGESTION CACHES
+    //
+    // Brigadier asks a suggestion provider for its candidates on every keystroke the
+    // player types, and journalTargets() answers by walking the entire item registry and
+    // resolving a config for each item — tens of thousands of lookups per character on a
+    // modpack, off the main thread, while the player is mid-word. The lists only change
+    // when the configs do, so they are built once per config generation and shared.
+    //
+    // Held in an AtomicReference rather than plain fields because command completion is
+    // served from the network thread: two players typing at once would otherwise be able
+    // to see a half-built list.
+    // -------------------------------------------------------------------------
+
+    /** A cached suggestion list, tagged with the config generation it was built from. */
+    private record CachedTargets(int generation, List<String> targets) {}
+
+    private static final AtomicReference<CachedTargets> CONFIGURED_TARGETS_CACHE =
+            new AtomicReference<>();
+    private static final AtomicReference<CachedTargets> JOURNAL_TARGETS_CACHE =
+            new AtomicReference<>();
+
+    private static List<String> cached(AtomicReference<CachedTargets> cache,
+                                       Supplier<List<String>> build) {
+        int generation = FoodBuffManager.configGeneration();
+        CachedTargets current = cache.get();
+        if (current != null && current.generation() == generation) return current.targets();
+
+        List<String> built = List.copyOf(build.get());
+        // Plain set, no compareAndSet: two threads racing here build the same list from
+        // the same generation, so whichever lands second is writing the same answer.
+        cache.set(new CachedTargets(generation, built));
+        return built;
+    }
+
+    /** Every target a datapack (or the API) actually defined — what {@code buff give} takes. */
+    private static List<String> configuredTargets() {
+        return cached(CONFIGURED_TARGETS_CACHE, () -> {
+            List<String> targets = new ArrayList<>();
+            for (FoodBuffData data : FoodBuffManager.getAllConfigs()) targets.add(data.target());
+            return targets;
+        });
+    }
+
+    /**
+     * What {@code buff remove} can address on this player: each running buff's config
+     * target, plus the item it came from, since the command accepts either.
+     */
+    private static Collection<String> activeBuffTargets(CommandContext<ServerCommandSource> context) {
+        try {
+            ServerPlayerEntity player = EntityArgumentType.getPlayer(context, "player");
+            Set<String> targets = new java.util.LinkedHashSet<>();
+            for (ActiveFoodBuff buff : componentOf(player).getActiveBuffs()) {
+                targets.add(buff.getTarget());
+                targets.add(buff.getConsumedItemId());
+            }
+            return targets;
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    /**
+     * Every id the journal has a row for: one per edible item Florafare manages, plus
+     * the {@code potion:} targets, which are rows without an item of their own.
+     *
+     * <p>Deliberately the same set {@code FoodJournalScreen#rebuildCache} builds — an
+     * id outside it can be put in the discovery set, but nothing would ever display it.
+     */
+    private static List<String> journalTargets() {
+        return cached(JOURNAL_TARGETS_CACHE, () -> {
+            List<String> targets = new ArrayList<>();
+            for (FoodBuffData data : FoodBuffManager.getAllConfigs()) {
+                if (data.target().startsWith("potion:")) targets.add(data.target());
+            }
+            for (Item item : Registries.ITEM) {
+                // Cheap test first: the registry is tens of thousands of items and only a
+                // few hundred are food, and getConfig needs a stack allocated per item.
+                if (!item.getComponents().contains(DataComponentTypes.FOOD)) continue;
+                if (FoodBuffManager.getConfig(item.getDefaultStack()) == null) continue;
+                targets.add(Registries.ITEM.getId(item).toString());
+            }
+            return targets;
+        });
+    }
+
+    /** Whether the journal would have a row for this id — see {@link #journalTargets}. */
+    private static boolean isJournalTarget(String target) {
+        if (target.startsWith("potion:")) {
+            return FoodBuffManager.getConfigByTarget(target) != null;
+        }
+        Identifier id = Identifier.tryParse(target);
+        if (id == null || !Registries.ITEM.containsId(id)) return false;
+        return FoodBuffManager.getConfig(Registries.ITEM.get(id).getDefaultStack()) != null;
+    }
+
+    private static List<String> synergyIds() {
+        List<String> ids = new ArrayList<>();
+        for (FoodSynergyData synergy : FoodSynergyManager.getAllSynergies()) ids.add(synergy.id());
+        return ids;
+    }
+
+    /**
+     * The half of a player's discovery set a {@code lock} suggestion should offer.
+     * Locking only ever makes sense for something already discovered, and that list is
+     * short — far better to suggest than the whole food registry.
+     *
+     * <p>Answers empty when the player argument does not resolve: this runs while the
+     * command line is still half-typed, where an unmatched selector is normal rather
+     * than an error worth surfacing.
+     */
+    private static Collection<String> discoveredOf(
+            CommandContext<ServerCommandSource> context,
+            java.util.function.Function<PlayerFoodComponent, Set<String>> which) {
+        try {
+            ServerPlayerEntity player = EntityArgumentType.getPlayer(context, "player");
+            return new ArrayList<>(
+                    which.apply(((IFoodComponentProvider) player).florafare$getFoodComponent()));
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    /**
+     * Trims, and drops one surrounding pair of quotes.
+     *
+     * <p>These arguments are greedy strings, because Brigadier's quotable string stops
+     * at the ":" in "mod:item" and the whole point of these commands is to type an item
+     * id quickly. A greedy string takes the quotes literally if someone types them out
+     * of habit from the neighbouring {@code /florafare buff} commands, which do want
+     * them — so both spellings are accepted here rather than one of them failing with
+     * "no journal entry for '\"mod:item\"'".
+     */
+    private static String unquote(String raw) {
+        String value = raw.trim();
+        if (value.length() >= 2
+                && ((value.startsWith("\"") && value.endsWith("\""))
+                 || (value.startsWith("'")  && value.endsWith("'")))) {
+            return value.substring(1, value.length() - 1).trim();
+        }
+        return value;
+    }
+
+    private static PlayerFoodComponent componentOf(ServerPlayerEntity player) {
+        return ((IFoodComponentProvider) player).florafare$getFoodComponent();
+    }
+
+    private static int executeJournalUnlock(CommandContext<ServerCommandSource> context)
+            throws CommandSyntaxException {
+        ServerPlayerEntity player = EntityArgumentType.getPlayer(context, "player");
+        String target = FoodBuffManager.normalizeTarget(
+                unquote(StringArgumentType.getString(context, "target")));
+
+        // Rejected rather than stored: a typo would otherwise sit in the discovery set
+        // forever, counting towards nothing and displayed by nothing.
+        if (!isJournalTarget(target)) {
+            context.getSource().sendError(Text.translatable(
+                    "command.florafare.journal_unlock.unknown", target));
+            return 0;
+        }
+
+        if (!componentOf(player).unlockFood(target)) {
+            context.getSource().sendError(Text.translatable(
+                    "command.florafare.journal_unlock.already", target, player.getName().getString()));
+            return 0;
+        }
+
+        context.getSource().sendFeedback(() -> Text.translatable(
+                "command.florafare.journal_unlock.success", target, player.getName().getString()), true);
+        return 1;
+    }
+
+    private static int executeJournalUnlockAll(CommandContext<ServerCommandSource> context)
+            throws CommandSyntaxException {
+        ServerPlayerEntity player = EntityArgumentType.getPlayer(context, "player");
+        int added = componentOf(player).unlockFoods(journalTargets());
+
+        context.getSource().sendFeedback(() -> Text.translatable(
+                "command.florafare.journal_unlock_all.success", added, player.getName().getString()), true);
+        return added;
+    }
+
+    private static int executeJournalLock(CommandContext<ServerCommandSource> context)
+            throws CommandSyntaxException {
+        ServerPlayerEntity player = EntityArgumentType.getPlayer(context, "player");
+        // Not validated against the registry, unlike unlock: an id left behind by a mod
+        // that has since been removed is exactly the kind of thing this has to be able
+        // to clear out.
+        String target = FoodBuffManager.normalizeTarget(
+                unquote(StringArgumentType.getString(context, "target")));
+
+        if (!componentOf(player).lockFood(target)) {
+            context.getSource().sendError(Text.translatable(
+                    "command.florafare.journal_lock.not_discovered", target, player.getName().getString()));
+            return 0;
+        }
+
+        context.getSource().sendFeedback(() -> Text.translatable(
+                "command.florafare.journal_lock.success", target, player.getName().getString()), true);
+        return 1;
+    }
+
+    private static int executeJournalLockAll(CommandContext<ServerCommandSource> context)
+            throws CommandSyntaxException {
+        ServerPlayerEntity player = EntityArgumentType.getPlayer(context, "player");
+        int removed = componentOf(player).lockAllFoods();
+
+        context.getSource().sendFeedback(() -> Text.translatable(
+                "command.florafare.journal_lock_all.success", removed, player.getName().getString()), true);
+        return removed;
+    }
+
+    private static int executeSynergyUnlock(CommandContext<ServerCommandSource> context)
+            throws CommandSyntaxException {
+        ServerPlayerEntity player = EntityArgumentType.getPlayer(context, "player");
+        String target = unquote(StringArgumentType.getString(context, "target"));
+
+        if (FoodSynergyManager.getSynergy(target) == null) {
+            context.getSource().sendError(Text.translatable(
+                    "command.florafare.synergy_unlock.unknown", target));
+            return 0;
+        }
+
+        if (!componentOf(player).unlockSynergy(target)) {
+            context.getSource().sendError(Text.translatable(
+                    "command.florafare.synergy_unlock.already", target, player.getName().getString()));
+            return 0;
+        }
+
+        context.getSource().sendFeedback(() -> Text.translatable(
+                "command.florafare.synergy_unlock.success", target, player.getName().getString()), true);
+        return 1;
+    }
+
+    private static int executeSynergyUnlockAll(CommandContext<ServerCommandSource> context)
+            throws CommandSyntaxException {
+        ServerPlayerEntity player = EntityArgumentType.getPlayer(context, "player");
+        int added = componentOf(player).unlockSynergies(synergyIds());
+
+        context.getSource().sendFeedback(() -> Text.translatable(
+                "command.florafare.synergy_unlock_all.success", added, player.getName().getString()), true);
+        return added;
+    }
+
+    private static int executeSynergyLock(CommandContext<ServerCommandSource> context)
+            throws CommandSyntaxException {
+        ServerPlayerEntity player = EntityArgumentType.getPlayer(context, "player");
+        String target = unquote(StringArgumentType.getString(context, "target"));
+
+        if (!componentOf(player).lockSynergy(target)) {
+            context.getSource().sendError(Text.translatable(
+                    "command.florafare.synergy_lock.not_discovered", target, player.getName().getString()));
+            return 0;
+        }
+
+        context.getSource().sendFeedback(() -> Text.translatable(
+                "command.florafare.synergy_lock.success", target, player.getName().getString()), true);
+        return 1;
+    }
+
+    private static int executeSynergyLockAll(CommandContext<ServerCommandSource> context)
+            throws CommandSyntaxException {
+        ServerPlayerEntity player = EntityArgumentType.getPlayer(context, "player");
+        int removed = componentOf(player).lockAllSynergies();
+
+        context.getSource().sendFeedback(() -> Text.translatable(
+                "command.florafare.synergy_lock_all.success", removed, player.getName().getString()), true);
+        return removed;
+    }
+
+    /**
+     * What the player has discovered, against what there is to discover.
+     *
+     * <p>The id list is capped at {@value #LIST_LIMIT} lines — a modpack's discovery set
+     * runs into the hundreds, and a command that scrolls the chat buffer away is no use
+     * for reading the counts at the top of it. The optional filter is a plain substring
+     * match, which is enough to answer "did that one food register".
+     */
+    private static int executeJournalList(CommandContext<ServerCommandSource> context, String filter)
+            throws CommandSyntaxException {
+        ServerPlayerEntity player = EntityArgumentType.getPlayer(context, "player");
+        ServerCommandSource source = context.getSource();
+        PlayerFoodComponent component = componentOf(player);
+
+        List<String> foods = new ArrayList<>(component.getDiscoveredFoods());
+        List<String> synergies = new ArrayList<>(component.getDiscoveredSynergies());
+        int totalFoods = journalTargets().size();
+        int totalSynergies = FoodSynergyManager.getAllSynergies().size();
+
+        source.sendFeedback(() -> Text.translatable("command.florafare.journal_list.header",
+                player.getName().getString(), foods.size(), totalFoods,
+                synergies.size(), totalSynergies), false);
+
+        List<String> shown = new ArrayList<>();
+        for (String id : foods) {
+            if (filter == null || id.contains(filter)) shown.add(id);
+        }
+        for (String id : synergies) {
+            if (filter == null || id.contains(filter)) shown.add("synergy: " + id);
+        }
+        Collections.sort(shown);
+
+        if (shown.isEmpty()) {
+            source.sendFeedback(() -> Text.translatable(
+                    "command.florafare.journal_list.none", player.getName().getString()), false);
+            return 0;
+        }
+
+        for (String id : shown.subList(0, Math.min(LIST_LIMIT, shown.size()))) {
+            source.sendFeedback(() -> Text.literal(" • " + id).formatted(Formatting.GRAY), false);
+        }
+        if (shown.size() > LIST_LIMIT) {
+            int more = shown.size() - LIST_LIMIT;
+            source.sendFeedback(() -> Text.translatable(
+                    "command.florafare.journal_list.more", more), false);
+        }
+        return shown.size();
+    }
+
     private static int executeClearBuffs(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
         ServerPlayerEntity targetPlayer = EntityArgumentType.getPlayer(context, "player");
         PlayerFoodComponent component = ((IFoodComponentProvider) targetPlayer).florafare$getFoodComponent();
@@ -368,7 +849,8 @@ public class SetBuffCommand {
     private static int executeBuffGive(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
         ServerPlayerEntity player = EntityArgumentType.getPlayer(context, "player");
         // Normalize (trim, default namespace) so the input matches the registered config keys.
-        String targetId = FoodBuffManager.normalizeTarget(StringArgumentType.getString(context, "targetId"));
+        String targetId = FoodBuffManager.normalizeTarget(
+                unquote(StringArgumentType.getString(context, "targetId")));
 
         FoodBuffData data = FoodBuffManager.getConfigByTarget(targetId);
 
@@ -510,5 +992,107 @@ public class SetBuffCommand {
             }
         }
         return issues.size();
+    }
+
+    // -------------------------------------------------------------------------
+    // EXPLAIN
+    // -------------------------------------------------------------------------
+
+    private static int executeExplainHeld(CommandContext<ServerCommandSource> context)
+            throws CommandSyntaxException {
+        ServerPlayerEntity player = context.getSource().getPlayerOrThrow();
+        ItemStack held = player.getMainHandStack();
+        if (held.isEmpty()) {
+            context.getSource().sendError(Text.translatable("command.florafare.explain.empty_hand"));
+            return 0;
+        }
+        return explain(context.getSource(), held);
+    }
+
+    private static int executeExplain(CommandContext<ServerCommandSource> context)
+            throws CommandSyntaxException {
+        // count 1, allowOversizedStacks false — this stack is never given to anyone, it
+        // only carries the item and whatever components were typed with it.
+        ItemStack stack = ItemStackArgumentType.getItemStackArgument(context, "item")
+                .createStack(1, false);
+        return explain(context.getSource(), stack);
+    }
+
+    /**
+     * Prints the resolution chain for one stack: what Florafare decided, which rung of
+     * the ladder decided it, every entry that could have applied, and the values the
+     * winner actually produces.
+     */
+    private static int explain(ServerCommandSource source, ItemStack stack) {
+        FoodBuffManager.Resolution resolution = FoodBuffManager.explain(stack);
+        String itemId = Registries.ITEM.getId(stack.getItem()).toString();
+
+        source.sendFeedback(() -> Text.translatable("command.florafare.explain.header", itemId), false);
+
+        // The four dead ends: nothing further to say, and saying it plainly is the point.
+        switch (resolution.source()) {
+            case MEAD -> {
+                source.sendFeedback(() -> Text.translatable("command.florafare.explain.mead"), false);
+                return 0;
+            }
+            case EXCLUDED_BY_CONFIG -> {
+                source.sendFeedback(() -> Text.translatable(
+                        "command.florafare.explain.excluded_config"), false);
+                return 0;
+            }
+            case EXCLUDED_BY_TAG -> {
+                source.sendFeedback(() -> Text.translatable(
+                        "command.florafare.explain.excluded_tag", resolution.target()), false);
+                return 0;
+            }
+            case NOT_FOOD -> {
+                source.sendFeedback(() -> Text.translatable("command.florafare.explain.not_food"), false);
+                return 0;
+            }
+            default -> { }
+        }
+
+        String sourceKey = "command.florafare.explain.source." +
+                resolution.source().name().toLowerCase(Locale.ROOT);
+        source.sendFeedback(() -> Text.translatable("command.florafare.explain.chosen",
+                        Text.literal(String.valueOf(resolution.target())).formatted(Formatting.GREEN),
+                        Text.translatable(sourceKey).formatted(Formatting.GRAY)), false);
+
+        if (!resolution.candidates().isEmpty()) {
+            source.sendFeedback(() -> Text.translatable("command.florafare.explain.candidates"), false);
+            for (FoodBuffManager.Candidate candidate : resolution.candidates()) {
+                source.sendFeedback(() -> describeCandidate(candidate), false);
+            }
+        }
+
+        FoodBuffData data = resolution.data();
+        if (data != null) {
+            source.sendFeedback(() -> Text.translatable("command.florafare.explain.values",
+                    ticksToMmss(data.duration()), data.nutrition(),
+                    trim(data.nutrition() * data.saturation() * 2.0),
+                    trim(data.healthBonus()),
+                    data.attributes().size(), data.effects().size()), false);
+            if (data.alwaysEdible()) {
+                source.sendFeedback(() -> Text.translatable(
+                        "command.florafare.explain.always_edible"), false);
+            }
+        }
+        return 1;
+    }
+
+    /** One candidate line: a tick or a cross, the target, its priority, and why it lost. */
+    private static Text describeCandidate(FoodBuffManager.Candidate candidate) {
+        MutableText line = Text.literal(candidate.chosen() ? " \u2714 " : " \u2718 ")
+                .formatted(candidate.chosen() ? Formatting.GREEN : Formatting.DARK_GRAY);
+        line.append(Text.literal(candidate.target())
+                .formatted(candidate.chosen() ? Formatting.WHITE : Formatting.GRAY));
+        line.append(Text.translatable("command.florafare.explain.priority", candidate.priority())
+                .formatted(Formatting.DARK_GRAY));
+        if (candidate.reason() != null) {
+            line.append(Text.literal(" \u2014 ").formatted(Formatting.DARK_GRAY));
+            line.append(Text.translatable("command.florafare.explain.reason." + candidate.reason())
+                    .formatted(Formatting.DARK_GRAY));
+        }
+        return line;
     }
 }

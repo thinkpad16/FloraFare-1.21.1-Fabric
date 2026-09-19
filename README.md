@@ -33,15 +33,27 @@ relogging.
 ### Tooltips
 
 A managed food carries its buff on its own item tooltip, directly under the name: how
-long it lasts, what it restores, the max health it adds, and every attribute and status
-effect it grants — the same breakdown, formatted identically, that the journal and the
-EMI panel show.
+long it lasts, what it restores, then a **While active** block listing everything the
+buff applies for that duration — the max health it adds and every attribute modifier —
+followed by the status effects it grants. The same breakdown, formatted identically, is
+what the journal and the EMI panel show.
+
+The health bonus sits inside that block rather than above it on purpose: it is applied
+as a max-health modifier and taken away when the buff ends, so printing it next to the
+duration made the one temporary effect that *looks* permanent the only line not marked
+as temporary.
 
 FloraFare also removes the item's *vanilla* status-effect lines, since those effects do
 not fire while it manages the food (unless `respectVanillaFoodEffects` is on, in which
 case the lines stay because the effects do too). Nothing else on the tooltip is touched —
 lore, enchantments and other mods' lines are left exactly as they were. Both halves have
 their own switch: `showBuffTooltips` and `stripFoodTooltips`.
+
+With `collapseBuffTooltips` on, that block is folded down to its heading plus a "hold
+Shift for details" hint, and the full breakdown appears while Shift is held. An inventory
+full of dishes stays readable, and the reading is one keypress away. Off by default, so
+an existing install is unchanged. The locked placeholder is never collapsed — it is two
+lines already, and it is the line that tells the player the dish can be unlocked.
 
 ### Items
 
@@ -88,6 +100,14 @@ data/
 ```
 
 Configs and synergies are synced to clients automatically on join and after `/reload`, so everything works on dedicated servers.
+
+The sync travels as a numbered sequence of packets rather than one, so a pack's size is
+not a limit: a map too big for a single packet is split, and the client applies it only
+once the last piece lands. Each piece is checked against the decoder the client actually
+uses — the limit on the receiving side counts allocation, not encoded bytes, and a map
+made of many small entries accounts for several times its size on the wire — so chunks
+are split further until they genuinely fit. The only thing that can still be refused is a
+*single entry* too large to decode on its own; `/florafare validate` names any such entry.
 
 ---
 
@@ -313,20 +333,111 @@ Notes:
 
 ---
 
+## Editor support (JSON schemas)
+
+`schemas/` in this repository holds JSON Schema files for every datapack format the mod
+reads, so an editor can autocomplete field names and flag a typo (`helth_bonus`) as you
+write instead of at `/reload` time:
+
+| Schema | Applies to |
+|---|---|
+| `schemas/food_buffs.schema.json` | every file in `data/<namespace>/food_buffs/` except `config_generation.json` |
+| `schemas/food_synergies.schema.json` | every file in `data/<namespace>/food_synergies/` |
+| `schemas/config_generation.schema.json` | `data/<namespace>/food_buffs/config_generation.json` |
+
+**VS Code** — in `.vscode/settings.json` of your pack:
+
+```json
+{
+  "json.schemas": [
+    {
+      "fileMatch": ["**/food_buffs/*.json", "!**/food_buffs/config_generation.json"],
+      "url": "https://raw.githubusercontent.com/thinkpad16/FloraFare-1.21.1-Fabric/FloraFare-1.21.1-Fabric/schemas/food_buffs.schema.json"
+    },
+    {
+      "fileMatch": ["**/food_synergies/*.json"],
+      "url": "https://raw.githubusercontent.com/thinkpad16/FloraFare-1.21.1-Fabric/FloraFare-1.21.1-Fabric/schemas/food_synergies.schema.json"
+    },
+    {
+      "fileMatch": ["**/food_buffs/config_generation.json"],
+      "url": "https://raw.githubusercontent.com/thinkpad16/FloraFare-1.21.1-Fabric/FloraFare-1.21.1-Fabric/schemas/config_generation.schema.json"
+    }
+  ]
+}
+```
+
+**IntelliJ IDEA** — *Settings → Languages & Frameworks → Schemas and DTDs → JSON Schema
+Mappings*, one mapping per schema with the same file patterns. A local checkout works as
+the schema source too, which is the better choice while working offline.
+
+The schemas are deliberately strict (`additionalProperties: false`): an unknown key is
+almost always a misspelled known one. `_comment` is allowed everywhere for notes — the
+loader ignores it, as Florafare's own `tag_categories.json` does.
+
+---
+
+## Advancement triggers
+
+Three criteria, so a datapack can build progression on eating without a line of Java.
+Put them in `data/<namespace>/advancement/…` like any vanilla trigger; every condition
+field is optional, and leaving one out matches anything.
+
+| Trigger | Fires when | Conditions |
+|---|---|---|
+| `florafare:food_discovered` | a dish is recorded in the player's journal for the first time (by eating it, or via `/florafare journal unlock`) | `food` — item id or `potion:` target |
+| `florafare:buff_applied` | a food buff is granted or refreshed — the closest thing to "ate a dish Florafare manages" | `food` — the item eaten; `target` — the datapack entry it resolved from, e.g. `#florafare:meats` |
+| `florafare:synergy_activated` | a synergy's requirements are all satisfied and it starts running | `synergy` — the synergy's `id` |
+
+```json
+{
+  "parent": "minecraft:story/root",
+  "display": {
+    "icon": { "id": "minecraft:cooked_beef" },
+    "title": "Carnivore",
+    "description": "Eat anything Florafare counts as meat."
+  },
+  "criteria": {
+    "ate_meat": {
+      "trigger": "florafare:buff_applied",
+      "conditions": { "target": "#florafare:meats" }
+    }
+  }
+}
+```
+
+Notes:
+
+- `food` and `target` are *not* the same thing. `food` is the item in the player's hand;
+  `target` is the entry that produced the buff, which for a tag entry is the tag itself.
+  Filtering on `target` is how an advancement says "any meat" without listing every meat
+  in the game — and it follows the pack, so items a pack adds to the tag count too.
+- Values are normalized like datapack targets, so `"bread"` and `"minecraft:bread"` both
+  work.
+- All three fire on the server, and `buff_applied` fires on every refresh, not only the
+  first time. Use `food_discovered` for "the first time ever".
+- Each also carries the standard optional `player` predicate.
+
 ## Commands
 
 All commands require permission level 2 (op) by default — configurable via `commandPermissionLevel`.
 
 | Command | What it does |
 |---|---|
-| `/florafare buff give <player> <targetId>` | Applies the configured buff for `targetId` (item id or `#tag`, quoted) to a player and unlocks its journal entry. |
-| `/florafare buff remove <player> <targetId>` | Removes one active buff, addressed by its config target or by the item that was eaten (quoted). Forgotten Mead only ever drops the newest buff; this is how you clear one out of the middle of a full set. |
+| `/florafare buff give <player> <targetId>` | Applies the configured buff for `targetId` (item id, `#tag`, `namespace:`, `template:` or `potion:` — whatever the datapack defined) to a player and unlocks its journal entry. Tab-completion lists every configured target, vanilla-style: typing `bacon` finds `farmersdelight:bacon`. Quotes are optional. |
+| `/florafare buff remove <player> <targetId>` | Removes one active buff, addressed by its config target or by the item that was eaten — tab-completion offers exactly what that player is currently carrying. Forgotten Mead only ever drops the newest buff; this is how you clear one out of the middle of a full set. |
 | `/florafare buffs <player>` | Lists what a player currently has running: every active buff and synergy, its config target, the item it came from, time remaining out of its full length, and the attribute modifiers actually applied. The modifiers are read off the live buff rather than off its config, so a buff that has drifted out of step with the datapack — the case `/florafare repair` exists for — shows what is really on the player. |
 | `/florafare clear <player>` | Removes all active buffs and synergies from a player. |
 | `/florafare setbuff <duration> <nutrition> <saturation> <health> [<attr_id> <attr_amount> <attr_op>]` | Attaches a **custom buff to the item stack in your main hand** (via NBT). Anyone who eats that exact stack gets this buff instead of the normal config. Persists across restarts, in the world save (`<world>/florafare_runtime.dat`); a pre-1.4 `config/florafare_runtime.dat` is migrated into the first world that loads without one. |
 | `/florafare journal give <player>` | Gives the player a Food Journal, for replacing one that was lost (dropped in lava, died without `keepInventory`, etc.) without needing creative mode. The journal is also craftable in survival — see [Items](#items). |
+| `/florafare journal list <player> [filter]` | What the player has discovered, against what there is to discover: `X/Y foods, X/Y synergies`, then the ids themselves (capped at 30 lines — pass a substring as `filter` to narrow it). |
+| `/florafare journal unlock <player> <foodId>` | Marks one food as discovered, exactly as eating it would — journal entry, tooltip and discovery toast — without granting a buff. Takes an item id or a `potion:` target, unquoted; tab-completion lists every food with a journal row and matches the way vanilla does, so `bacon` finds `farmersdelight:bacon`. Rejects an id the journal has no row for, so a typo cannot end up in the discovery list. |
+| `/florafare journal unlock <player> all` | Discovers every food at once. One sync rather than one toast per food. |
+| `/florafare journal lock <player> <foodId>` | Forgets one discovered food — its journal entry goes back to locked. Tab-completion lists what *that player* knows. Ids left behind by a since-removed mod can be cleared this way too. |
+| `/florafare journal lock <player> all` | Forgets every discovered food, resetting the journal to a fresh player's state. Synergies are kept — see below. |
+| `/florafare journal synergy unlock\|lock <player> <synergyId>\|all` | The same four operations for discovered synergies. Unlocking one records it without having to actually trigger it; locking it hides it from the journal again. Neither touches the buffs currently running — use `/florafare clear` for those. |
 | `/florafare repair <player>` | Strips any Florafare-namespaced attribute modifier from the player, scanning every registered attribute directly rather than relying on the mod's own tracked buff state. Since 1.3 the same scan runs automatically on every player load, so stuck stats should no longer happen at all — this stays as a manual escape hatch for a player who got stuck without relogging. |
 | `/florafare validate` | Diagnoses the currently loaded `food_buffs`/`food_synergies` configs for problems that don't show up as load-time errors: synergies that can never activate because they need more buffs than `maxBuffSlots` allows, requirements that can never be satisfied (non-edible item, excluded item, or empty tag), and datapack targets left ambiguous by a same-priority tie. Reports to chat and mirrors each finding to the server log. |
+| `/florafare explain [<item>]` | Why does *this* item have *that* buff? Walks the same resolution chain the mod uses — exclusions, per-stack command buffs, item entry, tag entries, `namespace:`, `template:default`, auto-generation — and prints which rung decided it, every entry that could have applied with its priority, why each of the others lost, and the values the winner produces. With no argument it reads the stack in your main hand, components and all. This is the command for "my datapack entry did nothing". |
 | `/florafare dumpfoods` | Exports every edible item in the game (with recipe trees) to `florafare_edible_items_dump.txt` in the game directory — handy for building datapacks. |
 
 `/reload` re-reads all `food_buffs` and `food_synergies` files and re-syncs connected clients.
@@ -396,6 +507,7 @@ Every field below is editable in-game via **ModMenu** (if installed — Cloth Co
 | `enableDiscoveryToasts` | `true` / `false` | Whether discovering a new food/synergy shows a toast notification naming it. |
 | `toastDisplayTimeMs` | int, default `5000` | How long discovery toasts stay on screen. |
 | `showBuffTooltips` | `true` / `false` | Whether a managed food's item tooltip carries its buff. Gated on discovery — see [Tooltips](#tooltips). |
+| `collapseBuffTooltips` | `true` / `false`, default `false` | Show only the heading on a managed food's tooltip and reveal the full buff while **Shift** is held. |
 | `stripFoodTooltips` | `true` / `false` | Whether the tooltip hides the item's *own* vanilla food effects, which Florafare supersedes. Lore, enchantments and other mods' lines are never touched. Has no effect while `respectVanillaFoodEffects` is on, since those effects then genuinely fire. |
 | `showBuffMessages` | `true` / `false` | A short action-bar line when a buff or synergy starts and ends. |
 | `journalShowsAutoGenerated` | `true` / `false`, default `true` | Whether the journal lists foods whose buff was auto-generated from vanilla stats, not only the ones a datapack names. Off makes the journal match a curated food list. |
@@ -491,8 +603,35 @@ mod's packets, and none are sent to it.
 
 ## API for mod makers
 
-Add `florafare` as a `modImplementation` dependency (or `mavenLocal()` after running
-`./gradlew publishToMavenLocal`) to use these from your own mod.
+Add `florafare` as a `modImplementation` dependency to use these from your own mod.
+Published artifacts carry a **sources jar and a javadoc jar**, so the documentation these
+classes are written with shows up in your IDE rather than only on GitHub.
+
+```gradle
+repositories {
+    // JitPack builds straight from this repository's tags.
+    maven { url "https://jitpack.io" }
+}
+
+dependencies {
+    modImplementation "com.github.thinkpad16:FloraFare-1.21.1-Fabric:<tag>"
+}
+```
+
+Two local alternatives, neither of which needs a network:
+
+```bash
+./gradlew publishToMavenLocal   # then: repositories { mavenLocal() }
+./gradlew publish               # writes build/repo — point a maven { url "…/FloraFare/build/repo" } at it
+```
+
+`gradlew publish` also uploads to a real remote when one is configured, via
+`-PmavenUrl=…` (or the `MAVEN_URL` / `MAVEN_USERNAME` / `MAVEN_PASSWORD` environment
+variables, which is how CI does it). With none of them set, only the local repository is
+written, so a fresh clone still builds.
+
+Depend on the `net.tend1tnuy.florafare.api` package. Everything outside it is internal and
+may be refactored between releases.
 
 ### `FlorafareAPI`
 
@@ -540,6 +679,13 @@ FlorafareEvents.SYNERGY_ACTIVATED.register((player, synergy, buff) -> {
 });
 ```
 
+There is also a cancellable `BUFF_APPLYING`, fired before a buff is granted; returning
+false from a listener stops it — see the javadoc on the event for exactly what a veto
+hands back to vanilla.
+
+If all you need is to react from a **datapack**, you do not need any of this: the three
+[advancement triggers](#advancement-triggers) are built on these same events.
+
 ## Building from source
 
 ```bash
@@ -549,8 +695,10 @@ gradlew.bat build     # Windows
 ```
 
 The unit tests in `src/test/java` cover the pure logic that datapacks and saves depend on —
-the `FoodBuffData`/`ActiveFoodBuff` NBT round-trips, target normalization, and the
-priority/tag-specificity resolution rules — without booting the game, so they run in a
-couple of seconds in CI.
+the `FoodBuffData`/`ActiveFoodBuff` NBT round-trips, target normalization, the
+priority/tag-specificity resolution rules, the datapack sync's split/reassemble round trip
+(including that every chunk survives the real payload codec), and that the language files
+agree with each other — without booting the game, so they run in a couple of seconds in
+CI.
 
 The built jar lands in `build/libs/`. Developed against Yarn mappings with Fabric Loom; see `gradle.properties` for exact versions.

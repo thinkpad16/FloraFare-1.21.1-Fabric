@@ -120,6 +120,31 @@ public final class BuffDescription {
     }
 
     /**
+     * The same block, collapsed to its heading plus a "hold Shift" hint.
+     *
+     * <p>Used when {@code collapseBuffTooltips} is on and Shift is not held. The shift
+     * state is decided by the caller rather than read here: this class is loaded by the
+     * formatter tests, which run with no window for {@code Screen.hasShiftDown()} to
+     * query.
+     *
+     * <p>An undiscovered food is returned in full — the placeholder is already short,
+     * and it is the line that tells the player the dish can be unlocked at all.
+     */
+    public static List<Text> collapsedItemTooltip(ItemStack stack, FoodBuffData data) {
+        List<Text> lines = new ArrayList<>();
+        lines.add(header());
+
+        if (!isDiscovered(stack, data)) {
+            lines.addAll(lockedLines());
+            return wrapToScreen(lines);
+        }
+
+        lines.add(indent(Text.translatable("tooltip.florafare.buff.expand_hint")
+                .formatted(Formatting.DARK_GRAY, Formatting.ITALIC)));
+        return wrapToScreen(lines);
+    }
+
+    /**
      * The block appended to a managed food's item tooltip: a heading, then either the
      * full breakdown or the locked placeholder.
      */
@@ -132,6 +157,21 @@ public final class BuffDescription {
             return lines;
         }
 
+        lines.addAll(foodBuffLines(data));
+        return lines;
+    }
+
+    /**
+     * Everything a food's buff grants, without the heading and without the discovery
+     * gate in front of it.
+     *
+     * <p>Split out of {@link #foodTooltip} for the EMI panel, which sizes itself once
+     * and then redraws live: it has to measure the unlocked block while the food is
+     * still locked, or the panel it measured for two grey placeholder lines would clip
+     * the full breakdown the moment the player eats the dish.
+     */
+    public static List<Text> foodBuffLines(FoodBuffData data) {
+        List<Text> lines = new ArrayList<>();
         lines.add(indent(durationLine(data.duration())));
         if (data.nutrition() != 0) {
             lines.add(indent(nutritionLine(data.nutrition(), data.saturation())));
@@ -164,26 +204,46 @@ public final class BuffDescription {
         return lines;
     }
 
+    /**
+     * The max-health attribute, which is what a config's {@code health_bonus} is applied
+     * as. Spelled out rather than read off {@code EntityAttributes}: this class is loaded
+     * by the formatter tests, which run without a bootstrapped registry.
+     */
+    private static final Identifier MAX_HEALTH_ID =
+            Identifier.of("minecraft", "generic.max_health");
+
     /** Health bonus, attribute modifiers and status effects — shared by foods and synergies. */
     public static List<Text> effectBlock(double healthBonus,
                                          List<FoodBuffData.AttributeData> attributes,
                                          List<FoodBuffData.EffectData> effects) {
         List<Text> lines = new ArrayList<>();
 
-        if (healthBonus != 0) {
-            lines.add(indent(Text.translatable("tooltip.florafare.buff.health",
-                            signed(healthBonus))
-                    .formatted(healthBonus > 0 ? Formatting.RED : Formatting.DARK_RED)));
-        }
-
-        if (attributes != null && !attributes.isEmpty()) {
+        boolean hasAttributes = attributes != null && !attributes.isEmpty();
+        if (healthBonus != 0 || hasAttributes) {
             lines.add(Text.translatable("tooltip.florafare.buff.attributes")
                     .formatted(Formatting.GRAY));
-            for (FoodBuffData.AttributeData attr : attributes) {
+
+            // The health bonus goes under this heading, as the first modifier, because
+            // that is exactly what it is: PlayerFoodComponent applies it as a max-health
+            // modifier that is removed when the buff ends. It used to be printed above
+            // the heading, right under the duration, which put the one temporary effect
+            // that looks permanent in the only place on the tooltip that isn't marked
+            // "while active" — so "+30 max health" read as a permanent gain.
+            if (healthBonus != 0) {
                 lines.add(bullet(Text.translatable("tooltip.florafare.buff.entry",
-                                attributeName(attr.attributeId()),
-                                formatAmount(attr.amount(), attr.operation()))
-                        .formatted(attr.amount() >= 0 ? Formatting.BLUE : Formatting.RED)));
+                                attributeName(MAX_HEALTH_ID), signed(healthBonus))
+                        // Kept red rather than the blue every other modifier gets: it is
+                        // hearts, and a player scanning the block should find it at once.
+                        .formatted(healthBonus > 0 ? Formatting.RED : Formatting.DARK_RED)));
+            }
+
+            if (hasAttributes) {
+                for (FoodBuffData.AttributeData attr : attributes) {
+                    lines.add(bullet(Text.translatable("tooltip.florafare.buff.entry",
+                                    attributeName(attr.attributeId()),
+                                    formatAmount(attr.amount(), attr.operation()))
+                            .formatted(attr.amount() >= 0 ? Formatting.BLUE : Formatting.RED)));
+                }
             }
         }
 
@@ -231,6 +291,17 @@ public final class BuffDescription {
             budget = Math.max(MIN_TOOLTIP_WIDTH,
                     Math.min(MAX_TOOLTIP_WIDTH, client.getWindow().getScaledWidth() / 2));
         }
+        return wrapToWidth(lines, budget);
+    }
+
+    /**
+     * The same break-up against an explicit pixel budget, for a surface that knows its
+     * own width. EMI's panels do: they draw their lines one by one inside a box of a
+     * fixed width, and a line wider than the box simply ran off its right-hand edge.
+     */
+    public static List<Text> wrapToWidth(List<Text> lines, int budget) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null || client.textRenderer == null || budget <= 0) return lines;
 
         TextRenderer textRenderer = client.textRenderer;
         List<Text> wrapped = new ArrayList<>(lines.size());

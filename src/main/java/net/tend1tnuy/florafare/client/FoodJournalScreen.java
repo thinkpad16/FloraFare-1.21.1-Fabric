@@ -542,23 +542,32 @@ public class FoodJournalScreen extends Screen {
     private void buildCommonDetailLines(List<RenderLine> allLines, double healthBonus,
                                         List<FoodBuffData.AttributeData> attributes,
                                         List<FoodBuffData.EffectData> effects) {
-        if (healthBonus != 0) {
-            allLines.add(new RenderLine(
-                    Text.translatable("gui.florafare.journal.health",
-                            BuffDescription.signed(healthBonus)).getString(),
-                    COLOR_INK_MID, 12, 0));
-        }
+        boolean hasAttributes = attributes != null && !attributes.isEmpty();
 
-        if (attributes != null && !attributes.isEmpty()) {
+        // Health first, under the same heading as the rest — it is a max-health modifier
+        // that lasts exactly as long as the buff, and printing it above the heading (as
+        // this used to) made the one temporary effect that looks permanent the only one
+        // standing outside the "these apply while it is active" group.
+        if (healthBonus != 0 || hasAttributes) {
             allLines.add(new RenderLine("", COLOR_INK_DARK, 6, 0));
             allLines.add(new RenderLine(
                     Text.translatable("gui.florafare.journal.attributes_title").getString(),
                     COLOR_INK_DARK, 14, 0, true));
-            for (FoodBuffData.AttributeData attr : attributes) {
+
+            if (healthBonus != 0) {
                 allLines.add(new RenderLine(
-                        "• " + BuffDescription.attributeName(attr.attributeId()).getString()
-                                + ": " + BuffDescription.formatAmount(attr.amount(), attr.operation()),
+                        "• " + Text.translatable("gui.florafare.journal.health",
+                                BuffDescription.signed(healthBonus)).getString(),
                         COLOR_INK_LIGHT, 11, 4));
+            }
+
+            if (hasAttributes) {
+                for (FoodBuffData.AttributeData attr : attributes) {
+                    allLines.add(new RenderLine(
+                            "• " + BuffDescription.attributeName(attr.attributeId()).getString()
+                                    + ": " + BuffDescription.formatAmount(attr.amount(), attr.operation()),
+                            COLOR_INK_LIGHT, 11, 4));
+                }
             }
         }
 

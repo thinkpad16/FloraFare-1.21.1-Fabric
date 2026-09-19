@@ -31,10 +31,13 @@ import squeek.appleskin.api.event.TooltipOverlayEvent;
  *
  * <p>So the three AppleSkin surfaces that describe <em>one particular food</em> are
  * cancelled until that food has been eaten once: the tooltip row, the hunger-bar preview
- * and the estimated-health preview. Cancelling the render rather than reporting zeroes
- * is deliberate — a zero is a lie that other consumers of {@code FoodValuesEvent} would
- * go on to compute with, whereas an absent row is merely absent, and the line directly
- * above it on the same tooltip explains why.
+ * and the estimated-health preview.
+ *
+ * <p>Those three cancels only bind AppleSkin's own renderers, though, while
+ * {@code FoodValuesEvent} is public API that any mod in a pack may read and draw for
+ * itself. So an undiscovered dish reports no food values at all through that event
+ * either, and the gate holds even where the cancel flag is never looked at — see
+ * {@link #onFoodValues}.
  *
  * <p>The player's own saturation and exhaustion overlays are left alone. They describe
  * the player, not a dish, so there is nothing about them to discover — and they are a
@@ -92,9 +95,34 @@ public class AppleSkinIntegration implements AppleSkinApi {
     }
 
     /**
+     * What an undiscovered dish is worth, as far as anything reading AppleSkin's numbers
+     * is concerned: nothing. See {@link #onFoodValues}.
+     */
+    private static final FoodComponent UNKNOWN_FOOD =
+            new FoodComponent.Builder().nutrition(0).saturationModifier(0.0f).build();
+
+    /**
      * Swaps in the datapack-configured nutrition and saturation, so everything AppleSkin
      * draws — the tooltip numbers and the hunger-bar preview while holding food — matches
      * what eating the item will really do.
+     *
+     * <p>For an undiscovered dish it reports nothing at all instead, which is the second
+     * half of the discovery gate and the half that does not depend on anyone's
+     * cooperation. The three cancels above only bind AppleSkin's own three renderers;
+     * this event, by contrast, is public API that anything in a pack may read and draw
+     * for itself, and a cancel flag another mod never sees cannot stop it. So the answer
+     * itself is withheld rather than only the drawing of it.
+     *
+     * <p>It also makes AppleSkin hide the row on its own terms: its tooltip component is
+     * only added when {@code hungerBars > 0}, and that is {@code ceil(nutrition / 2)} —
+     * zero nutrition, no row, whatever happens to the cancel flag.
+     *
+     * <p>Zeroes rather than the real numbers is a change of mind from "cancel the render,
+     * never lie about the values". The reasoning was that a zero is a number other
+     * consumers would go on to compute with — but every one of those consumers is a
+     * display, the alternative is handing them the exact answer the journal asks the
+     * player to find out by eating, and a dish reading "0" next to "Unrecorded dish" is
+     * plainly "not known yet" rather than a claim about the food.
      */
     private static void onFoodValues(FoodValuesEvent event) {
         ItemStack stack = event.itemStack;
@@ -106,6 +134,12 @@ public class AppleSkinIntegration implements AppleSkinApi {
         if (data == null) {
             // Not ours: an excluded item, or one no config resolves to. Whatever AppleSkin
             // worked out from the item itself is the truth for it.
+            return;
+        }
+
+        if (!BuffDescription.isDiscovered(stack, data)) {
+            event.defaultFoodComponent  = UNKNOWN_FOOD;
+            event.modifiedFoodComponent = UNKNOWN_FOOD;
             return;
         }
 

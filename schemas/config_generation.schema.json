@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/thinkpad16/FloraFare-1.21.1-Fabric/schemas/config_generation.schema.json",
+  "title": "FloraFare config_generation.json",
+  "description": "data/<namespace>/food_buffs/config_generation.json \u2014 tunes the buff Florafare generates for a food no entry matched.",
+  "type": "object",
+  "properties": {
+    "duration_multiplier": {
+      "type": "integer",
+      "default": 1200,
+      "minimum": 0,
+      "description": "Generated duration in ticks = vanilla nutrition x this."
+    },
+    "health_multiplier": {
+      "type": "number",
+      "default": 0.5,
+      "minimum": 0,
+      "description": "Generated max-health bonus = vanilla nutrition x this."
+    },
+    "_comment": {
+      "description": "Ignored by the loader \u2014 a note for whoever edits the file. Florafare's own tag_categories.json uses it."
+    }
+  },
+  "additionalProperties": false
+}

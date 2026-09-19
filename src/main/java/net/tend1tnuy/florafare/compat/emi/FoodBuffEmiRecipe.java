@@ -5,16 +5,20 @@ import dev.emi.emi.api.recipe.EmiRecipeCategory;
 import dev.emi.emi.api.stack.EmiIngredient;
 import dev.emi.emi.api.stack.EmiStack;
 import dev.emi.emi.api.widget.WidgetHolder;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.font.TextRenderer;
 import net.minecraft.item.ItemStack;
 import net.minecraft.registry.Registries;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.Language;
 import net.tend1tnuy.florafare.Florafare;
 import net.tend1tnuy.florafare.client.BuffDescription;
 import net.tend1tnuy.florafare.food.FoodBuffData;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -25,16 +29,36 @@ import java.util.List;
  * a server config change without EMI rebuilding anything, and it lets the discovery
  * gate apply live — the same food reads "unknown" before the player has eaten it and
  * fills in the moment they do, with no reload in between.
+ *
+ * <p><b>Sizing.</b> The panel used to be a fixed 160×118 box that the text was simply
+ * drawn into, so any line wider than 160 pixels — "Restores 8 hunger, 12.8 saturation"
+ * in English, and rather more of them in a longer language — ran out past the panel's
+ * right-hand edge and over EMI's own chrome. The box is now measured from the text it
+ * has to hold, and the text is wrapped to the box on the way in, so neither can escape
+ * the other. EMI reads the size once per {@link dev.emi.emi.api.recipe.EmiRecipe} and
+ * calls {@code addWidgets} later, which is why {@link #measure} sizes for the locked
+ * <em>and</em> the unlocked block: discovery flips between them with no reload.
  */
 public class FoodBuffEmiRecipe implements EmiRecipe {
 
-    private static final int WIDTH  = 160;
+    /** Floor, so a one-line buff still looks like a panel rather than a label. */
+    private static final int MIN_WIDTH = 160;
+    /** Ceiling, so one wordy modded attribute cannot stretch the whole category. */
+    private static final int MAX_WIDTH = 220;
     private static final int LINE_HEIGHT = 10;
-    /** Room for the heading rule plus the tallest realistic buff block. */
-    private static final int MAX_LINES = 11;
+    /** Left edge of the item name, clear of the 18-pixel slot. */
+    private static final int NAME_X = 22;
+    /** First text row, below the slot. */
+    private static final int TEXT_Y = 24;
+    /** Row budget used when there is no text renderer to measure with. */
+    private static final int FALLBACK_LINES = 11;
 
     private final EmiStack input;
     private final Identifier id;
+
+    /** Measured on first use and cached; see {@link #measure}. */
+    private int width = -1;
+    private int height = -1;
 
     public FoodBuffEmiRecipe(ItemStack stack) {
         this.input = EmiStack.of(stack);
@@ -72,12 +96,14 @@ public class FoodBuffEmiRecipe implements EmiRecipe {
 
     @Override
     public int getDisplayWidth() {
-        return WIDTH;
+        if (width < 0) measure();
+        return width;
     }
 
     @Override
     public int getDisplayHeight() {
-        return 8 + MAX_LINES * LINE_HEIGHT;
+        if (height < 0) measure();
+        return height;
     }
 
     /** A buff panel is not a crafting step, so it must not appear in recipe trees. */
@@ -89,23 +115,102 @@ public class FoodBuffEmiRecipe implements EmiRecipe {
     @Override
     public void addWidgets(WidgetHolder widgets) {
         ItemStack stack = input.getItemStack();
+        int panelWidth = getDisplayWidth();
+
         widgets.addSlot(input, 0, 0).drawBack(true);
-        widgets.addText(stack.getName().copy().formatted(Formatting.WHITE), 22, 5, 0xFFFFFF, true);
+        addName(widgets, stack, panelWidth);
 
         FoodBuffData data = FoodBuffManager.getConfig(stack);
+        // Either the item is on the exclusion list or another mod owns it.
+        boolean managed = data != null;
+        List<Text> body = managed
+                ? BuffDescription.foodTooltip(stack, data)
+                : List.of(notManagedLine());
 
-        int y = 24;
-        if (data == null) {
-            // Either the item is on the exclusion list or another mod owns it.
-            widgets.addText(Text.translatable("emi.florafare.not_managed")
-                    .formatted(Formatting.DARK_GRAY), 0, y, 0x555555, false);
+        int color = managed ? 0xFFFFFF : 0x555555;
+        int bottom = getDisplayHeight() - LINE_HEIGHT;
+        int y = TEXT_Y;
+        for (Text line : BuffDescription.wrapToWidth(body, panelWidth)) {
+            if (y > bottom) break;
+            widgets.addText(line, 0, y, color, false);
+            y += LINE_HEIGHT;
+        }
+    }
+
+    /**
+     * The item name, trimmed to whatever the panel has left beside the slot. The width
+     * was measured to fit it, so this only ever bites for a renamed stack; it is trimmed
+     * as an ordered text so the trim keeps the name's own styling.
+     */
+    private void addName(WidgetHolder widgets, ItemStack stack, int panelWidth) {
+        Text name = stack.getName().copy().formatted(Formatting.WHITE);
+        TextRenderer textRenderer = textRenderer();
+        if (textRenderer == null) {
+            widgets.addText(name, NAME_X, 5, 0xFFFFFF, true);
+            return;
+        }
+        widgets.addText(Language.getInstance().reorder(
+                        textRenderer.trimToWidth(name, panelWidth - NAME_X)),
+                NAME_X, 5, 0xFFFFFF, true);
+    }
+
+    /**
+     * Sizes the panel to the widest line and the tallest block it could ever draw,
+     * wrapping included — measured once, since EMI asks for the size ahead of the
+     * widgets and keeps it for the life of the display.
+     */
+    private void measure() {
+        ItemStack stack = input.getItemStack();
+        TextRenderer textRenderer = textRenderer();
+        List<List<Text>> states = states(stack);
+
+        if (textRenderer == null) {
+            width = MIN_WIDTH;
+            height = TEXT_Y + FALLBACK_LINES * LINE_HEIGHT;
             return;
         }
 
-        for (Text line : BuffDescription.foodTooltip(stack, data)) {
-            if (y > getDisplayHeight() - LINE_HEIGHT) break;
-            widgets.addText(line, 0, y, 0xFFFFFF, false);
-            y += LINE_HEIGHT;
+        int widest = NAME_X + textRenderer.getWidth(stack.getName());
+        for (List<Text> state : states) {
+            for (Text line : state) {
+                widest = Math.max(widest, textRenderer.getWidth(line));
+            }
         }
+        width = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, widest));
+
+        int rows = 1;
+        for (List<Text> state : states) {
+            rows = Math.max(rows, BuffDescription.wrapToWidth(state, width).size());
+        }
+        height = TEXT_Y + rows * LINE_HEIGHT;
+    }
+
+    /**
+     * Every block this panel could ever draw: the locked placeholder and the full
+     * breakdown both, because {@link #addWidgets} switches between them the instant the
+     * player eats the dish and nothing re-measures in between.
+     */
+    private static List<List<Text>> states(ItemStack stack) {
+        FoodBuffData data = FoodBuffManager.getConfig(stack);
+        if (data == null) return List.of(List.of(notManagedLine()));
+
+        List<Text> locked = new ArrayList<>();
+        locked.add(BuffDescription.header());
+        locked.addAll(BuffDescription.lockedLines());
+
+        List<Text> unlocked = new ArrayList<>();
+        unlocked.add(BuffDescription.header());
+        unlocked.addAll(BuffDescription.foodBuffLines(data));
+
+        return List.of(locked, unlocked);
+    }
+
+    private static Text notManagedLine() {
+        return Text.translatable("emi.florafare.not_managed").formatted(Formatting.DARK_GRAY);
+    }
+
+    private static TextRenderer textRenderer() {
+        MinecraftClient client = MinecraftClient.getInstance();
+        return client == null ? null : client.textRenderer;
     }
 }

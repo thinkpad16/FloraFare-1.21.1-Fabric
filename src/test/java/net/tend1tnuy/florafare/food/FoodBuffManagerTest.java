@@ -20,6 +20,46 @@ class FoodBuffManagerTest {
     }
 
     @Nested
+    @DisplayName("config generation counter")
+    class Generation {
+
+        // Command suggestion lists are derived from the configs and cached against this
+        // counter — journalTargets() walks the whole item registry, which Brigadier would
+        // otherwise repeat on every keystroke. A counter that failed to move after a
+        // /reload would leave tab-completion offering the previous pack's foods.
+
+        @Test
+        @DisplayName("registering a config moves it")
+        void putConfigBumps() {
+            int before = FoodBuffManager.configGeneration();
+            FoodBuffManager.putConfig("minecraft:test_bread", tagEntry("minecraft:test_bread", 0));
+            assertNotEquals(before, FoodBuffManager.configGeneration());
+        }
+
+        @Test
+        @DisplayName("clearing the configs moves it")
+        void clearBumps() {
+            int before = FoodBuffManager.configGeneration();
+            FoodBuffManager.clear();
+            assertNotEquals(before, FoodBuffManager.configGeneration());
+        }
+
+        @Test
+        @DisplayName("excluding an item moves it, and excluding it twice does not")
+        void excludeBumpsOnce() {
+            FoodBuffManager.includeItem("minecraft:test_stew");
+            int before = FoodBuffManager.configGeneration();
+            FoodBuffManager.excludeItem("minecraft:test_stew");
+            int afterFirst = FoodBuffManager.configGeneration();
+            assertNotEquals(before, afterFirst);
+
+            // Already excluded: nothing changed, so nothing needs rebuilding.
+            FoodBuffManager.excludeItem("minecraft:test_stew");
+            assertEquals(afterFirst, FoodBuffManager.configGeneration());
+        }
+    }
+
+    @Nested
     @DisplayName("target normalization")
     class Normalization {
 

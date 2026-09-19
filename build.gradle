@@ -137,8 +137,23 @@ java {
 
 	withSourcesJar()
 
+	// A javadoc jar alongside the sources jar, so anyone depending on FlorafareAPI /
+	// FlorafareEvents gets the documentation those classes carry inside their IDE
+	// instead of having to read them on GitHub.
+	withJavadocJar()
+
 	sourceCompatibility = JavaVersion.VERSION_21
 	targetCompatibility = JavaVersion.VERSION_21
+}
+
+javadoc {
+	// doclint's "missing @param/@return" pass fails a build over documentation this
+	// mod deliberately writes as prose, and Minecraft's own types carry no javadoc for
+	// it to link against. Warnings off, errors still reported; failOnError stays false
+	// so a documentation nit can never break `gradlew build` for a contributor.
+	options.addStringOption('Xdoclint:none', '-quiet')
+	options.encoding = 'UTF-8'
+	failOnError = false
 }
 
 jar {
@@ -154,10 +169,52 @@ publishing {
 	publications {
 		create("mavenJava", MavenPublication) {
 			from components.java
+
+			// POM metadata, so the artifact identifies itself in a dependency tree and
+			// on a repository listing rather than showing up as a bare coordinate.
+			pom {
+				name = "FloraFare"
+				description = "A datapack-driven food overhaul for Fabric: timed buffs on eating, " +
+						"hidden synergies, a searchable journal, and an API for other mods."
+				url = "https://github.com/thinkpad16/FloraFare-1.21.1-Fabric"
+				licenses {
+					license {
+						name = "MIT License"
+						url = "https://github.com/thinkpad16/FloraFare-1.21.1-Fabric/blob/FloraFare-1.21.1-Fabric/LICENSE"
+					}
+				}
+				developers {
+					developer {
+						id = "tend1tnuy"
+						name = "tend1tnuy"
+					}
+				}
+			}
 		}
 	}
 
 	repositories {
+		// Always available: `gradlew publish` writes into build/repo, which is enough to
+		// test a dependent mod against an unreleased build (point its repositories at
+		// that directory with `maven { url "…/FloraFare/build/repo" }`).
+		maven {
+			name = "projectLocal"
+			url = layout.buildDirectory.dir("repo")
+		}
 
+		// A real remote is used only when one is configured, so a clone with no
+		// credentials still configures and builds. Pass -PmavenUrl=… (or set MAVEN_URL,
+		// MAVEN_USERNAME, MAVEN_PASSWORD in the environment, which is what CI does).
+		def mavenUrl = project.findProperty("mavenUrl") ?: System.getenv("MAVEN_URL")
+		if (mavenUrl) {
+			maven {
+				name = "remote"
+				url = mavenUrl
+				credentials {
+					username = project.findProperty("mavenUsername") ?: System.getenv("MAVEN_USERNAME")
+					password = project.findProperty("mavenPassword") ?: System.getenv("MAVEN_PASSWORD")
+				}
+			}
+		}
 	}
 }

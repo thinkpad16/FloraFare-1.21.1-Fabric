@@ -165,6 +165,105 @@ public class PlayerFoodComponent {
         return true;
     }
 
+    /**
+     * Discovers several foods at once, for {@code /florafare journal unlock … all}.
+     *
+     * <p>Not a loop over {@link #unlockFood}: that sends one packet per food and the
+     * client answers each with a discovery toast, so unlocking a modpack's worth of
+     * them would queue several hundred toasts and as many packets. One full state sync
+     * covers the lot.
+     *
+     * @return how many of the ids were not already known
+     */
+    public int unlockFoods(Collection<String> itemIds) {
+        int added = 0;
+        for (String itemId : itemIds) {
+            if (!discoveredFoods.add(itemId)) continue;
+            added++;
+            if (!player.getWorld().isClient()) {
+                FlorafareEvents.FOOD_DISCOVERED.invoker().onFoodDiscovered(player, itemId);
+            }
+        }
+        if (added > 0) {
+            markPersistPending();
+            sync();
+        }
+        return added;
+    }
+
+    /**
+     * Forgets one discovered food, so its journal entry goes back to locked.
+     *
+     * <p>Re-syncs the whole component rather than sending a "locked" packet, because
+     * there is no such packet: the client's discovery set only ever grows on its own
+     * ({@link FoodUnlockedPayload} adds to it, nothing removes), and the full sync is
+     * the one thing that replaces it wholesale.
+     *
+     * @return false if the player had not discovered it in the first place
+     */
+    public boolean lockFood(String itemId) {
+        if (!discoveredFoods.remove(itemId)) return false;
+        markPersistPending();
+        sync();
+        return true;
+    }
+
+    /** Forgets every discovered food. @return how many entries were dropped */
+    public int lockAllFoods() {
+        int removed = discoveredFoods.size();
+        if (removed == 0) return 0;
+        discoveredFoods.clear();
+        markPersistPending();
+        sync();
+        return removed;
+    }
+
+    /**
+     * Records a synergy as discovered without having to actually trigger it. Sends the
+     * same toast the real discovery does, since there is only ever one at a time.
+     *
+     * @return false if it was already known
+     */
+    public boolean unlockSynergy(String synergyId) {
+        if (!discoveredSynergies.add(synergyId)) return false;
+        markPersistPending();
+        if (player instanceof ServerPlayerEntity serverPlayer) {
+            Florafare.sendTo(serverPlayer, new SynergyUnlockedPayload(synergyId));
+        }
+        return true;
+    }
+
+    /** Bulk counterpart of {@link #unlockSynergy}; one sync, no toasts. */
+    public int unlockSynergies(Collection<String> synergyIds) {
+        int added = 0;
+        for (String synergyId : synergyIds) {
+            if (discoveredSynergies.add(synergyId)) added++;
+        }
+        if (added > 0) {
+            markPersistPending();
+            sync();
+        }
+        return added;
+    }
+
+    /** @return false if the player had not discovered it. See {@link #lockFood}. */
+    public boolean lockSynergy(String synergyId) {
+        if (!discoveredSynergies.remove(synergyId)) return false;
+        markPersistPending();
+        sync();
+        return true;
+    }
+
+    /** Forgets every discovered synergy. @return how many entries were dropped */
+    public int lockAllSynergies() {
+        int removed = discoveredSynergies.size();
+        if (removed == 0) return 0;
+        discoveredSynergies.clear();
+        markPersistPending();
+        sync();
+        return removed;
+    }
+
     // -------------------------------------------------------------------------
     // THE BITE IN PROGRESS
     //

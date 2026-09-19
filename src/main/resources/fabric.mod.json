@@ -8,6 +8,11 @@
 		"tend1tnuy"
 	],
 	"license": "MIT",
+	"contact": {
+		"homepage": "https://github.com/thinkpad16/FloraFare-1.21.1-Fabric",
+		"sources": "https://github.com/thinkpad16/FloraFare-1.21.1-Fabric",
+		"issues": "https://github.com/thinkpad16/FloraFare-1.21.1-Fabric/issues"
+	},
 	"icon": "assets/florafare/icon.png",
 	"environment": "*",
 	"entrypoints": {
@@ -17,18 +22,18 @@
 		"fabric-datagen": [
 			"net.tend1tnuy.florafare.FlorafareDataGenerator"
 		],
-      "client": [
-        "net.tend1tnuy.florafare.FlorafareClient"
-      ],
-      "appleskin": [
-        "net.tend1tnuy.florafare.compat.appleskin.AppleSkinIntegration"
-      ],
-      "modmenu": [
-        "net.tend1tnuy.florafare.compat.modmenu.FlorafareModMenuIntegration"
-      ],
-      "emi": [
-        "net.tend1tnuy.florafare.compat.emi.FlorafareEmiPlugin"
-      ]
+		"client": [
+			"net.tend1tnuy.florafare.FlorafareClient"
+		],
+		"appleskin": [
+			"net.tend1tnuy.florafare.compat.appleskin.AppleSkinIntegration"
+		],
+		"modmenu": [
+			"net.tend1tnuy.florafare.compat.modmenu.FlorafareModMenuIntegration"
+		],
+		"emi": [
+			"net.tend1tnuy.florafare.compat.emi.FlorafareEmiPlugin"
+		]
 	},
 	"mixins": [
 		"florafare.mixins.json"

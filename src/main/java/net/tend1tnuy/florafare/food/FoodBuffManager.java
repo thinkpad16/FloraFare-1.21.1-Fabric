@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Manager for food buff configurations.
@@ -166,7 +167,21 @@ public class FoodBuffManager {
      * what an item resolves to: the datapack reload, a config arriving from the server,
      * a single entry being registered through the API, and the exclusion set changing.
      */
+    /**
+     * Bumped every time the config map, the exclusion set or the auto-generation
+     * multipliers change — i.e. on every datapack load and every API call that alters
+     * them. Anything that derives an expensive list from the configs can cache it and
+     * compare this instead of rebuilding: see {@code SetBuffCommand#journalTargets}.
+     */
+    private static final AtomicInteger CONFIG_GENERATION = new AtomicInteger();
+
+    /** @see #CONFIG_GENERATION */
+    public static int configGeneration() {
+        return CONFIG_GENERATION.get();
+    }
+
     public static void invalidateResolutionCache() {
+        CONFIG_GENERATION.incrementAndGet();
         RESOLVED_CACHE.clear();
     }
 
@@ -413,6 +428,151 @@ public class FoodBuffManager {
 
         return null;
     }
+
+    // -------------------------------------------------------------------------
+    // EXPLANATION
+    //
+    // Same chain as resolveConfig, walked with the reasoning kept. It exists because
+    // "my datapack entry did nothing" is the single hardest thing to debug about this
+    // mod: the entry may be shadowed by a more specific one, beaten by a priority, lost
+    // to an exclusion, or never reached because the item is not food at all — and from
+    // the outside all four look identical. /florafare explain prints this.
+    //
+    // Deliberately kept next to resolveConfig rather than in the command class, so the
+    // two cannot drift apart unnoticed.
+    // -------------------------------------------------------------------------
+
+    /** Which rung of the resolution ladder decided this item's buff. */
+    public enum Source {
+        /** Forgotten Mead is the mod's own tool and is never buffed. */
+        MEAD,
+        /** On the exclusion list from the config file or another mod's API call. */
+        EXCLUDED_BY_CONFIG,
+        /** In the {@code #florafare:ignored} item tag. */
+        EXCLUDED_BY_TAG,
+        /** Not edible, so Florafare never looks at it. */
+        NOT_FOOD,
+        /** This exact stack carries a {@code /florafare setbuff} buff in its NBT. */
+        STACK_BUFF,
+        /** An entry whose {@code id} is this item id. */
+        ITEM_ENTRY,
+        /** An entry whose {@code id} is a tag this item is in. */
+        TAG_ENTRY,
+        /** An entry whose {@code id} is {@code namespace:<this item's namespace>}. */
+        NAMESPACE_ENTRY,
+        /** The {@code template:default} catch-all. */
+        TEMPLATE_ENTRY,
+        /** No entry matched; the buff was generated from the item's vanilla food values. */
+        AUTO_GENERATED
+    }
+
+    /**
+     * One entry that could have applied to the item.
+     *
+     * @param target   the entry's configured {@code id}
+     * @param priority its effective priority
+     * @param chosen   whether this is the one that won
+     * @param reason   why it lost, or null for the winner and for entries never reached
+     */
+    public record Candidate(String target, int priority, boolean chosen, String reason) {}
+
+    /** The full answer to "what does Florafare do with this item, and why". */
+    public record Resolution(Source source, String target, FoodBuffData data,
+                             List<Candidate> candidates) {}
+
+    /** Walks the resolution chain for a stack, reporting every step. Never throws. */
+    public static Resolution explain(ItemStack stack) {
+        List<Candidate> candidates = new ArrayList<>();
+
+        if (stack.getItem() instanceof ForgottenMeadItem) {
+            return new Resolution(Source.MEAD, null, null, candidates);
+        }
+
+        Identifier itemId = Registries.ITEM.getId(stack.getItem());
+        if (EXCLUDED_ITEMS.contains(itemId.toString())) {
+            return new Resolution(Source.EXCLUDED_BY_CONFIG, itemId.toString(), null, candidates);
+        }
+        if (stack.isIn(IGNORED_TAG)) {
+            return new Resolution(Source.EXCLUDED_BY_TAG, "#" + IGNORED_TAG.id(), null, candidates);
+        }
+
+        NbtComponent customDataComp = stack.get(DataComponentTypes.CUSTOM_DATA);
+        if (customDataComp != null) {
+            NbtCompound nbt = customDataComp.copyNbt();
+            if (nbt.contains(BUFF_ID_KEY)) {
+                FoodBuffData runtime = RUNTIME_STACK_CONFIGS.get(nbt.getString(BUFF_ID_KEY));
+                if (runtime != null) {
+                    return new Resolution(Source.STACK_BUFF, runtime.target(), runtime, candidates);
+                }
+            }
+        }
+
+        if (!stack.contains(DataComponentTypes.FOOD)) {
+            return new Resolution(Source.NOT_FOOD, itemId.toString(), null, candidates);
+        }
+
+        // Every tag entry that could apply, ranked the way resolveConfig ranks them, is
+        // collected even when an item entry wins — "my tag entry is being shadowed by an
+        // item entry" is exactly the case this command has to be able to show.
+        FoodBuffData bestTagMatch = null;
+        List<FoodBuffData> tagMatches = new ArrayList<>();
+        for (var tagEntry = stack.streamTags().iterator(); tagEntry.hasNext(); ) {
+            TagKey<?> tag = tagEntry.next();
+            FoodBuffData candidate = CONFIGS.get("#" + tag.id());
+            if (candidate == null) continue;
+            tagMatches.add(candidate);
+            if (isBetterTagMatch(candidate, bestTagMatch)) bestTagMatch = candidate;
+        }
+
+        FoodBuffData itemEntry  = CONFIGS.get(itemId.toString());
+        String       nsTarget   = "namespace:" + itemId.getNamespace();
+        FoodBuffData nsEntry    = CONFIGS.get(nsTarget);
+        FoodBuffData templEntry = CONFIGS.get("template:default");
+
+        Source source;
+        FoodBuffData winner;
+        if (itemEntry != null) {
+            source = Source.ITEM_ENTRY;
+            winner = itemEntry;
+        } else if (bestTagMatch != null) {
+            source = Source.TAG_ENTRY;
+            winner = bestTagMatch;
+        } else if (nsEntry != null) {
+            source = Source.NAMESPACE_ENTRY;
+            winner = nsEntry;
+        } else if (templEntry != null) {
+            source = Source.TEMPLATE_ENTRY;
+            winner = templEntry;
+        } else {
+            source = Source.AUTO_GENERATED;
+            FoodComponent food = stack.get(DataComponentTypes.FOOD);
+            winner = food == null ? null : generateFromVanilla(food, itemId);
+        }
+
+        if (itemEntry != null) {
+            candidates.add(new Candidate(itemEntry.target(), itemEntry.priority(), true, null));
+        }
+        for (FoodBuffData tagMatch : tagMatches) {
+            boolean chosen = tagMatch == winner;
+            candidates.add(new Candidate(tagMatch.target(), tagMatch.priority(), chosen,
+                    chosen ? null : (itemEntry != null ? REASON_ITEM_ENTRY_WINS : REASON_TAG_RANK)));
+        }
+        if (nsEntry != null) {
+            candidates.add(new Candidate(nsEntry.target(), nsEntry.priority(),
+                    nsEntry == winner, nsEntry == winner ? null : REASON_MORE_SPECIFIC));
+        }
+        if (templEntry != null) {
+            candidates.add(new Candidate(templEntry.target(), templEntry.priority(),
+                    templEntry == winner, templEntry == winner ? null : REASON_MORE_SPECIFIC));
+        }
+
+        return new Resolution(source, winner == null ? null : winner.target(), winner, candidates);
+    }
+
+    /** Machine-readable loss reasons; the command turns them into translated text. */
+    public static final String REASON_ITEM_ENTRY_WINS = "item_entry_wins";
+    public static final String REASON_TAG_RANK        = "tag_rank";
+    public static final String REASON_MORE_SPECIFIC   = "more_specific";
 
     /**
      * Ranks configured tag entries when an item belongs to several of them.

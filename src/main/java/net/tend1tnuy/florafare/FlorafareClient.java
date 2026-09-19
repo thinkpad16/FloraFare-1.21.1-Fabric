@@ -10,6 +10,7 @@ import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.item.Items;
+import net.minecraft.nbt.NbtCompound;
 import net.minecraft.registry.Registries;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
@@ -26,6 +27,7 @@ import net.tend1tnuy.florafare.config.FlorafareConfig;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
 import net.tend1tnuy.florafare.food.FoodSynergyManager;
 import net.tend1tnuy.florafare.network.BuffStateSyncPayload;
+import net.tend1tnuy.florafare.network.ChunkedNbtSync;
 import net.tend1tnuy.florafare.network.FlorafareServerConfigSyncPayload;
 import net.tend1tnuy.florafare.network.FoodBuffSyncPayload;
 import net.tend1tnuy.florafare.network.FoodConfigSyncPayload;
@@ -41,6 +43,10 @@ import org.lwjgl.glfw.GLFW;
  * Handles networking synchronization and HUD rendering.
  */
 public class FlorafareClient implements ClientModInitializer {
+
+    /** Reassembly buffers for the two chunked datapack syncs; client-side, one connection at a time. */
+    private final ChunkedNbtSync configSync  = new ChunkedNbtSync("food_buffs");
+    private final ChunkedNbtSync synergySync = new ChunkedNbtSync("food_synergies");
 
     @Override
     public void onInitializeClient() {
@@ -107,9 +113,15 @@ public class FlorafareClient implements ClientModInitializer {
                     }
                 }));
 
+        // Both datapack maps arrive as a numbered sequence of packets — see
+        // ChunkedNbtSync. Nothing is applied until the last chunk lands, so the client's
+        // map is still swapped in one piece and never holds half a pack's entries.
         ClientPlayNetworking.registerGlobalReceiver(FoodConfigSyncPayload.ID, (payload, context) ->
                 context.client().execute(() -> {
-                    FoodBuffManager.loadConfigsFromNbt(payload.nbt());
+                    NbtCompound complete =
+                            configSync.accept(payload.nbt(), payload.index(), payload.total());
+                    if (complete == null) return;
+                    FoodBuffManager.loadConfigsFromNbt(complete);
                     // Invalidate the journal cache so the next screen open re-reads
                     // the updated configs (#7).
                     FoodJournalScreen.invalidateCache();
@@ -117,7 +129,10 @@ public class FlorafareClient implements ClientModInitializer {
 
         ClientPlayNetworking.registerGlobalReceiver(FoodSynergySyncPayload.ID, (payload, context) ->
                 context.client().execute(() -> {
-                    FoodSynergyManager.loadSynergiesFromNbt(payload.nbt());
+                    NbtCompound complete =
+                            synergySync.accept(payload.nbt(), payload.index(), payload.total());
+                    if (complete == null) return;
+                    FoodSynergyManager.loadSynergiesFromNbt(complete);
                     // Invalidate the journal cache so synergy data is also refreshed (#7).
                     FoodJournalScreen.invalidateCache();
                     // EMI has already finished building its recipe list by the time this

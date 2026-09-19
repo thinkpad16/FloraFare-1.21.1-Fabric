@@ -60,6 +60,10 @@ public class Florafare implements ModInitializer {
         ItemRegistry.initialize();
         net.tend1tnuy.registry.FlorafareItemGroups.registerItemGroups();
 
+        // 2b. Advancement triggers. Registered before the datapack listeners below so
+        // the criteria exist by the time advancement JSON referencing them is parsed.
+        net.tend1tnuy.florafare.advancement.FlorafareCriteria.register();
+
         // 3. Datapack reload listeners
         ResourceManagerHelper.get(ResourceType.SERVER_DATA)
                 .registerReloadListener(new FoodReloadListener());
@@ -207,20 +211,32 @@ public class Florafare implements ModInitializer {
     // -------------------------------------------------------------------------
 
     /**
-     * Refuse-to-send threshold for one datapack sync payload.
+     * How much of one packet a single chunk of the datapack sync is allowed to fill.
      *
      * <p>{@code CustomPayloadS2CPacket} hard-caps a payload at 1 MiB, and the failure mode
      * is not graceful: the encode throws while the packet is being written, which drops
-     * the connection. A pack large enough to cross that line would therefore kick every
-     * player as they joined, with a stack trace that says nothing about datapacks. The
-     * margin below the cap leaves room for the packet framing around the payload.
+     * the connection. The whole map used to be measured against that cap and refused
+     * wholesale when it crossed it — so a pack past the line left every client with no
+     * configs at all. It is split into chunks of this size instead.
+     *
+     * <p>Wire bytes are only half the story, which is why this is a quarter of a megabyte
+     * and not something nearer the cap. The receiving side decodes NBT under an
+     * {@code NbtSizeTracker} that budgets 2 MiB of <em>allocation</em>, and its
+     * accounting is far heavier than the wire: every compound costs 48 bytes and every
+     * key costs 28 plus two per character, so a map made of many small compounds — which
+     * is exactly what a food buff with a list of attributes is — can track at three or
+     * four times its encoded size. A chunk sized purely by wire bytes therefore sailed
+     * past the limit and the client dropped the connection while decoding it. Chunks are
+     * additionally verified against the real decoder in {@link #decodesWithinLimit}, so
+     * this number only has to be a sensible starting point, not a guarantee.
      */
-    private static final int MAX_SYNC_PAYLOAD_BYTES = 900_000;
+    static final int CHUNK_TARGET_BYTES = 250_000;
 
-    private static FoodConfigSyncPayload  cachedConfigPayload;
-    private static FoodSynergySyncPayload cachedSynergyPayload;
-    private static boolean oversizedConfigs;
-    private static boolean oversizedSynergies;
+    private static List<FoodConfigSyncPayload>  cachedConfigPayloads  = List.of();
+    private static List<FoodSynergySyncPayload> cachedSynergyPayloads = List.of();
+    /** Entries no packet could carry on its own; see {@link #chunk}. */
+    private static List<String> skippedConfigEntries  = List.of();
+    private static List<String> skippedSynergyEntries = List.of();
 
     /**
      * Whether {@link #buildSyncPayloads()} has run since the last invalidation.
@@ -248,11 +264,11 @@ public class Florafare implements ModInitializer {
      * ones. The reload listeners run on every datapack load, world open included.
      */
     public static void invalidateSyncPayloads() {
-        cachedConfigPayload  = null;
-        cachedSynergyPayload = null;
-        oversizedConfigs     = false;
-        oversizedSynergies   = false;
-        syncPayloadsBuilt    = false;
+        cachedConfigPayloads  = List.of();
+        cachedSynergyPayloads = List.of();
+        skippedConfigEntries  = List.of();
+        skippedSynergyEntries = List.of();
+        syncPayloadsBuilt     = false;
     }
 
     /**
@@ -266,24 +282,24 @@ public class Florafare implements ModInitializer {
     public static List<String> syncPayloadIssues() {
         ensureSyncPayloads();
         List<String> issues = new ArrayList<>();
-        if (oversizedConfigs) {
-            issues.add("the food_buffs config map is too large to send to clients "
-                    + "(over " + MAX_SYNC_PAYLOAD_BYTES + " bytes); tooltips and the journal "
-                    + "will not match the server. See the startup log for the exact size.");
+        if (!skippedConfigEntries.isEmpty()) {
+            issues.add("these food_buffs entries are each too large for one network packet, "
+                    + "so they are not sent to clients and their tooltips and journal rows fall "
+                    + "back to each client's own view: " + String.join(", ", skippedConfigEntries));
         }
-        if (oversizedSynergies) {
-            issues.add("the food_synergies map is too large to send to clients "
-                    + "(over " + MAX_SYNC_PAYLOAD_BYTES + " bytes); synergies still fire, "
-                    + "but the journal and EMI cannot list them.");
+        if (!skippedSynergyEntries.isEmpty()) {
+            issues.add("these food_synergies are each too large for one network packet, so they "
+                    + "are not sent to clients — they still fire, but the journal and EMI cannot "
+                    + "list them: " + String.join(", ", skippedSynergyEntries));
         }
         return issues;
     }
 
-    /** Sends the datapack-driven config and synergy maps, skipping either if it is too large. */
+    /** Sends the datapack-driven config and synergy maps, each as its chunk sequence. */
     private static void sendDatapackSync(ServerPlayerEntity player) {
         ensureSyncPayloads();
-        if (cachedConfigPayload  != null) sendTo(player, cachedConfigPayload);
-        if (cachedSynergyPayload != null) sendTo(player, cachedSynergyPayload);
+        for (FoodConfigSyncPayload  chunk : cachedConfigPayloads)  sendTo(player, chunk);
+        for (FoodSynergySyncPayload chunk : cachedSynergyPayloads) sendTo(player, chunk);
     }
 
     /** Builds the memoized payloads once per invalidation, oversized results included. */
@@ -294,39 +310,157 @@ public class Florafare implements ModInitializer {
 
     private static void buildSyncPayloads() {
         syncPayloadsBuilt = true;
-        NbtCompound configs = FoodBuffManager.serializeConfigs();
-        int configBytes = encodedSize(configs);
-        oversizedConfigs = configBytes > MAX_SYNC_PAYLOAD_BYTES;
-        if (oversizedConfigs) {
-            LOGGER.error(
-                    "Florafare's food_buffs configs serialize to {} bytes, over the {} byte limit "
-                            + "for a single network payload. They will NOT be sent to clients — item "
-                            + "tooltips and the journal will fall back to each client's own view, but "
-                            + "nobody will be disconnected. Reduce the number of food_buffs entries, "
-                            + "or cover more items with '#tag' targets instead of one entry per item.",
-                    configBytes, MAX_SYNC_PAYLOAD_BYTES);
-            cachedConfigPayload = null;
-        } else {
-            cachedConfigPayload = new FoodConfigSyncPayload(configs);
+
+        List<String> skippedConfigs = new ArrayList<>();
+        List<NbtCompound> configChunks =
+                chunk(FoodBuffManager.serializeConfigs(), "food_buffs", skippedConfigs);
+        List<FoodConfigSyncPayload> configPayloads = new ArrayList<>(configChunks.size());
+        for (int i = 0; i < configChunks.size(); i++) {
+            configPayloads.add(new FoodConfigSyncPayload(configChunks.get(i), i, configChunks.size()));
+        }
+        cachedConfigPayloads = List.copyOf(configPayloads);
+        skippedConfigEntries = List.copyOf(skippedConfigs);
+
+        List<String> skippedSynergies = new ArrayList<>();
+        List<NbtCompound> synergyChunks =
+                chunk(FoodSynergyManager.serializeSynergies(), "food_synergies", skippedSynergies);
+        List<FoodSynergySyncPayload> synergyPayloads = new ArrayList<>(synergyChunks.size());
+        for (int i = 0; i < synergyChunks.size(); i++) {
+            synergyPayloads.add(new FoodSynergySyncPayload(synergyChunks.get(i), i, synergyChunks.size()));
+        }
+        cachedSynergyPayloads = List.copyOf(synergyPayloads);
+        skippedSynergyEntries = List.copyOf(skippedSynergies);
+
+        if (configChunks.size() > 1 || synergyChunks.size() > 1) {
+            LOGGER.info("Florafare datapack sync split into {} config chunk(s) and {} synergy chunk(s).",
+                    configChunks.size(), synergyChunks.size());
+        }
+    }
+
+    /**
+     * Splits one serialized map into packet-sized compounds.
+     *
+     * <p>Each top-level key is measured once on its own, and entries are packed until the
+     * running total would cross {@link #CHUNK_TARGET_BYTES} — which leaves generous room
+     * under the hard cap for the framing around them. A single entry that cannot fit in a
+     * packet by itself is dropped and named to the caller: no splitting can send it, and
+     * one impossible entry must not cost the pack every other one, which is exactly what
+     * refusing the whole map used to do.
+     *
+     * @param skipped filled with the keys that had to be dropped
+     * @return at least one chunk, so a sequence is always sent and the client always ends
+     *         up with a map — an empty one if that is genuinely what the pack has
+     */
+    static List<NbtCompound> chunk(NbtCompound root, String what, List<String> skipped) {
+        List<NbtCompound> chunks = new ArrayList<>();
+        NbtCompound current = new NbtCompound();
+        int currentBytes = 0;
+
+        for (String key : root.getKeys()) {
+            NbtCompound single = new NbtCompound();
+            single.put(key, root.get(key));
+            // Negative when the entry cannot be encoded at all — an NBT string over
+            // 64 KiB, say, which the codec refuses outright. Treated exactly like an
+            // oversized one: skipped and named, never thrown, because this runs while a
+            // player is joining and an exception here would drop their connection.
+            int entryBytes = encodedSizeOrInvalid(single);
+
+            if (entryBytes < 0 || entryBytes > CHUNK_TARGET_BYTES) {
+                LOGGER.error(
+                        "Florafare {} entry '{}' cannot travel in a network packet ({}; the limit is "
+                                + "{} bytes). It is not sent to clients. Split it up — an entry that "
+                                + "size is usually hundreds of effects or attributes.",
+                        what, key,
+                        entryBytes < 0 ? "it could not be encoded at all" : entryBytes + " bytes",
+                        CHUNK_TARGET_BYTES);
+                skipped.add(key);
+                continue;
+            }
+
+            if (currentBytes + entryBytes > CHUNK_TARGET_BYTES && !current.isEmpty()) {
+                chunks.add(current);
+                current = new NbtCompound();
+                currentBytes = 0;
+            }
+            current.put(key, root.get(key));
+            currentBytes += entryBytes;
         }
 
-        NbtCompound synergies = FoodSynergyManager.serializeSynergies();
-        int synergyBytes = encodedSize(synergies);
-        oversizedSynergies = synergyBytes > MAX_SYNC_PAYLOAD_BYTES;
-        if (oversizedSynergies) {
+        chunks.add(current);
+
+        // Wire size is a guess at what the receiver will allow; this is the answer. Any
+        // chunk the real decoder refuses is halved until every piece gets through.
+        List<NbtCompound> verified = new ArrayList<>(chunks.size());
+        for (NbtCompound candidate : chunks) {
+            splitUntilDecodable(candidate, what, verified, skipped);
+        }
+        return verified;
+    }
+
+    /**
+     * Adds a chunk to {@code out}, halving it as many times as the decoder demands.
+     *
+     * <p>Recursion bottoms out at a single entry: one that still cannot be decoded can
+     * never be sent, so it is skipped and named rather than splitting forever.
+     */
+    private static void splitUntilDecodable(NbtCompound chunk, String what,
+                                            List<NbtCompound> out, List<String> skipped) {
+        if (decodesWithinLimit(chunk)) {
+            out.add(chunk);
+            return;
+        }
+
+        List<String> keys = new ArrayList<>(chunk.getKeys());
+        if (keys.size() <= 1) {
+            String key = keys.isEmpty() ? "<empty>" : keys.get(0);
             LOGGER.error(
-                    "Florafare's food_synergies serialize to {} bytes, over the {} byte limit for a "
-                            + "single network payload. They will NOT be sent to clients — synergies "
-                            + "still work server-side, but the journal and EMI cannot list them.",
-                    synergyBytes, MAX_SYNC_PAYLOAD_BYTES);
-            cachedSynergyPayload = null;
-        } else {
-            cachedSynergyPayload = new FoodSynergySyncPayload(synergies);
+                    "Florafare {} entry '{}' is too large for the client to decode even on its own. "
+                            + "It is not sent to clients. Split it up — an entry that size is usually "
+                            + "hundreds of effects or attributes.", what, key);
+            if (!keys.isEmpty()) skipped.add(key);
+            return;
+        }
+
+        int half = keys.size() / 2;
+        NbtCompound first  = new NbtCompound();
+        NbtCompound second = new NbtCompound();
+        for (int i = 0; i < keys.size(); i++) {
+            String key = keys.get(i);
+            (i < half ? first : second).put(key, chunk.get(key));
+        }
+        splitUntilDecodable(first,  what, out, skipped);
+        splitUntilDecodable(second, what, out, skipped);
+    }
+
+    /**
+     * Whether the client will accept this chunk, asked of the very codec the client
+     * decodes with — {@code NbtSizeTracker}'s allowance included. Guessing at that
+     * accounting from the outside is how the limit got crossed in the first place.
+     */
+    static boolean decodesWithinLimit(NbtCompound chunk) {
+        ByteBuf buf = Unpooled.buffer();
+        try {
+            PacketCodecs.NBT_COMPOUND.encode(buf, chunk);
+            PacketCodecs.NBT_COMPOUND.decode(buf);
+            return true;
+        } catch (Exception refused) {
+            return false;
+        } finally {
+            buf.release();
+        }
+    }
+
+    /** {@link #encodedSize}, answering -1 instead of throwing when the codec refuses. */
+    private static int encodedSizeOrInvalid(NbtCompound nbt) {
+        try {
+            return encodedSize(nbt);
+        } catch (Exception refused) {
+            return -1;
         }
     }
 
     /** Exactly what the payload will occupy on the wire, measured with the real codec. */
-    private static int encodedSize(NbtCompound nbt) {
+    static int encodedSize(NbtCompound nbt) {
         ByteBuf buf = Unpooled.buffer();
         try {
             PacketCodecs.NBT_COMPOUND.encode(buf, nbt);

@@ -1,0 +1,171 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/thinkpad16/FloraFare-1.21.1-Fabric/schemas/food_buffs.schema.json",
+  "title": "FloraFare food_buffs file",
+  "description": "A file in data/<namespace>/food_buffs/. Either an object with an 'entries' array, a single entry object, or (legacy) a bare array of entries. config_generation.json uses its own schema.",
+  "oneOf": [
+    {
+      "$ref": "#/definitions/entriesFile"
+    },
+    {
+      "$ref": "#/definitions/entry"
+    },
+    {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/entry"
+      }
+    }
+  ],
+  "definitions": {
+    "entriesFile": {
+      "type": "object",
+      "required": [
+        "entries"
+      ],
+      "properties": {
+        "priority": {
+          "type": "integer",
+          "default": 0,
+          "description": "File-wide priority, used by every entry that does not set its own. Higher wins when two tag entries both match an item."
+        },
+        "always_edible": {
+          "type": "boolean",
+          "default": false,
+          "description": "File-wide default for always_edible."
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/entry"
+          }
+        },
+        "_comment": {
+          "description": "Ignored by the loader \u2014 a note for whoever edits the file. Florafare's own tag_categories.json uses it."
+        }
+      },
+      "additionalProperties": false
+    },
+    "entry": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "What this entry targets: an item id (minecraft:bread), a tag (#c:foods/vegetable), a namespace (namespace:farmersdelight), the catch-all (template:default), or a journal-only potion row (potion:minecraft:strength).",
+          "pattern": "^(#?[a-z0-9_.-]+:[a-z0-9_./-]+|#?[a-z0-9_./-]+|namespace:[a-z0-9_.-]+|template:default|potion:[a-z0-9_.-]+:[a-z0-9_./-]+)$"
+        },
+        "duration": {
+          "type": "integer",
+          "default": 6000,
+          "minimum": 0,
+          "description": "Buff duration in TICKS. 20 ticks = 1 second; 6000 = 5 minutes."
+        },
+        "nutrition": {
+          "type": "integer",
+          "default": 0,
+          "description": "Hunger points restored. Whole numbers only \u2014 1 point = half a drumstick. Negative drains hunger."
+        },
+        "saturation": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Saturation MODIFIER, vanilla semantics: restored saturation = nutrition x saturation x 2. Does nothing when nutrition is 0."
+        },
+        "health_bonus": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Extra max health for the buff's duration. 2.0 = one heart. Removed when the buff ends."
+        },
+        "priority": {
+          "type": "integer",
+          "description": "Overrides the file-wide priority for this entry."
+        },
+        "always_edible": {
+          "type": "boolean",
+          "description": "Lets the food be eaten at full hunger."
+        },
+        "effects": {
+          "type": "array",
+          "description": "Status effects applied when the food is eaten.",
+          "items": {
+            "$ref": "#/definitions/effect"
+          }
+        },
+        "attributes": {
+          "type": "array",
+          "description": "Attribute modifiers held for the buff's duration.",
+          "items": {
+            "$ref": "#/definitions/attribute"
+          }
+        },
+        "_comment": {
+          "description": "Ignored by the loader \u2014 a note for whoever edits the file. Florafare's own tag_categories.json uses it."
+        }
+      },
+      "additionalProperties": false
+    },
+    "effect": {
+      "type": "object",
+      "required": [
+        "id",
+        "duration"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Status effect id. Must be registered, or the effect is skipped with an error in the log.",
+          "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+        },
+        "duration": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Effect duration in ticks."
+        },
+        "amplifier": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0,
+          "description": "Effect level minus one: 0 = level I."
+        },
+        "_comment": {
+          "description": "Ignored by the loader \u2014 a note for whoever edits the file. Florafare's own tag_categories.json uses it."
+        }
+      },
+      "additionalProperties": false
+    },
+    "attribute": {
+      "type": "object",
+      "required": [
+        "attribute",
+        "amount"
+      ],
+      "properties": {
+        "attribute": {
+          "type": "string",
+          "description": "Any registered entity attribute id, e.g. minecraft:generic.attack_damage.",
+          "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+        },
+        "amount": {
+          "type": "number",
+          "description": "Modifier amount; negative allowed."
+        },
+        "operation": {
+          "type": "string",
+          "default": "add_value",
+          "enum": [
+            "add_value",
+            "add_multiplied_base",
+            "add_multiplied_total"
+          ],
+          "description": "Anything else falls back to add_value."
+        },
+        "_comment": {
+          "description": "Ignored by the loader \u2014 a note for whoever edits the file. Florafare's own tag_categories.json uses it."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

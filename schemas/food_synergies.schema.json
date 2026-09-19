@@ -1,0 +1,82 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/thinkpad16/FloraFare-1.21.1-Fabric/schemas/food_synergies.schema.json",
+  "title": "FloraFare food_synergies file",
+  "description": "A file in data/<namespace>/food_synergies/. Either an object with an 'entries' array, or a single synergy object.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "entries"
+      ],
+      "properties": {
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/synergy"
+          }
+        },
+        "_comment": {
+          "description": "Ignored by the loader \u2014 a note for whoever edits the file. Florafare's own tag_categories.json uses it."
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "$ref": "#/definitions/synergy"
+    }
+  ],
+  "definitions": {
+    "synergy": {
+      "type": "object",
+      "required": [
+        "id",
+        "requirements"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unique synergy name, shown in the journal and the logs."
+        },
+        "requirements": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Item ids and/or #tags. The synergy runs while the player's ACTIVE BUFFS cover every requirement at once \u2014 so keep this at or below maxBuffSlots (3 by default) or it can never trigger.",
+          "items": {
+            "type": "string",
+            "pattern": "^#?([a-z0-9_.-]+:)?[a-z0-9_./-]+$"
+          }
+        },
+        "duration": {
+          "type": "integer",
+          "default": 2400,
+          "description": "Ceiling in ticks. The synergy runs for the shortest remaining duration among the buffs feeding it, capped here. 0 or less means no ceiling."
+        },
+        "health_bonus": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Extra max health while the synergy is active; negative allowed."
+        },
+        "effects": {
+          "type": "array",
+          "description": "Same format as food_buffs. Effect durations are stretched to the synergy's duration.",
+          "items": {
+            "$ref": "food_buffs.schema.json#/definitions/effect"
+          }
+        },
+        "attributes": {
+          "type": "array",
+          "description": "Same format as food_buffs.",
+          "items": {
+            "$ref": "food_buffs.schema.json#/definitions/attribute"
+          }
+        },
+        "_comment": {
+          "description": "Ignored by the loader \u2014 a note for whoever edits the file. Florafare's own tag_categories.json uses it."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
