@@ -1,4 +1,285 @@
 {
   "replace": false,
-  "values": []
+  "values": [
+    {
+      "id": "loot_n_explore:sweet_berry_punch",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:hot_chocolate",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:potato_soup",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:dettlaffs_blood",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:cactus_juice",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:honey_met",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:green_chilli",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:blue_berry_punch",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:the_unshakable",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:knights_favourite",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:espresso",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:vital_drink",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:beet_rootbeer",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:malt_extract",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:scarlet_essence",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:svablods_brew",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:apple_juice",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:waldmeister",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:forrest_spirit",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:woodsnake_potion",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:orange_juice",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:sweet_chilli",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:fruit_icewater",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:chorus_extract",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:hot_chilli",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:holy_water",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:enchanted_ale",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:wizards_elixir",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:merlins_flask",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:crusaders_rest",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:beauclair_white",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:rivian_kriek",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:butcher_of_blaviken",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:white_wolf",
+      "required": false
+    },
+    {
+      "id": "loot_n_explore:watermelon_drink",
+      "required": false
+    },
+    {
+      "id": "vinery:red_grapejuice",
+      "required": false
+    },
+    {
+      "id": "vinery:white_grapejuice",
+      "required": false
+    },
+    {
+      "id": "vinery:red_taiga_grapejuice",
+      "required": false
+    },
+    {
+      "id": "vinery:white_taiga_grapejuice",
+      "required": false
+    },
+    {
+      "id": "vinery:red_jungle_grapejuice",
+      "required": false
+    },
+    {
+      "id": "vinery:white_jungle_grapejuice",
+      "required": false
+    },
+    {
+      "id": "vinery:red_savanna_grapejuice",
+      "required": false
+    },
+    {
+      "id": "vinery:white_savanna_grapejuice",
+      "required": false
+    },
+    {
+      "id": "vinery:apple_juice",
+      "required": false
+    },
+    {
+      "id": "vinery:mead",
+      "required": false
+    },
+    {
+      "id": "vinery:apple_cider",
+      "required": false
+    },
+    {
+      "id": "vinery:apple_wine",
+      "required": false
+    },
+    {
+      "id": "vinery:mellohi_wine",
+      "required": false
+    },
+    {
+      "id": "vinery:glowing_wine",
+      "required": false
+    },
+    {
+      "id": "vinery:solaris_wine",
+      "required": false
+    },
+    {
+      "id": "vinery:noir_wine",
+      "required": false
+    },
+    {
+      "id": "vinery:red_wine",
+      "required": false
+    },
+    {
+      "id": "vinery:strad_wine",
+      "required": false
+    },
+    {
+      "id": "vinery:cherry_wine",
+      "required": false
+    },
+    {
+      "id": "vinery:cristel_wine",
+      "required": false
+    },
+    {
+      "id": "vinery:creepers_crush",
+      "required": false
+    },
+    {
+      "id": "vinery:kelp_cider",
+      "required": false
+    },
+    {
+      "id": "vinery:lilitu_wine",
+      "required": false
+    },
+    {
+      "id": "vinery:jo_special_mixture",
+      "required": false
+    },
+    {
+      "id": "vinery:eiswein",
+      "required": false
+    },
+    {
+      "id": "vinery:aegis_wine",
+      "required": false
+    },
+    {
+      "id": "vinery:bolvar_wine",
+      "required": false
+    },
+    {
+      "id": "vinery:chorus_wine",
+      "required": false
+    },
+    {
+      "id": "vinery:villagers_fright",
+      "required": false
+    },
+    {
+      "id": "vinery:clark_wine",
+      "required": false
+    },
+    {
+      "id": "vinery:magnetic_wine",
+      "required": false
+    },
+    {
+      "id": "vinery:stal_wine",
+      "required": false
+    },
+    {
+      "id": "vinery:chenet_wine",
+      "required": false
+    },
+    {
+      "id": "vinery:bottle_mojang_noir",
+      "required": false
+    },
+    {
+      "id": "vinery:jellie_wine",
+      "required": false
+    }
+  ]
 }

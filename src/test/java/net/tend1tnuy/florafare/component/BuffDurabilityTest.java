@@ -151,6 +151,46 @@ class BuffDurabilityTest {
         }
 
         @Test
+        @DisplayName("a buff change is written far sooner than a discovery")
+        void buffChangesUseTheShorterDeadline() {
+            PlayerFoodComponent comp = component();
+            comp.setHasReceivedJournal(true);
+            assertTrue(comp.isPersistDue(1000));
+
+            // The buff a player is actually using is the one a crash must not eat.
+            comp.requestPersist(PlayerFoodComponent.BUFF_PERSIST_INTERVAL_TICKS);
+            assertFalse(comp.isPersistDue(1080), "still inside the buff window");
+            assertTrue(comp.isPersistDue(1100),
+                    "a buff must not wait out the journal's thirty-second throttle");
+        }
+
+        @Test
+        @DisplayName("a buff gained alongside a discovery is not slowed to the discovery's pace")
+        void tightestDeadlineWins() {
+            PlayerFoodComponent comp = component();
+            comp.isPersistDue(1000); // consume the free first write
+
+            comp.setHasReceivedJournal(true);                                  // wants 600
+            comp.requestPersist(PlayerFoodComponent.BUFF_PERSIST_INTERVAL_TICKS); // wants 100
+            assertTrue(comp.isPersistDue(1100),
+                    "eating a new food both discovers it and grants its buff, so the two "
+                            + "requests always arrive together — the slower one must not win");
+        }
+
+        @Test
+        @DisplayName("the deadline goes back to the slow one once the write happens")
+        void deadlineResetsAfterWrite() {
+            PlayerFoodComponent comp = component();
+            comp.requestPersist(PlayerFoodComponent.BUFF_PERSIST_INTERVAL_TICKS);
+            assertTrue(comp.isPersistDue(1000));
+
+            comp.setHasReceivedJournal(true);
+            assertFalse(comp.isPersistDue(1100),
+                    "a lone discovery after a buff write must not inherit the buff's deadline");
+            assertTrue(comp.isPersistDue(1600));
+        }
+
+        @Test
         @DisplayName("a write is not repeated until something else changes")
         void staysQuietOnceWritten() {
             PlayerFoodComponent comp = component();

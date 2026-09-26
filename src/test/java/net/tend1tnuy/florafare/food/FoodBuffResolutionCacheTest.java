@@ -25,7 +25,7 @@ class FoodBuffResolutionCacheTest {
     @BeforeEach
     void reset() {
         FoodBuffManager.clear();
-        FoodBuffManager.setExcludedItems(Set.of());
+        FoodExclusions.resetAll();
     }
 
     @Test
@@ -77,11 +77,16 @@ class FoodBuffResolutionCacheTest {
     }
 
     @Test
-    @DisplayName("replacing the exclusion set from a server sync invalidates too")
+    @DisplayName("a server's exclusion list replaces this client's own, and invalidates too")
     void syncedExclusionsInvalidate() {
         FoodBuffManager.excludeItem("minecraft:cake");
-        FoodBuffManager.setExcludedItems(Set.of("modid:stew"));
+        FoodExclusions.applyRemote(java.util.List.of("modid:stew"), java.util.List.of());
         assertSame(1, FoodBuffManager.getExcludedItems().size());
-        assertTrue(FoodBuffManager.getExcludedItems().contains("modid:stew"));
+        assertTrue(FoodBuffManager.getExcludedItems().contains("modid:stew"),
+                "while connected, the server decides what Florafare manages");
+
+        FoodExclusions.clearRemote();
+        assertTrue(FoodBuffManager.getExcludedItems().contains("minecraft:cake"),
+                "and disconnecting puts this client's own entries back");
     }
 }

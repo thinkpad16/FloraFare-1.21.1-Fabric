@@ -5,6 +5,7 @@ import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.registry.Registries;
 import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.text.Text;
 import net.minecraft.world.World;
 import net.tend1tnuy.florafare.Florafare;
 import net.tend1tnuy.florafare.component.IFoodComponentProvider;
@@ -82,13 +83,22 @@ public abstract class PlayerEntityEatMixin {
         //
         //   * every slot is taken — Florafare is still managing the food, the player
         //     just cannot hold another buff, so the datapack's nutrition and the effect
-        //     suppression stand. Not treated as anything worth telling the player about
-        //     either: the overlay is on screen the whole time and already shows the
-        //     slots are full;
+        //     suppression stand. The overlay does show the slots are full, but it is the
+        //     thing a player is least likely to be looking at in the moment the bite
+        //     does nothing, so this now says so on the action bar as well;
         //   * a BUFF_APPLYING listener vetoed it — that is a mod asking Florafare to
         //     keep its hands off, so tryAddBuff records it and the bite reverts to
         //     vanilla in full.
-        component.tryAddBuff(stack, data);
+        if (!component.tryAddBuff(stack, data)
+                && FlorafareConfig.notifyOnFullBuffSlots
+                // Tells the two false cases apart. tryAddBuff records the veto by
+                // leaving the bite with vanilla, so "Florafare took the bite over and
+                // still granted nothing" is exactly the full-slots case — and the veto,
+                // which is another mod deliberately staying out, stays silent.
+                && PlayerFoodComponent.handlesCurrentBite(self)) {
+            player.sendMessage(Text.translatable("message.florafare.buff_slots_full",
+                    PlayerFoodComponent.getMaxBuffSlots()), true);
+        }
 
         florafare$logConsumption(player, itemId, data);
     }

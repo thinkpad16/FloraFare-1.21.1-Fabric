@@ -3,10 +3,12 @@ package net.tend1tnuy.florafare.client;
 import net.tend1tnuy.florafare.component.PlayerFoodComponent;
 import net.tend1tnuy.florafare.config.FlorafareConfig;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
+import net.tend1tnuy.florafare.food.FoodExclusions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -39,7 +41,8 @@ class ClientConfigOverrideTest {
         FlorafareConfig.respectVanillaFoodEffects  = false;
         FlorafareConfig.enableForgottenMead        = true;
         PlayerFoodComponent.setMaxBuffSlots(3);
-        FoodBuffManager.setExcludedItems(Set.of("minecraft:cake"));
+        FoodExclusions.clearRemote();
+        FoodExclusions.loadFromConfig(List.of("minecraft:cake"), List.of(), List.of());
 
         // Drop any snapshot a previous test left behind.
         ClientConfigOverride.restoreLocal();
@@ -52,7 +55,7 @@ class ClientConfigOverrideTest {
         FlorafareConfig.allowEatingWhenFull        = true;
         FlorafareConfig.enableForgottenMead        = true;
         PlayerFoodComponent.setMaxBuffSlots(3);
-        FoodBuffManager.setExcludedItems(Set.of("minecraft:cake"));
+        FoodExclusions.clearRemote();
     }
 
     /** Stands in for the server config sync packet arriving after a join. */
@@ -63,7 +66,7 @@ class ClientConfigOverrideTest {
         FlorafareConfig.enableForgottenMead       = false;
         FlorafareConfig.autoGenHealthMultiplier   = 2.0;
         PlayerFoodComponent.setMaxBuffSlots(1);
-        FoodBuffManager.setExcludedItems(Set.of("someothermod:stew"));
+        FoodExclusions.applyRemote(List.of("someothermod:stew"), List.of());
     }
 
     @Test
@@ -85,7 +88,7 @@ class ClientConfigOverrideTest {
     }
 
     @Test
-    @DisplayName("the exclusion set is restored, since nothing else rebuilds it client-side")
+    @DisplayName("the server's exclusion list is dropped on disconnect and this client's put back")
     void restoresExclusions() {
         ClientConfigOverride.rememberLocal(REMOTE_SERVER);
         serverOverrides();

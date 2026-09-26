@@ -65,17 +65,6 @@ public class FoodBuffManager {
             });
 
     /**
-     * Item ids Florafare fully ignores, for interop with other food/hunger mods.
-     * Populated from {@code florafare.json}'s {@code ignoredFoodItems} and from
-     * {@link net.tend1tnuy.florafare.api.FlorafareAPI#excludeFood(String)}. Checked
-     * before anything else in {@link #getConfig(ItemStack)}, so an excluded item is
-     * completely invisible to every Florafare hook (eating, tooltips, AppleSkin,
-     * always-edible). Synced to clients so tooltip stripping and hunger prediction
-     * stay consistent with the server's authoritative decision.
-     */
-    private static final Set<String> EXCLUDED_ITEMS = ConcurrentHashMap.newKeySet();
-
-    /**
      * Targets that were defined by two or more datapack/API entries at the exact
      * same priority, so which one ended up winning was not a deliberate choice.
      * Tracked for {@code /florafare validate}; harmless to gameplay either way.
@@ -224,6 +213,32 @@ public class FoodBuffManager {
     }
 
     /**
+     * Writes a config under a target unconditionally, ignoring the priority rules
+     * {@link #putConfig} applies.
+     *
+     * <p>For {@link FoodBuffOverrides}, and only for it. Priority exists so two datapacks
+     * defining the same target settle it without an operator refereeing; an operator
+     * typing {@code /florafare edit} into a running server <em>is</em> the referee, and an
+     * edit that silently lost to a number in a JSON file would be the worst possible
+     * answer to "why did my command do nothing".
+     */
+    public static void forcePutConfig(String target, FoodBuffData data) {
+        invalidateResolutionCache();
+        AMBIGUOUS_TARGETS.remove(target);
+        CONFIGS.put(target, data);
+    }
+
+    /**
+     * Drops a target from the config map. Used when an override is reset and there was no
+     * datapack entry underneath it to restore.
+     */
+    public static void removeConfig(String target) {
+        invalidateResolutionCache();
+        AMBIGUOUS_TARGETS.remove(target);
+        CONFIGS.remove(target);
+    }
+
+    /**
      * The config registered under an exact normalized target string, or null.
      * Unlike {@link #getConfig(ItemStack)} this performs no tag/namespace/auto-gen
      * resolution — it answers "what did a datapack define for this literal target".
@@ -237,8 +252,40 @@ public class FoodBuffManager {
         return new HashSet<>(AMBIGUOUS_TARGETS);
     }
 
+    /**
+     * The server these per-stack buffs belong to, so a new one can be written the moment
+     * it is created. Null between worlds, and in the tests.
+     */
+    private static volatile MinecraftServer runtimeOwner;
+
+    /**
+     * Records a buff stamped onto one stack by {@code /florafare setbuff}, and writes it
+     * out immediately.
+     *
+     * <p>The write used to happen at {@code SERVER_STOPPING} and nowhere else, which made
+     * every one of these last only as long as a clean shutdown. A server that was killed —
+     * a crash, an OOM, a host pulling the plug — came back with the file as it was at the
+     * previous stop, while the stacks themselves had survived in players' inventories with
+     * their {@code FlorafareBuffId} intact. The UUID then resolved to nothing and the item
+     * quietly became ordinary food, which is indistinguishable from the buff having been
+     * removed on purpose.
+     *
+     * <p>Cheap to do eagerly: these are created one at a time by an operator running a
+     * command, not on any hot path.
+     */
     public static void setRuntimeStackConfig(String uuid, FoodBuffData data) {
         RUNTIME_STACK_CONFIGS.put(uuid, data);
+        MinecraftServer server = runtimeOwner;
+        if (server != null) saveRuntimeConfigs(server);
+    }
+
+    /**
+     * Forgets the world that has just closed, so an edit made with no server up cannot be
+     * written into the save of one that is already gone. Matters in single-player, where
+     * these statics outlive a world.
+     */
+    public static void clearRuntimeOwner() {
+        runtimeOwner = null;
     }
 
     public static void saveRuntimeConfigs(MinecraftServer server) {
@@ -249,10 +296,32 @@ public class FoodBuffManager {
                 root.put(entry.getKey(), entry.getValue().toNbt());
             }
         }
+        Path destination = runtimeFilePath(server);
+        Path temp = destination.resolveSibling(RUNTIME_FILE_NAME + ".tmp");
         try {
-            NbtIo.writeCompressed(root, runtimeFilePath(server));
+            // Beside the file and then over it, never into it: now that this is written
+            // on every setbuff rather than once at shutdown, it is genuinely exposed to
+            // being half-written when a server dies, and a truncated NBT stream does not
+            // cost the last entry — it fails to parse and costs every entry.
+            NbtIo.writeCompressed(root, temp);
+            Files.move(temp, destination,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+        } catch (java.nio.file.AtomicMoveNotSupportedException unsupported) {
+            // FAT and some network mounts; a plain replace is still far better than
+            // writing into the live file.
+            try {
+                Files.move(temp, destination, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            } catch (Exception e) {
+                Florafare.LOGGER.error("Failed to save Florafare runtime buffs!", e);
+            }
         } catch (Exception e) {
             Florafare.LOGGER.error("Failed to save Florafare runtime buffs!", e);
+            try {
+                Files.deleteIfExists(temp);
+            } catch (Exception ignored) {
+                // The real error is already logged.
+            }
         }
     }
 
@@ -260,6 +329,7 @@ public class FoodBuffManager {
         // Always starts from empty: these belong to the world being loaded, and anything
         // left in the map is the previous world's.
         RUNTIME_STACK_CONFIGS.clear();
+        runtimeOwner = server;
 
         Path path = runtimeFilePath(server);
         if (!Files.exists(path)) {
@@ -298,56 +368,57 @@ public class FoodBuffManager {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // EXCLUSIONS
+    //
+    // The rules themselves live in FoodExclusions, which owns the per-source
+    // bookkeeping, the "whole mod" and "whole tag" forms, and the server override.
+    // What stays here are the two entry points the rest of the mod already calls
+    // through — isExcluded, checked first in getConfig, and the API's add/remove.
+    // -------------------------------------------------------------------------
+
     /**
-     * Marks an item id as fully ignored by Florafare. Safe to call from any mod's
-     * initializer; take effect immediately server-side and are synced to clients
-     * on their next join or {@code /reload}.
+     * The datapack half of the exclusion list; see {@link FoodExclusions#IGNORED_TAG}.
+     * Kept here as well because it has been part of the mod's public surface since 1.4
+     * and addons reference it by this name.
+     */
+    public static final TagKey<Item> IGNORED_TAG = FoodExclusions.IGNORED_TAG;
+
+    /**
+     * Marks an item id — or a whole mod, or an item tag — as fully ignored by Florafare.
+     * Safe to call from any mod's initializer; takes effect immediately server-side and
+     * is synced to clients on their next join or {@code /reload}.
+     *
+     * @see FoodExclusions for the accepted spellings
      */
     public static void excludeItem(String itemId) {
-        Identifier id = normalizeItemId(itemId);
-        if (id != null && EXCLUDED_ITEMS.add(id.toString())) invalidateResolutionCache();
+        FoodExclusions.add(FoodExclusions.Source.API, itemId);
     }
 
+    /** Reverses {@link #excludeItem}. */
     public static void includeItem(String itemId) {
-        Identifier id = normalizeItemId(itemId);
-        if (id != null && EXCLUDED_ITEMS.remove(id.toString())) invalidateResolutionCache();
+        FoodExclusions.remove(FoodExclusions.Source.API, itemId);
+    }
+
+    /** Whether Florafare has been told to leave this stack's item alone. */
+    public static boolean isExcluded(ItemStack stack) {
+        return FoodExclusions.isExcluded(stack);
+    }
+
+    /** @see FoodExclusions#isExcluded(Item) */
+    public static boolean isExcluded(Item item) {
+        return FoodExclusions.isExcluded(item);
     }
 
     /**
-     * The datapack half of the exclusion list.
+     * The bare item ids currently excluded.
      *
-     * <p>{@link #EXCLUDED_ITEMS} can only be filled from {@code florafare.json} or from
-     * another mod's initializer, neither of which a datapack or modpack author can reach.
-     * Anything in this tag is ignored just as completely. The tag ships empty, so it
-     * changes nothing until someone puts an item in it.
+     * <p>Cannot express the mod- and tag-wide rules, so it is no longer what the client
+     * sync carries — {@link FoodExclusions#canonicalEntries()} is. Kept because it has
+     * been public since 1.4.
      */
-    public static final TagKey<Item> IGNORED_TAG =
-            TagKey.of(RegistryKeys.ITEM, Identifier.of(Florafare.MOD_ID, "ignored"));
-
-    public static boolean isExcluded(ItemStack stack) {
-        if (EXCLUDED_ITEMS.contains(Registries.ITEM.getId(stack.getItem()).toString())) {
-            return true;
-        }
-        // Not folded into the resolution cache: tag membership is reloaded and re-synced
-        // by vanilla on its own schedule, and this check is a single flag read on the
-        // stack's registry entry — cheaper than the bookkeeping to memoize it would be.
-        return stack.isIn(IGNORED_TAG);
-    }
-
     public static Set<String> getExcludedItems() {
-        return new HashSet<>(EXCLUDED_ITEMS);
-    }
-
-    /** Replaces the client-side exclusion set with data received from the server. */
-    public static void setExcludedItems(Set<String> items) {
-        EXCLUDED_ITEMS.clear();
-        EXCLUDED_ITEMS.addAll(items);
-        invalidateResolutionCache();
-    }
-
-    private static Identifier normalizeItemId(String itemId) {
-        if (itemId == null || itemId.isBlank()) return null;
-        return Identifier.tryParse(itemId.trim());
+        return FoodExclusions.excludedItemIds();
     }
 
     public static FoodBuffData getConfig(ItemStack stack) {
@@ -446,9 +517,11 @@ public class FoodBuffManager {
     public enum Source {
         /** Forgotten Mead is the mod's own tool and is never buffed. */
         MEAD,
-        /** On the exclusion list from the config file or another mod's API call. */
+        /** Named item-by-item on the exclusion list. */
         EXCLUDED_BY_CONFIG,
-        /** In the {@code #florafare:ignored} item tag. */
+        /** Its whole mod is on the exclusion list. */
+        EXCLUDED_BY_MOD,
+        /** In an excluded item tag — {@code #florafare:ignored}, or one named in the config. */
         EXCLUDED_BY_TAG,
         /** Not edible, so Florafare never looks at it. */
         NOT_FOOD,
@@ -489,11 +562,14 @@ public class FoodBuffManager {
         }
 
         Identifier itemId = Registries.ITEM.getId(stack.getItem());
-        if (EXCLUDED_ITEMS.contains(itemId.toString())) {
-            return new Resolution(Source.EXCLUDED_BY_CONFIG, itemId.toString(), null, candidates);
-        }
-        if (stack.isIn(IGNORED_TAG)) {
-            return new Resolution(Source.EXCLUDED_BY_TAG, "#" + IGNORED_TAG.id(), null, candidates);
+        FoodExclusions.Entry exclusion = FoodExclusions.matchedRule(stack.getItem());
+        if (exclusion != null) {
+            Source excludedBy = switch (exclusion.kind()) {
+                case ITEM -> Source.EXCLUDED_BY_CONFIG;
+                case MOD  -> Source.EXCLUDED_BY_MOD;
+                case TAG  -> Source.EXCLUDED_BY_TAG;
+            };
+            return new Resolution(excludedBy, exclusion.canonical(), null, candidates);
         }
 
         NbtComponent customDataComp = stack.get(DataComponentTypes.CUSTOM_DATA);
@@ -666,6 +742,23 @@ public class FoodBuffManager {
             root.put(entry.getKey(), entry.getValue().toNbt());
         }
         return root;
+    }
+
+    /**
+     * Applies one entry the server changed while the client was connected.
+     *
+     * <p>Kept apart from {@link #loadConfigsFromNbt}, which replaces the whole map: this
+     * one must leave every other entry alone, because it is delivered on its own and the
+     * rest of the map was never re-sent. In single-player it is a no-op against the map
+     * the integrated server already edited, which is exactly right.
+     */
+    public static void applyConfigEntry(String target, FoodBuffData data) {
+        invalidateResolutionCache();
+        if (data == null) {
+            CONFIGS.remove(target);
+        } else {
+            CONFIGS.put(target, data);
+        }
     }
 
     /**

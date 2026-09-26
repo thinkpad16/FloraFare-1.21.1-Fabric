@@ -151,6 +151,34 @@ public class FlorafareModMenuIntegration implements ModMenuApi {
                     .setSaveConsumer(v -> HudConfig.scale = v)
                     .build());
 
+            // Exclusions get a category of their own rather than a pair of lists buried
+            // at the bottom of General: "keep Florafare away from that other food mod"
+            // is the setting people go looking for, and it should be findable by name.
+            ConfigCategory exclusions = builder.getOrCreateCategory(
+                    Text.translatable("gui.florafare.config.category.exclusions"));
+            exclusions.addEntry(entry.startTextDescription(
+                            Text.translatable("gui.florafare.config.exclusions.description")
+                                    .formatted(Formatting.GRAY))
+                    .build());
+            exclusions.addEntry(entry.startStrList(
+                            Text.translatable("gui.florafare.config.ignored_food_mods"),
+                            FlorafareConfig.ignoredFoodMods)
+                    .setTooltip(Text.translatable("gui.florafare.config.ignored_food_mods.tooltip"))
+                    .setSaveConsumer(v -> FlorafareConfig.ignoredFoodMods = v)
+                    .build());
+            exclusions.addEntry(entry.startStrList(
+                            Text.translatable("gui.florafare.config.ignored_food_items"),
+                            FlorafareConfig.ignoredFoodItems)
+                    .setTooltip(Text.translatable("gui.florafare.config.ignored_food_items.tooltip"))
+                    .setSaveConsumer(v -> FlorafareConfig.ignoredFoodItems = v)
+                    .build());
+            exclusions.addEntry(entry.startStrList(
+                            Text.translatable("gui.florafare.config.managed_food_items"),
+                            FlorafareConfig.managedFoodItems)
+                    .setTooltip(Text.translatable("gui.florafare.config.managed_food_items.tooltip"))
+                    .setSaveConsumer(v -> FlorafareConfig.managedFoodItems = v)
+                    .build());
+
             ConfigCategory journal = builder.getOrCreateCategory(
                     Text.translatable("gui.florafare.config.category.journal"));
             journal.addEntry(entry.startBooleanToggle(
@@ -213,6 +241,12 @@ public class FlorafareModMenuIntegration implements ModMenuApi {
      */
     private static void applyAndSave() {
         HudConfig.saveToConfig();
+
+        // Unconditionally, server override or not. The edited lists go into the CONFIG
+        // source, which a connected server's list masks but does not overwrite — so the
+        // change is inert for this session and in force the moment the player leaves,
+        // which is the same rule every other setting on this screen follows.
+        FlorafareConfig.applyExclusions();
 
         if (!FlorafareConfig.isServerOverridden()) {
             PlayerFoodComponent.setMaxBuffSlots(FlorafareConfig.maxBuffSlots);

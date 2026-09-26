@@ -1252,15 +1252,37 @@ public class FoodJournalScreen extends Screen {
     }
 
     /**
-     * Escape steps back one level — detail to grid, grid to index — and only closes the
-     * book from the index. Closing the whole journal from three levels deep, which is
-     * what the inherited behaviour did, loses the player's place every time.
+     * Two ways out of the book, which do deliberately different things.
      *
-     * <p>While the search field has focus and holds text, Escape clears the search
-     * first, matching how every other search box in the game behaves.
+     * <p><b>The inventory key</b> — E unless the player has rebound it — shuts the
+     * journal outright from wherever they are, exactly as it shuts a chest or the
+     * inventory. That is the one every player already has in their fingers, and having
+     * to press Escape three times to get out of a food's detail page is the kind of
+     * friction nobody reports and everybody feels.
+     *
+     * <p><b>Escape</b> steps back one level instead — detail to grid, grid to index —
+     * and only closes from the index. Closing the whole journal from three levels deep,
+     * which is what the inherited behaviour did, loses the player's place every time.
+     * While the search field holds text, Escape clears the search first, matching how
+     * every other search box in the game behaves.
+     *
+     * <p>The inventory key is tested first, but never while the search box has focus:
+     * {@code TextFieldWidget#keyPressed} returns false for ordinary letters — they
+     * arrive through {@code charTyped} instead — so a focused field would not consume
+     * the key, and typing "e" into the search would slam the book shut. It is also not
+     * allowed to pre-empt Escape, in the rare case someone has bound the two together;
+     * Escape's step-back is the more specific behaviour and keeps the key.
      */
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (keyCode != org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE
+                && this.client != null
+                && this.client.options.inventoryKey.matchesKey(keyCode, scanCode)
+                && !isSearchFieldTakingInput()) {
+            this.close();
+            return true;
+        }
+
         if (keyCode != org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE) {
             return super.keyPressed(keyCode, scanCode, modifiers);
         }
@@ -1294,6 +1316,13 @@ public class FoodJournalScreen extends Screen {
                 return super.keyPressed(keyCode, scanCode, modifiers);
             }
         }
+    }
+
+    /** Whether a keystroke belongs to the search box rather than to this screen. */
+    private boolean isSearchFieldTakingInput() {
+        return this.searchField != null
+                && this.searchField.isVisible()
+                && this.searchField.isFocused();
     }
 
     private void playPageTurnSound() {

@@ -119,6 +119,13 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
             }
         });
 
+        // Last, over everything the pack just defined: an operator's live edits outrank
+        // the files on disk, and this is the one place the config map is rebuilt — so
+        // without it a /reload would quietly revert every /florafare edit. It also
+        // re-reads what each override displaces, which is what makes a later reset put
+        // back the entry *this* reload defined rather than the previous one's.
+        FoodBuffOverrides.reapply();
+
         Florafare.LOGGER.info("Loaded {} food configurations!", FoodBuffManager.getConfigCount());
         if (absentModTargets > 0) {
             Florafare.LOGGER.info(

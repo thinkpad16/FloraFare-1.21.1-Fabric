@@ -76,6 +76,22 @@ public class FlorafareConfig {
     public static boolean enableForgottenMead = true;
     public static boolean grantJournalOnFirstJoin = true;
 
+    /**
+     * Whether a player is told, on the action bar, that a bite granted no buff because
+     * every slot was already full.
+     *
+     * <p>Server-side and not synced: the message is composed and sent by the server, so
+     * the client has no say in it and a vanilla client sees it too.
+     *
+     * <p>On by default because the silence it replaces is the mod's most confusing
+     * moment. A full slot list refuses the buff and nothing else changes — the food is
+     * still eaten, the hunger still goes up, the journal still records it — so from the
+     * player's side an ordinary bite simply does nothing, and it looks identical to a
+     * bug. It is especially hard to read right after a relog or a respawn, when the
+     * overlay is the thing they have just stopped watching.
+     */
+    public static boolean notifyOnFullBuffSlots = true;
+
     // --- Server-only settings (not synced; read at command registration time) ---
     public static int commandPermissionLevel = 2;
 
@@ -183,13 +199,72 @@ public class FlorafareConfig {
     public static void setLocalRespectVanillaFoodEffects(boolean v) { if (local != null) local.respectVanillaFoodEffects = v; else respectVanillaFoodEffects  = v; }
     public static void setLocalEnableForgottenMead(boolean v)    { if (local != null) local.enableForgottenMead        = v; else enableForgottenMead        = v; }
 
+    // -------------------------------------------------------------------------
+    // EXCLUSIONS
+    //
+    // "Florafare, keep out of this" — the setting that makes the mod usable next to
+    // another food mod that already gives its own drinks and dishes their effects.
+    // An excluded item is untouched by every hook: no buff, no nutrition swap, its own
+    // vanilla effects still fire, no tooltip block, no journal row. See FoodExclusions.
+    //
+    // Two lists rather than one because they read differently in a hand-edited file and
+    // in the ModMenu screen, but they are the same list underneath: either accepts any
+    // of the spellings, and both are handed to FoodExclusions together.
+    // -------------------------------------------------------------------------
+
     /**
-     * Item ids Florafare should never intercept, for interop with other food/hunger
-     * mods that want to handle these items themselves (e.g. "modid:custom_stew").
-     * Applied once at startup via FoodBuffManager.excludeItem; the resulting
-     * exclusion set is what actually gets synced to clients, not this raw list.
+     * Things Florafare should never intercept, for interop with other food/hunger mods
+     * that want to handle their own items.
+     *
+     * <p>Each entry is an item id ({@code "modid:custom_stew"}), a whole mod
+     * ({@code "modid:*"}), or an item tag ({@code "#c:drinks"}).
+     *
+     * <p>Applied through {@link net.tend1tnuy.florafare.food.FoodExclusions}, which is
+     * what actually gets synced to clients — not this raw list.
      */
     public static java.util.List<String> ignoredFoodItems = new java.util.ArrayList<>();
+
+    /**
+     * Whole mods Florafare should never intercept, as bare namespaces
+     * ({@code "loot_n_explore"}).
+     *
+     * <p>Exactly equivalent to putting {@code "loot_n_explore:*"} in
+     * {@link #ignoredFoodItems}; it exists because "exclude this mod" is the common case
+     * and deserves to be a list of mod ids rather than a list of wildcards.
+     */
+    public static java.util.List<String> ignoredFoodMods = new java.util.ArrayList<>();
+
+    /**
+     * Things Florafare must manage <em>even though</em> something else excluded them.
+     * Beats {@link #ignoredFoodItems}, {@link #ignoredFoodMods}, the
+     * {@code #florafare:ignored} item tag and another mod's API call.
+     *
+     * <p>This is how a single entry comes back out of the shipped defaults. Florafare's
+     * own exclusions live in that item tag, which is the right place for them — tags
+     * compose, and a mod update can extend them without fighting anyone's edits — but a
+     * vanilla tag can only be added to, never subtracted from. Undoing one entry would
+     * otherwise mean overriding the whole tag with {@code "replace": true} and retyping
+     * the rest, so "manage this after all" gets a list of its own.
+     *
+     * <p>Same syntax as the other two: an item id, {@code "modid:*"}, or
+     * {@code "#namespace:tag"}. {@code /florafare ignore remove} writes here when the
+     * rule it was asked to drop is not one of this config file's own.
+     */
+    public static java.util.List<String> managedFoodItems = new java.util.ArrayList<>();
+
+    /**
+     * Hands both lists to {@link net.tend1tnuy.florafare.food.FoodExclusions}, replacing
+     * whatever the config contributed before.
+     *
+     * <p>Called from {@link #load()} and after every edit that changes them, so deleting
+     * an entry actually stops it applying. It used to be a loop in the mod initializer
+     * run exactly once, which meant an entry could be added at runtime but never taken
+     * away, and the ModMenu screen's exclusion list did nothing until a restart.
+     */
+    public static void applyExclusions() {
+        net.tend1tnuy.florafare.food.FoodExclusions.loadFromConfig(
+                ignoredFoodItems, ignoredFoodMods, managedFoodItems);
+    }
 
     // --- Client-local cosmetic settings ---
     public static boolean enableDiscoveryToasts = true;
@@ -257,8 +332,11 @@ public class FlorafareConfig {
                     respectVanillaFoodEffects = data.respectVanillaFoodEffects;
                     enableForgottenMead = data.enableForgottenMead;
                     grantJournalOnFirstJoin = data.grantJournalOnFirstJoin;
+                    notifyOnFullBuffSlots = data.notifyOnFullBuffSlots;
                     commandPermissionLevel = data.commandPermissionLevel;
                     if (data.ignoredFoodItems != null) ignoredFoodItems = data.ignoredFoodItems;
+                    if (data.ignoredFoodMods  != null) ignoredFoodMods  = data.ignoredFoodMods;
+                    if (data.managedFoodItems != null) managedFoodItems = data.managedFoodItems;
                     enableHud = data.enableHud;
                     enableDiscoveryToasts = data.enableDiscoveryToasts;
                     toastDisplayTimeMs = data.toastDisplayTimeMs;
@@ -287,6 +365,9 @@ public class FlorafareConfig {
         }
 
         clampToValidRanges();
+        // After the clamp, so blank lines in a hand-edited file never reach the parser,
+        // and before save(), so a file written from here already reflects what is live.
+        applyExclusions();
         save();
     }
 
@@ -351,11 +432,16 @@ public class FlorafareConfig {
             warnClamped("hudScale", hudScale, corrected);
             hudScale = corrected;
         }
-        if (ignoredFoodItems == null) {
-            ignoredFoodItems = new java.util.ArrayList<>();
-        } else {
-            ignoredFoodItems.removeIf(id -> id == null || id.isBlank());
-        }
+        ignoredFoodItems = cleaned(ignoredFoodItems);
+        ignoredFoodMods  = cleaned(ignoredFoodMods);
+        managedFoodItems = cleaned(managedFoodItems);
+    }
+
+    /** A never-null, blank-free copy; both exclusion lists are hand-edited. */
+    private static java.util.List<String> cleaned(java.util.List<String> list) {
+        if (list == null) return new java.util.ArrayList<>();
+        list.removeIf(entry -> entry == null || entry.isBlank());
+        return list;
     }
 
     private static int clamp(int value, int min, int max, String field) {
@@ -370,8 +456,27 @@ public class FlorafareConfig {
                         + "using {} instead.", field, was, now);
     }
 
+    /**
+     * Writes the config file, replacing it in one step rather than in place.
+     *
+     * <p>{@code FileWriter} truncates its target the moment it opens it, so a process
+     * that dies between that and the last byte leaves a half-written — or empty — file
+     * behind. {@link #load()} then cannot parse it, keeps it as a {@code .bak} and runs
+     * the session on defaults, which for a server means every exclusion silently gone
+     * until someone notices and restores the backup by hand.
+     *
+     * <p>That was a small risk while this only ran at startup. It stopped being small
+     * when {@code /florafare ignore} started calling it during play: a server killed or
+     * crashing in the seconds after an admin typed a command is an ordinary event, and
+     * the whole config should not be what it costs. The bytes go to a temporary file
+     * first and are moved over the real one once they are all there, so the file on disk
+     * is only ever the previous version or the complete new one.
+     */
     public static void save() {
-        try (FileWriter writer = new FileWriter(configFile())) {
+        File file = configFile();
+        File temp = new File(file.getParentFile(), file.getName() + ".tmp");
+
+        try (FileWriter writer = new FileWriter(temp)) {
             ConfigData data = new ConfigData();
             // Through the local accessors, never the live fields: while a server is
             // connected the live ones hold ITS values, and writing those here is what
@@ -386,8 +491,11 @@ public class FlorafareConfig {
             data.respectVanillaFoodEffects = localRespectVanillaFoodEffects();
             data.enableForgottenMead = localEnableForgottenMead();
             data.grantJournalOnFirstJoin = grantJournalOnFirstJoin;
+            data.notifyOnFullBuffSlots = notifyOnFullBuffSlots;
             data.commandPermissionLevel = commandPermissionLevel;
             data.ignoredFoodItems = ignoredFoodItems;
+            data.ignoredFoodMods = ignoredFoodMods;
+            data.managedFoodItems = managedFoodItems;
             data.enableHud = enableHud;
             data.enableDiscoveryToasts = enableDiscoveryToasts;
             data.toastDisplayTimeMs = toastDisplayTimeMs;
@@ -404,6 +512,40 @@ public class FlorafareConfig {
             GSON.toJson(data, writer);
         } catch (Exception e) {
             Florafare.LOGGER.error("Failed to save config", e);
+            temp.delete();
+            return;
+        }
+
+        try {
+            replaceAtomically(temp, file);
+        } catch (Exception e) {
+            // The old file is still intact — the move is the only thing that failed — so
+            // the loss is this one edit, not the whole config. Saying which is the point
+            // of splitting this off from the write above.
+            Florafare.LOGGER.error(
+                    "Failed to replace {} with the newly written config. Your previous settings "
+                            + "are untouched, but this change was not saved.", file.getAbsolutePath(), e);
+            temp.delete();
+        }
+    }
+
+    /**
+     * Moves {@code temp} over {@code destination}, atomically where the filesystem can.
+     *
+     * <p>{@code ATOMIC_MOVE} is not universally supported — a FAT-formatted drive or some
+     * network mounts refuse it — and refusing to save at all there would be the wrong
+     * trade. So it falls back to a plain replace, which is still strictly better than
+     * writing into the live file: the window where the destination is incomplete shrinks
+     * from "however long serialization takes" to "one filesystem operation".
+     */
+    private static void replaceAtomically(File temp, File destination) throws java.io.IOException {
+        try {
+            java.nio.file.Files.move(temp.toPath(), destination.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+        } catch (java.nio.file.AtomicMoveNotSupportedException unsupported) {
+            java.nio.file.Files.move(temp.toPath(), destination.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
         }
     }
 
@@ -418,8 +560,11 @@ public class FlorafareConfig {
         public boolean respectVanillaFoodEffects = false;
         public boolean enableForgottenMead = true;
         public boolean grantJournalOnFirstJoin = true;
+        public boolean notifyOnFullBuffSlots = true;
         public int commandPermissionLevel = 2;
         public java.util.List<String> ignoredFoodItems = new java.util.ArrayList<>();
+        public java.util.List<String> ignoredFoodMods = new java.util.ArrayList<>();
+        public java.util.List<String> managedFoodItems = new java.util.ArrayList<>();
         public boolean enableHud = true;
         public boolean enableDiscoveryToasts = true;
         public int toastDisplayTimeMs = 5000;

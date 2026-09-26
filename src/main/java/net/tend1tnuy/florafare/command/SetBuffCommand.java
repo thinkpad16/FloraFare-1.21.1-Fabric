@@ -243,6 +243,15 @@ public class SetBuffCommand {
                                 )
                         )
 
+                        // Branch: /florafare ignore (What Florafare is told to keep away from)
+                        .then(IgnoreCommand.branch())
+
+                        // Branch: /florafare edit — retune a food's buff on a live server
+                        .then(EditBuffCommand.branch())
+
+                        // Branch: /florafare help — the guide, also at /florafarehelp
+                        .then(HelpCommand.branch())
+
                         // Branch: /florafare validate (Diagnoses loaded food_buffs/food_synergies configs)
                         .then(CommandManager.literal("validate")
                                 .executes(SetBuffCommand::executeValidate)
@@ -1029,6 +1038,17 @@ public class SetBuffCommand {
 
         source.sendFeedback(() -> Text.translatable("command.florafare.explain.header", itemId), false);
 
+        // Printed before the verdict, because it explains why the verdict is not the
+        // exclusion the reader was probably expecting: something excludes this item, and
+        // a managedFoodItems rule took it back. Without the line, "the tag lists it but
+        // Florafare buffs it anyway" reads as a bug.
+        net.tend1tnuy.florafare.food.FoodExclusions.Entry claimed =
+                net.tend1tnuy.florafare.food.FoodExclusions.managedRule(stack.getItem());
+        if (claimed != null) {
+            source.sendFeedback(() -> Text.translatable(
+                    "command.florafare.explain.managed_override", claimed.canonical()), false);
+        }
+
         // The four dead ends: nothing further to say, and saying it plainly is the point.
         switch (resolution.source()) {
             case MEAD -> {
@@ -1038,6 +1058,11 @@ public class SetBuffCommand {
             case EXCLUDED_BY_CONFIG -> {
                 source.sendFeedback(() -> Text.translatable(
                         "command.florafare.explain.excluded_config"), false);
+                return 0;
+            }
+            case EXCLUDED_BY_MOD -> {
+                source.sendFeedback(() -> Text.translatable(
+                        "command.florafare.explain.excluded_mod", resolution.target()), false);
                 return 0;
             }
             case EXCLUDED_BY_TAG -> {

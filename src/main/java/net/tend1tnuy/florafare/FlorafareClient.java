@@ -24,11 +24,13 @@ import net.tend1tnuy.florafare.compat.emi.EmiReloadBridge;
 import net.tend1tnuy.florafare.component.IFoodComponentProvider;
 import net.tend1tnuy.florafare.component.PlayerFoodComponent;
 import net.tend1tnuy.florafare.config.FlorafareConfig;
+import net.tend1tnuy.florafare.food.FoodBuffData;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
 import net.tend1tnuy.florafare.food.FoodSynergyManager;
 import net.tend1tnuy.florafare.network.BuffStateSyncPayload;
 import net.tend1tnuy.florafare.network.ChunkedNbtSync;
 import net.tend1tnuy.florafare.network.FlorafareServerConfigSyncPayload;
+import net.tend1tnuy.florafare.network.FoodConfigEntrySyncPayload;
 import net.tend1tnuy.florafare.network.FoodBuffSyncPayload;
 import net.tend1tnuy.florafare.network.FoodConfigSyncPayload;
 import net.tend1tnuy.florafare.network.FoodExclusionSyncPayload;
@@ -125,6 +127,21 @@ public class FlorafareClient implements ClientModInitializer {
                     // Invalidate the journal cache so the next screen open re-reads
                     // the updated configs (#7).
                     FoodJournalScreen.invalidateCache();
+                    // EMI builds its recipe list from this map, and this packet no longer
+                    // arrives only at join: /florafare edit re-sends it whenever an
+                    // operator retunes a food, so EMI has to be told to rebuild here too.
+                    EmiReloadBridge.requestReload();
+                }));
+
+        // One entry, changed by /florafare edit while we are connected. Applied straight
+        // onto the map rather than through the chunked path above, which replaces it
+        // wholesale and would wipe every other entry this packet does not carry.
+        ClientPlayNetworking.registerGlobalReceiver(FoodConfigEntrySyncPayload.ID, (payload, context) ->
+                context.client().execute(() -> {
+                    FoodBuffManager.applyConfigEntry(payload.target(),
+                            payload.removed() ? null : FoodBuffData.fromNbt(payload.data()));
+                    FoodJournalScreen.invalidateCache();
+                    EmiReloadBridge.requestReload();
                 }));
 
         ClientPlayNetworking.registerGlobalReceiver(FoodSynergySyncPayload.ID, (payload, context) ->
@@ -177,8 +194,24 @@ public class FlorafareClient implements ClientModInitializer {
 
         ClientPlayNetworking.registerGlobalReceiver(FoodExclusionSyncPayload.ID, (payload, context) ->
                 context.client().execute(() -> {
-                    FoodBuffManager.setExcludedItems(payload.toSet());
+                    // Not for our own integrated server. Client and server share one copy
+                    // of FoodExclusions in that process, so "the server's list" and "this
+                    // client's list" are the same object — and taking the packet's word
+                    // for it would pin the live state to a snapshot of itself. Anything
+                    // added afterwards (a /florafare ignore, a ModMenu edit) would then be
+                    // masked by that snapshot and appear to do nothing. getServer() rather
+                    // than isInSingleplayer(), for the reason rememberLocal() gives: a
+                    // world opened to LAN is still this player's own game.
+                    if (context.client().getServer() == null) {
+                        net.tend1tnuy.florafare.food.FoodExclusions.applyRemote(
+                                payload.rules(), payload.managedRules());
+                    }
                     FoodJournalScreen.invalidateCache();
+                    // EMI's Food Buffs category skips excluded items, and EMI has
+                    // finished building it by the time this packet lands on join — so
+                    // without a nudge the panel keeps listing food this server does not
+                    // manage. No-op without EMI.
+                    EmiReloadBridge.requestReload();
                 }));
 
         ClientPlayNetworking.registerGlobalReceiver(FoodUnlockedPayload.ID, (payload, context) ->

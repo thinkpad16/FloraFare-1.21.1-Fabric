@@ -4,9 +4,7 @@ import net.tend1tnuy.florafare.Florafare;
 import net.tend1tnuy.florafare.component.PlayerFoodComponent;
 import net.tend1tnuy.florafare.config.FlorafareConfig;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
-
-import java.util.HashSet;
-import java.util.Set;
+import net.tend1tnuy.florafare.food.FoodExclusions;
 
 /**
  * Keeps a server's gameplay settings from outliving the connection that carried them.
@@ -41,7 +39,6 @@ public final class ClientConfigOverride {
 
     private ClientConfigOverride() {}
 
-    private static Set<String> excludedItems = Set.of();
     private static boolean captured = false;
 
     /**
@@ -64,7 +61,6 @@ public final class ClientConfigOverride {
     public static void rememberLocal(boolean locallyHosted) {
         if (locallyHosted) return;
         FlorafareConfig.beginServerOverride();
-        excludedItems = new HashSet<>(FoodBuffManager.getExcludedItems());
         captured = true;
     }
 
@@ -76,17 +72,18 @@ public final class ClientConfigOverride {
      *         where the integrated server synced back these very values.
      */
     public static boolean restoreLocal() {
-        if (!captured) return false;
+        // Unconditionally, ahead of the `captured` gate: an integrated server sends this
+        // packet too, and rememberLocal() deliberately takes no snapshot for one. Leaving
+        // the override in force after leaving a singleplayer world would freeze the
+        // client's view of what Florafare manages at whatever that world had, until the
+        // game was restarted. FoodExclusions keeps this client's own entries in their own
+        // source, so dropping the server's is all there is to do.
+        boolean exclusionsChanged = FoodExclusions.clearRemote();
+
+        if (!captured) return exclusionsChanged;
         captured = false;
 
-        boolean exclusionsChanged = !FoodBuffManager.getExcludedItems().equals(excludedItems);
         boolean changed = FlorafareConfig.endServerOverride() || exclusionsChanged;
-
-        // Restored alongside the config fields because, unlike the datapack config
-        // maps, nothing else ever rebuilds this set on the client: it is populated
-        // once at mod init from ignoredFoodItems and replaced wholesale by each
-        // server's sync packet.
-        FoodBuffManager.setExcludedItems(excludedItems);
 
         PlayerFoodComponent.setMaxBuffSlots(FlorafareConfig.maxBuffSlots);
 

@@ -9,6 +9,7 @@ import net.tend1tnuy.florafare.component.IFoodComponentProvider;
 import net.tend1tnuy.florafare.component.PlayerFoodComponent;
 import net.tend1tnuy.florafare.food.FoodBuffData;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
+import net.tend1tnuy.florafare.food.FoodExclusions;
 import net.tend1tnuy.florafare.food.FoodSynergyData;
 import net.tend1tnuy.florafare.food.FoodSynergyManager;
 import org.jetbrains.annotations.NotNull;
@@ -80,10 +81,25 @@ public final class FlorafareAPI {
      * overwrites the client's exclusion set with its own on join and after
      * {@code /reload}.
      *
-     * @param itemId The item id to exclude, e.g. {@code "modid:custom_stew"}.
+     * <p>Since 1.5 the argument is not limited to a single item id. It accepts any of
+     * the forms {@link net.tend1tnuy.florafare.food.FoodExclusions} documents — an item
+     * id, a whole mod ({@code "modid:*"}), or an item tag ({@code "#c:drinks"}) — so a
+     * mod that owns all of its food can say so in one call instead of listing it.
+     *
+     * @param itemId The rule to exclude, e.g. {@code "modid:custom_stew"} or {@code "modid:*"}.
      */
     public static void excludeFood(@Nullable String itemId) {
         FoodBuffManager.excludeItem(itemId);
+    }
+
+    /**
+     * Takes Florafare out of every food one mod adds, in one call. Exactly equivalent to
+     * {@code excludeFood("<namespace>:*")}.
+     *
+     * @param namespace The mod id, e.g. {@code "loot_n_explore"}.
+     */
+    public static void excludeMod(@Nullable String namespace) {
+        if (namespace != null) FoodBuffManager.excludeItem(namespace.trim() + ":*");
     }
 
     /** Reverses a previous {@link #excludeFood(String)} call. */
@@ -91,9 +107,39 @@ public final class FlorafareAPI {
         FoodBuffManager.includeItem(itemId);
     }
 
+    /** Reverses a previous {@link #excludeMod(String)} call. */
+    public static void includeMod(@Nullable String namespace) {
+        if (namespace != null) FoodBuffManager.includeItem(namespace.trim() + ":*");
+    }
+
+    /**
+     * Claims something back from whatever excluded it: Florafare manages it regardless
+     * of {@code ignoredFoodItems}, the {@code #florafare:ignored} tag, or another mod's
+     * {@link #excludeFood(String)} call.
+     *
+     * <p>For an addon that deliberately wants to buff one dish out of a mod Florafare
+     * ships exclusions for. Takes the same forms as {@link #excludeFood(String)}.
+     */
+    public static void manageFoodAnyway(@Nullable String rule) {
+        FoodExclusions.add(FoodExclusions.Effect.MANAGE, FoodExclusions.Source.API, rule);
+    }
+
+    /** Reverses a previous {@link #manageFoodAnyway(String)} call. */
+    public static void stopManagingAnyway(@Nullable String rule) {
+        FoodExclusions.remove(FoodExclusions.Effect.MANAGE, FoodExclusions.Source.API, rule);
+    }
+
     /** Whether Florafare has been told to fully ignore this stack's item. */
     public static boolean isFoodExcluded(@NotNull ItemStack stack) {
         return FoodBuffManager.isExcluded(stack);
+    }
+
+    /**
+     * Whether Florafare has been told to fully ignore this item — the allocation-free
+     * form, for walking the item registry.
+     */
+    public static boolean isFoodExcluded(@NotNull net.minecraft.item.Item item) {
+        return FoodBuffManager.isExcluded(item);
     }
 
     /**

@@ -3,6 +3,7 @@ package net.tend1tnuy.florafare;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.CommonLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
@@ -16,6 +17,7 @@ import net.minecraft.nbt.NbtCompound;
 import net.minecraft.network.codec.PacketCodecs;
 import net.minecraft.network.packet.CustomPayload;
 import net.minecraft.resource.ResourceType;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.PlayerManager;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.util.Identifier;
@@ -23,7 +25,9 @@ import net.tend1tnuy.florafare.command.DumpFoodsCommand;
 import net.tend1tnuy.florafare.command.SetBuffCommand;
 import net.tend1tnuy.florafare.component.IFoodComponentProvider;
 import net.tend1tnuy.florafare.component.PlayerFoodComponent;
+import net.tend1tnuy.florafare.food.FoodBuffData;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
+import net.tend1tnuy.florafare.food.FoodBuffOverrides;
 import net.tend1tnuy.florafare.food.FoodReloadListener;
 import net.tend1tnuy.florafare.food.FoodSynergyManager;
 import net.tend1tnuy.florafare.food.FoodSynergyReloadListener;
@@ -34,7 +38,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 /**
  * Main entry point for the Florafare mod.
@@ -52,9 +59,9 @@ public class Florafare implements ModInitializer {
         net.tend1tnuy.florafare.config.FlorafareConfig.load();
         net.tend1tnuy.florafare.component.PlayerFoodComponent.setMaxBuffSlots(
                 net.tend1tnuy.florafare.config.FlorafareConfig.maxBuffSlots);
-        for (String itemId : net.tend1tnuy.florafare.config.FlorafareConfig.ignoredFoodItems) {
-            FoodBuffManager.excludeItem(itemId);
-        }
+        // The exclusion lists are applied by FlorafareConfig.load() itself, so every
+        // later re-read applies them too. Doing it here instead meant an entry could be
+        // added at runtime but never removed.
 
         // 2. Items & creative tab
         ItemRegistry.initialize();
@@ -70,12 +77,51 @@ public class Florafare implements ModInitializer {
         ResourceManagerHelper.get(ResourceType.SERVER_DATA)
                 .registerReloadListener(new FoodSynergyReloadListener());
 
+        // 3b. Drop the per-item resolution cache whenever item tags are rebound.
+        //
+        // Several of the things that decide an item's buff are tag membership: every
+        // "#florafare:meats"-style datapack target, and the #florafare:ignored exclusion
+        // tag. Vanilla binds tags to the registries in DataPackContents#refresh(), which
+        // runs *after* every reload listener registered above — so between
+        // FoodReloadListener#apply (which fills the config map and clears the cache) and
+        // the tags actually changing, the cache is empty but the registry still holds the
+        // previous pack's tag membership.
+        //
+        // On a dedicated server that window spans real ticks: /reload is queued as server
+        // tasks and the tick loop keeps running between them. Any player holding food
+        // during it warms the cache through canConsume -> isAlwaysEdible -> getConfig,
+        // memoizing the answer the *old* tags gave. Because the cache is keyed by item and
+        // only invalidated by config changes, that wrong answer then stands for the rest of
+        // the server's life — the food silently stops granting its buff, with nothing in
+        // the log and no way to tell it apart from a datapack mistake.
+        //
+        // TAGS_LOADED is the one hook that fires at the moment the binding changes, on
+        // both sides, for world load and /reload alike.
+        CommonLifecycleEvents.TAGS_LOADED.register((registries, client) ->
+                FoodBuffManager.invalidateResolutionCache());
+
         // 4. Runtime buff persistence (command-applied buffs).
         // Bound to the server's lifetime, not the mod's: these live in the world save
         // now, so there is no path to read until a world is open, and each world gets
         // its own set instead of every save on the installation sharing one pile.
         ServerLifecycleEvents.SERVER_STARTED.register(FoodBuffManager::loadRuntimeConfigs);
         ServerLifecycleEvents.SERVER_STOPPING.register(FoodBuffManager::saveRuntimeConfigs);
+
+        // 4b. Operator buff edits (/florafare edit), which also live in the world save.
+        //
+        // Read at SERVER_STARTING and not SERVER_STARTED, unlike the per-stack buffs
+        // above: the food datapack load happens between the two and ends by re-asserting
+        // these over the config map, so they have to already be in memory by then. Loaded
+        // later, the first resolution of every food on the server would be made — and
+        // cached — from the un-overridden values.
+        //
+        // Each edit writes itself out as it is made, so there is no save hook here; the
+        // unload only drops the previous world's state, which matters in single-player
+        // where these statics outlive a world.
+        ServerLifecycleEvents.SERVER_STARTING.register(FoodBuffOverrides::load);
+        ServerLifecycleEvents.SERVER_STOPPED.register(server -> FoodBuffOverrides.unload());
+        ServerLifecycleEvents.SERVER_STOPPED.register(
+                server -> FoodBuffManager.clearRuntimeOwner());
 
         // 5. Network payload types (S2C)
         PayloadTypeRegistry.playS2C().register(FoodUnlockedPayload.ID,    FoodUnlockedPayload.CODEC);
@@ -84,6 +130,7 @@ public class Florafare implements ModInitializer {
         PayloadTypeRegistry.playS2C().register(OpenFoodJournalPayload.ID, OpenFoodJournalPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(SynergyUnlockedPayload.ID, SynergyUnlockedPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(FoodConfigSyncPayload.ID,  FoodConfigSyncPayload.CODEC);
+        PayloadTypeRegistry.playS2C().register(FoodConfigEntrySyncPayload.ID, FoodConfigEntrySyncPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(FoodSynergySyncPayload.ID, FoodSynergySyncPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(FlorafareServerConfigSyncPayload.ID, FlorafareServerConfigSyncPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(FoodExclusionSyncPayload.ID, FoodExclusionSyncPayload.CODEC);
@@ -91,13 +138,18 @@ public class Florafare implements ModInitializer {
         // 6. Commands — registered together in one logical block (#22)
         CommandRegistrationCallback.EVENT.register(DumpFoodsCommand::register);
         CommandRegistrationCallback.EVENT.register(SetBuffCommand::register);
+        // Registered separately from the /florafare tree, not as another branch of it:
+        // that tree is gated behind commandPermissionLevel and a Brigadier child cannot
+        // loosen its parent's requirement, so this is the spelling an ordinary player on
+        // a server can actually run. /florafare help reaches the same text for operators.
+        CommandRegistrationCallback.EVENT.register(
+                net.tend1tnuy.florafare.command.HelpCommand::register);
 
         // 7. Re-sync configs to all players after a /reload
         ServerLifecycleEvents.END_DATA_PACK_RELOAD.register((server, resourceManager, success) -> {
             invalidateSyncPayloads();
             FlorafareServerConfigSyncPayload serverConfigPayload = buildServerConfigSyncPayload();
-            FoodExclusionSyncPayload exclusionPayload =
-                    FoodExclusionSyncPayload.of(FoodBuffManager.getExcludedItems());
+            FoodExclusionSyncPayload exclusionPayload = buildExclusionSyncPayload();
             for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
                 sendDatapackSync(player);
                 sendTo(player, serverConfigPayload);
@@ -110,6 +162,13 @@ public class Florafare implements ModInitializer {
         // is measured in tens of seconds, so a finer cadence would only cost lookups.
         ServerTickEvents.END_SERVER_TICK.register(server -> {
             int tick = server.getTicks();
+
+            // Checked every tick, not once a second: this is a join retry and the whole
+            // point is to close the gap as soon as the client's channels are known. The
+            // map is empty the overwhelming majority of ticks, so the cost is one
+            // isEmpty().
+            if (!pendingInitialSync.isEmpty()) flushPendingInitialSyncs(server, tick);
+
             if (tick % 20 != 0) return;
             PlayerManager manager = server.getPlayerManager();
             for (ServerPlayerEntity player : manager.getPlayerList()) {
@@ -144,10 +203,9 @@ public class Florafare implements ModInitializer {
                     newPlayer.setHealth(carriedHealth);
                 }
             } else {
-                // Journal progress and synergy discoveries persist through death.
-                newComp.getDiscoveredFoods().addAll(oldComp.getDiscoveredFoods());
-                newComp.getDiscoveredSynergies().addAll(oldComp.getDiscoveredSynergies());
-                newComp.setHasReceivedJournal(oldComp.hasReceivedJournal());
+                // Journal progress and synergy discoveries persist through death; the
+                // active buffs deliberately do not.
+                newComp.copyProgressFrom(oldComp);
             }
         });
 
@@ -155,24 +213,113 @@ public class Florafare implements ModInitializer {
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
             PlayerFoodComponent comp =
                     ((IFoodComponentProvider) handler.player).florafare$getFoodComponent();
-            comp.sync();
 
-            sendDatapackSync(handler.player);
-            sendTo(handler.player, buildServerConfigSyncPayload());
-            sendTo(handler.player,
-                    FoodExclusionSyncPayload.of(FoodBuffManager.getExcludedItems()));
-
+            // The journal grant is server-side only and must not wait on the client.
             if (!comp.hasReceivedJournal()
                     && net.tend1tnuy.florafare.config.FlorafareConfig.grantJournalOnFirstJoin) {
                 ItemStack journal = new ItemStack(ItemRegistry.FOOD_JOURNAL);
                 handler.player.getInventory().offerOrDrop(journal);
                 comp.setHasReceivedJournal(true);
             }
+
+            if (!trySendInitialSync(handler.player)) {
+                pendingInitialSync.put(handler.player.getUuid(), server.getTicks());
+            }
         });
+
+        // 9b. A player who never became sendable is dropped from the retry map when they
+        // leave, so a vanilla client reconnecting in a loop cannot accumulate entries.
+        ServerPlayConnectionEvents.DISCONNECT.register((handler, server) ->
+                pendingInitialSync.remove(handler.player.getUuid()));
 
         // 10. Re-sync after respawn
         ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) ->
                 ((IFoodComponentProvider) newPlayer).florafare$getFoodComponent().sync());
+    }
+
+    // -------------------------------------------------------------------------
+    // INITIAL SYNC
+    //
+    // Everything a client needs in order to show Florafare correctly — its buff list,
+    // the datapack config and synergy maps, the server's config overrides, the exclusion
+    // rules — is pushed once, at join, and never again until something changes.
+    //
+    // That single attempt used to be made unconditionally inside the JOIN handler, and
+    // every send goes through #sendTo, which drops the payload silently when
+    // ServerPlayNetworking#canSend says the client has not declared the channel. Which is
+    // correct — a vanilla client must not be shipped a modpack's config map — but it is
+    // also indistinguishable, at that moment, from a client that simply has not finished
+    // its channel handshake yet.
+    //
+    // A Fabric client normally declares its play channels during the configuration phase,
+    // so they are known by the time JOIN fires. Behind a proxy, or with a client whose
+    // registration arrives as a play-phase "minecraft:register" instead, they are not —
+    // and the entire initial sync was thrown away with nothing logged. The symptom is
+    // exactly the one that is hardest to report: after *this particular* relog the buffs
+    // are missing from the overlay and food tooltips are wrong, while the same client
+    // reconnecting a minute later is fine.
+    //
+    // So the attempt is now retried for a few seconds instead of being made once.
+    // -------------------------------------------------------------------------
+
+    /**
+     * Players whose initial sync has not gone out yet, mapped to the tick they joined on.
+     *
+     * <p>Only ever touched from the server thread (the JOIN, DISCONNECT and END_SERVER_TICK
+     * handlers all run there), so a plain HashMap is enough.
+     */
+    private static final Map<UUID, Integer> pendingInitialSync = new HashMap<>();
+
+    /**
+     * How long a join is kept in the retry map. Generous on purpose — it costs one map
+     * lookup per tick per pending player — but bounded, because a genuinely vanilla
+     * client never becomes sendable and must not be retried forever.
+     */
+    private static final int INITIAL_SYNC_TIMEOUT_TICKS = 200;
+
+    /**
+     * Sends the full initial state to one player, or reports that their client cannot
+     * receive it yet.
+     *
+     * @return false when the client has not declared Florafare's channels, so nothing was
+     *         sent and the caller should try again later
+     */
+    private static boolean trySendInitialSync(ServerPlayerEntity player) {
+        // Asked about the buff payload specifically, and asked before anything is sent:
+        // every channel is declared by the same handshake, so one is a faithful proxy for
+        // all of them, and testing first keeps the send all-or-nothing rather than
+        // half-delivering a client that became sendable midway through.
+        if (!ServerPlayNetworking.canSend(player, FoodBuffSyncPayload.ID)) return false;
+
+        ((IFoodComponentProvider) player).florafare$getFoodComponent().sync();
+        sendDatapackSync(player);
+        sendTo(player, buildServerConfigSyncPayload());
+        sendTo(player, buildExclusionSyncPayload());
+        return true;
+    }
+
+    /** Retries every pending join, giving up on each after {@link #INITIAL_SYNC_TIMEOUT_TICKS}. */
+    private static void flushPendingInitialSyncs(MinecraftServer server, int tick) {
+        pendingInitialSync.entrySet().removeIf(entry -> {
+            ServerPlayerEntity player = server.getPlayerManager().getPlayer(entry.getKey());
+            if (player == null) return true;
+
+            if (trySendInitialSync(player)) {
+                LOGGER.debug("Initial sync for {} went out {} ticks after join.",
+                        player.getName().getString(), tick - entry.getValue());
+                return true;
+            }
+
+            if (tick - entry.getValue() < INITIAL_SYNC_TIMEOUT_TICKS) return false;
+
+            // Not a warning: this is also what a legitimately vanilla client looks like,
+            // and Florafare's server half works fine for one. It matters only when an
+            // admin is chasing "my client shows no buffs", which is what the log is for.
+            LOGGER.debug("{} never declared Florafare's channels; treating them as a "
+                            + "client without the mod installed.",
+                    player.getName().getString());
+            return true;
+        });
     }
 
     /**
@@ -467,6 +614,78 @@ public class Florafare implements ModInitializer {
             return buf.readableBytes();
         } finally {
             buf.release();
+        }
+    }
+
+    /**
+     * The exclusion list as it goes on the wire.
+     *
+     * <p>Built fresh each time rather than memoized with the datapack payloads: it is a
+     * few dozen short strings, and {@code /florafare ignore} can change it between two
+     * joins with no datapack reload in between to invalidate a cache.
+     */
+    public static FoodExclusionSyncPayload buildExclusionSyncPayload() {
+        return FoodExclusionSyncPayload.of(
+                net.tend1tnuy.florafare.food.FoodExclusions.canonicalEntries(
+                        net.tend1tnuy.florafare.food.FoodExclusions.Effect.EXCLUDE),
+                net.tend1tnuy.florafare.food.FoodExclusions.canonicalEntries(
+                        net.tend1tnuy.florafare.food.FoodExclusions.Effect.MANAGE));
+    }
+
+    /**
+     * Tells every player online about one food config entry that just changed.
+     *
+     * <p>For {@code /florafare edit}, which changes what the config map says with no
+     * datapack reload to announce it. Clients need to hear about it or they keep drawing
+     * the old numbers in tooltips, the journal and EMI — and, worse, keep predicting
+     * hunger from them, so eating visibly disagrees with the server.
+     *
+     * <p>One entry, not the whole map. The full {@link FoodConfigSyncPayload} is hundreds
+     * of kilobytes on a modpack and is chunked across several packets; sending it per
+     * edit meant an operator spending an evening on balance re-sent the pack's entire
+     * config to every player online, once per command. This is a few dozen bytes.
+     *
+     * <p>The memoized full payloads are still invalidated, because the next player to
+     * join has to be handed a map that already includes the edit.
+     *
+     * @param data the entry as it now stands, or null if the target is no longer defined
+     */
+    public static void syncConfigEntry(MinecraftServer server, String target, FoodBuffData data) {
+        if (server == null) return;
+        invalidateSyncPayloads();
+
+        FoodConfigEntrySyncPayload payload = data == null
+                ? FoodConfigEntrySyncPayload.removal(target)
+                : FoodConfigEntrySyncPayload.of(target, data.toNbt());
+        for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
+            sendTo(player, payload);
+        }
+    }
+
+    /**
+     * Re-sends the datapack config and synergy maps in full.
+     *
+     * <p>Kept for the one case a per-entry update cannot cover: {@code /florafare edit
+     * reset all}, where the number of changed targets is unbounded and one full map is
+     * both smaller and simpler than a packet per entry.
+     */
+    public static void resyncDatapackConfigs(MinecraftServer server) {
+        if (server == null) return;
+        invalidateSyncPayloads();
+        for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
+            sendDatapackSync(player);
+        }
+    }
+
+    /**
+     * Re-sends the exclusion list to everyone online. Called by {@code /florafare ignore}
+     * — an admin excluding a mod mid-session must not have to make players rejoin before
+     * their tooltips and hunger prediction match the server again.
+     */
+    public static void resyncExclusions(MinecraftServer server) {
+        FoodExclusionSyncPayload payload = buildExclusionSyncPayload();
+        for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
+            sendTo(player, payload);
         }
     }
 

@@ -10,6 +10,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.registry.Registries;
 import net.tend1tnuy.florafare.Florafare;
 import net.tend1tnuy.florafare.config.FlorafareConfig;
+import net.tend1tnuy.florafare.food.FoodBuffManager;
 import net.tend1tnuy.florafare.food.FoodSynergyData;
 import net.tend1tnuy.florafare.food.FoodSynergyManager;
 import net.tend1tnuy.registry.ItemRegistry;
@@ -56,6 +57,17 @@ public class FlorafareEmiPlugin implements EmiPlugin {
             if (!stack.contains(DataComponentTypes.FOOD)) continue;
             // Florafare's own mead is a buff remover, not a buff source.
             if (item == ItemRegistry.FORGOTTEN_MEAD) continue;
+            // An excluded item has no Florafare behaviour to describe, so the panel used
+            // to draw it greyed out with a "not managed by Florafare" line. That is the
+            // right answer when EMI is asked about the item directly, and the wrong one
+            // for the category listing — excluding a food mod is precisely the request
+            // not to see its drinks in Florafare's panel.
+            //
+            // The #florafare:ignored half of the list is in place by now (vanilla syncs
+            // tags before recipes), but the config half arrives in Florafare's own packet
+            // after EMI has finished building — so the exclusion sync handler asks EMI to
+            // rebuild, exactly as the synergy sync does.
+            if (FoodBuffManager.isExcluded(item)) continue;
 
             registry.addRecipe(new FoodBuffEmiRecipe(stack));
             foods++;

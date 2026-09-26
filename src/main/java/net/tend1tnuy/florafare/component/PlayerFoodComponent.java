@@ -98,8 +98,23 @@ public class PlayerFoodComponent {
     // given session. The window of loss goes from five minutes to thirty seconds.
     // -------------------------------------------------------------------------
 
-    /** Ticks between forced saves of one player. */
-    private static final int PERSIST_INTERVAL_TICKS = 600;
+    /** Ticks between forced saves for journal progress. */
+    static final int PERSIST_INTERVAL_TICKS = 600;
+
+    /**
+     * The same, for a buff being gained or lost — five seconds rather than thirty.
+     *
+     * <p>Not the same number, because the two kinds of progress are not equally missed.
+     * A discovery lost to a crash costs a journal row the player will re-earn the next
+     * time they eat that food and probably never notices. A buff lost to a crash is the
+     * thing they were in the middle of using, and it is indistinguishable from the bug
+     * this whole area exists to stop — "I ate it and got nothing".
+     *
+     * <p>Affordable because eating is rate-limited by the game: a bite takes 1.6 seconds,
+     * so this can cost at most one player save per player per five seconds even if
+     * somebody does nothing but eat.
+     */
+    static final int BUFF_PERSIST_INTERVAL_TICKS = 100;
 
     /** Something durable changed and has not been written to disk yet. */
     private boolean persistPending = false;
@@ -111,20 +126,39 @@ public class PlayerFoodComponent {
     private int lastPersistTick = -PERSIST_INTERVAL_TICKS;
 
     /**
+     * How long the pending change is willing to wait. Set by whichever request wants it
+     * soonest, so a buff gained in the same second as a discovery does not inherit the
+     * discovery's slower deadline.
+     */
+    private int persistInterval = PERSIST_INTERVAL_TICKS;
+
+    /**
      * Whether this player has durable changes worth writing now. Asked once a second
      * from the server tick — off the entity tick on purpose, so the save serializes a
      * player that is not in the middle of being ticked.
      */
     public boolean isPersistDue(int serverTick) {
         if (!persistPending) return false;
-        if (serverTick - lastPersistTick < PERSIST_INTERVAL_TICKS) return false;
+        if (serverTick - lastPersistTick < persistInterval) return false;
         lastPersistTick = serverTick;
         persistPending = false;
+        persistInterval = PERSIST_INTERVAL_TICKS;
         return true;
     }
 
-    /** Flags progress that must survive a crash, not just a clean shutdown. */
+    /** Flags journal progress that must survive a crash, not just a clean shutdown. */
     private void markPersistPending() {
+        requestPersist(PERSIST_INTERVAL_TICKS);
+    }
+
+    /**
+     * @param interval the longest this change may sit in memory, in ticks
+     */
+    // Package-private, like modifierScope above and for the same reason: the two
+    // deadlines and the way they interact are the whole point of this, and driving them
+    // from a test needs neither a player nor a world.
+    void requestPersist(int interval) {
+        if (!persistPending || interval < persistInterval) persistInterval = interval;
         persistPending = true;
     }
 
@@ -343,7 +377,7 @@ public class PlayerFoodComponent {
                 updateSynergies();
                 FlorafareEvents.BUFF_APPLIED.invoker().onBuffApplied(player, stack, buff);
             }
-            markDirty();
+            markBuffChanged();
             return true;
         }
 
@@ -357,7 +391,7 @@ public class PlayerFoodComponent {
             updateSynergies();
             FlorafareEvents.BUFF_APPLIED.invoker().onBuffApplied(player, stack, buff);
         }
-        markDirty();
+        markBuffChanged();
         return true;
     }
 
@@ -380,7 +414,7 @@ public class PlayerFoodComponent {
             activeBuffs.remove(i);
             removeBuffAttributes(buff);
             updateSynergies();
-            markDirty();
+            markBuffChanged();
             return true;
         }
         return false;
@@ -391,7 +425,7 @@ public class PlayerFoodComponent {
         ActiveFoodBuff buff = activeBuffs.remove(activeBuffs.size() - 1);
         removeBuffAttributes(buff);
         if (!player.getWorld().isClient) updateSynergies();
-        markDirty();
+        markBuffChanged();
         return true;
     }
 
@@ -412,7 +446,7 @@ public class PlayerFoodComponent {
         }
         activeSynergyMap.clear();
 
-        if (changed) markDirty();
+        if (changed) markBuffChanged();
     }
 
     // -------------------------------------------------------------------------
@@ -860,6 +894,32 @@ public class PlayerFoodComponent {
     // TICK
     // -------------------------------------------------------------------------
 
+    /**
+     * Counts every buff and synergy down, and — <b>on the server only</b> — drops the
+     * ones that have run out.
+     *
+     * <p>Both sides run the countdown, because the overlay has to show a bar that moves
+     * smoothly between packets rather than one that jumps once a second. Only one side
+     * gets to decide that a buff is <em>over</em>, and it is not the client.
+     *
+     * <p>That split used to not exist: the client removed its own expired entries too.
+     * Client and server tick the same buff at different real-world rates — the client is
+     * pinned near 20 TPS by its own game loop while a busy modded server runs below it,
+     * and the gap widens for as long as the buff lasts. A five-minute buff on a server
+     * holding 15 TPS therefore vanished from the overlay something like a minute before
+     * the server had finished with it.
+     *
+     * <p>Which produced the mod's worst symptom. The slot looked free, so the player ate
+     * something to fill it; the server still held all {@link #maxBuffSlots} and refused
+     * the new buff; and the bite did nothing at all, with the overlay showing a free slot
+     * the whole time. It reads as "buffs randomly stop working", and it is at its worst
+     * right after a restart or a busy join — exactly when the server's tick rate is
+     * furthest from the client's.
+     *
+     * <p>So an expired entry now stays in the client's list, its bar sitting at empty,
+     * until the server's own expiry sends the {@link BuffStateSyncPayload} that takes it
+     * away. The slot count the player sees is then the slot count the server is enforcing.
+     */
     public void tick() {
         boolean isServer       = !player.getWorld().isClient;
         boolean buffsChanged   = false;
@@ -867,8 +927,10 @@ public class PlayerFoodComponent {
         for (int i = activeBuffs.size() - 1; i >= 0; i--) {
             ActiveFoodBuff buff = activeBuffs.get(i);
             buff.tick();
-            if (buff.isExpired()) {
-                if (isServer) { removeBuffAttributes(buff); buffsChanged = true; markDirty(); }
+            if (buff.isExpired() && isServer) {
+                removeBuffAttributes(buff);
+                buffsChanged = true;
+                markDirty();
                 activeBuffs.remove(i);
             }
         }
@@ -880,12 +942,10 @@ public class PlayerFoodComponent {
         for (int i = activeSynergies.size() - 1; i >= 0; i--) {
             ActiveFoodBuff synergyBuff = activeSynergies.get(i);
             synergyBuff.tick();
-            if (synergyBuff.isExpired()) {
-                if (isServer) {
-                    removeBuffAttributes(synergyBuff);
-                    activeSynergyMap.remove(synergyBuff.getTarget()); // #11
-                    markDirty();
-                }
+            if (synergyBuff.isExpired() && isServer) {
+                removeBuffAttributes(synergyBuff);
+                activeSynergyMap.remove(synergyBuff.getTarget()); // #11
+                markDirty();
                 activeSynergies.remove(i);
             }
         }
@@ -989,6 +1049,26 @@ public class PlayerFoodComponent {
         dirty = true;
     }
 
+    /**
+     * A buff was deliberately gained or lost, so the change is owed to disk as well as to
+     * the client.
+     *
+     * <p>Vanilla writes player NBT on a clean disconnect and on the world autosave, five
+     * minutes apart. A server that is killed rather than stopped therefore used to roll
+     * every player back to the last autosave — and what a player notices about that is not
+     * the coordinates, it is the buff they ate for two minutes ago being gone, which reads
+     * as the buff having silently failed to apply.
+     *
+     * <p>Kept off natural expiry on purpose. That path fires for every player with a buff
+     * running and would put every one of them on the save schedule permanently, to protect
+     * a change that corrects itself anyway: a buff restored from before a crash simply
+     * finishes counting down after it.
+     */
+    private void markBuffChanged() {
+        markDirty();
+        requestPersist(BUFF_PERSIST_INTERVAL_TICKS);
+    }
+
     /** Sends the volatile half if anything changed this tick. */
     private void flushIfDirty() {
         if (!dirty) return;
@@ -1087,6 +1167,27 @@ public class PlayerFoodComponent {
         hasReceivedJournal = nbt.getBoolean(NBT_JOURNAL_KEY);
         dirty = false;          // freshly loaded — not dirty
         persistPending = false; // ...and identical to what is on disk
+    }
+
+    /**
+     * Carries over only what survives dying: the journal, not the buffs.
+     *
+     * <p>The respawn handler used to do this by reaching through
+     * {@code getDiscoveredFoods().addAll(...)} on the live sets, which writes the
+     * progress in but steps over the bookkeeping {@link #unlockFood} does — so the new
+     * component came up with {@code persistPending} still false and was owed to disk
+     * without knowing it. Every discovery made since the world's last autosave was then
+     * lost if the server went down before the next one, and dying is exactly when a
+     * player has just been eating.
+     */
+    public void copyProgressFrom(PlayerFoodComponent old) {
+        this.discoveredFoods.addAll(old.discoveredFoods);
+        this.discoveredSynergies.addAll(old.discoveredSynergies);
+        this.hasReceivedJournal = old.hasReceivedJournal;
+
+        // Same reasoning as in copyFrom: a brand-new entity that has never been written.
+        this.persistPending = true;
+        this.lastPersistTick = old.lastPersistTick;
     }
 
     public void copyFrom(PlayerFoodComponent old) {

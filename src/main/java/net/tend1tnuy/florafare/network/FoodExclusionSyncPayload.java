@@ -11,18 +11,41 @@ import net.minecraft.network.packet.CustomPayload;
 import net.minecraft.util.Identifier;
 import net.tend1tnuy.florafare.Florafare;
 
-import java.util.HashSet;
-import java.util.Set;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
 
 /**
- * Synchronizes the set of item ids Florafare has been told to fully ignore
- * (see {@code FlorafareAPI#excludeFood}) from server to client, so client-side
- * hooks (tooltip stripping, hunger prediction) stay consistent with the
- * server's authoritative decision to leave these items untouched.
+ * Sends the server's exclusion list — everything Florafare has been told to leave alone
+ * — to the client, so client-side hooks (tooltip decoration and stripping, the journal,
+ * AppleSkin's hunger preview, EMI's category) agree with the server about which items
+ * the mod manages at all.
+ *
+ * <p>The list travels in canonical form: {@code "modid:item"}, {@code "modid:*"},
+ * {@code "#namespace:tag"}. Sending the expanded item ids instead was not an option once
+ * mod-wide rules existed — a client cannot expand {@code "modid:*"} back out of a list of
+ * ids, and expanding it server-side would mean naming every food in a mod on every join.
+ *
+ * <p>Entries are written under a new key, and the old {@code ExcludedItems} key is still
+ * written alongside it with just the item-id rules. A 1.4 client connecting to a 1.5
+ * server therefore still gets its per-item exclusions rather than none at all, which is
+ * the failure that would otherwise look like "the server and my tooltips disagree".
  */
 public record FoodExclusionSyncPayload(NbtCompound nbt) implements CustomPayload {
 
-    private static final String KEY_ITEMS = "ExcludedItems";
+    /** Pre-1.5: bare item ids only. Still written, for clients that only read this. */
+    private static final String KEY_LEGACY_ITEMS = "ExcludedItems";
+
+    /** Canonical rules — items, {@code modid:*} and {@code #tags} together. */
+    private static final String KEY_RULES = "ExclusionRules";
+
+    /**
+     * Rules pointing the other way: manage this anyway. Needed client-side because the
+     * {@code #florafare:ignored} tag is synced by vanilla and applies on both ends — so
+     * a server that has claimed one item back out of it has to say so, or every client
+     * keeps drawing that item as unmanaged.
+     */
+    private static final String KEY_MANAGED = "ManagedRules";
 
     public static final CustomPayload.Id<FoodExclusionSyncPayload> ID =
             new CustomPayload.Id<>(Identifier.of(Florafare.MOD_ID, "food_exclusion_sync"));
@@ -32,20 +55,61 @@ public record FoodExclusionSyncPayload(NbtCompound nbt) implements CustomPayload
             FoodExclusionSyncPayload::new
     );
 
-    public static FoodExclusionSyncPayload of(Set<String> excludedItems) {
+    /**
+     * @param excluded canonical exclusion rules, as
+     *                 {@code FoodExclusions#canonicalEntries(Effect)} returns them
+     * @param managed  canonical "manage this anyway" rules, which beat the exclusions
+     */
+    public static FoodExclusionSyncPayload of(Collection<String> excluded,
+                                              Collection<String> managed) {
         NbtCompound nbt = new NbtCompound();
-        NbtList list = new NbtList();
-        for (String id : excludedItems) list.add(NbtString.of(id));
-        nbt.put(KEY_ITEMS, list);
+
+        NbtList all = new NbtList();
+        NbtList legacyItems = new NbtList();
+        for (String rule : excluded) {
+            if (rule == null || rule.isBlank()) continue;
+            all.add(NbtString.of(rule));
+            if (!rule.startsWith("#") && !rule.endsWith(":*")) legacyItems.add(NbtString.of(rule));
+        }
+
+        NbtList managedList = new NbtList();
+        for (String rule : managed) {
+            if (rule == null || rule.isBlank()) continue;
+            managedList.add(NbtString.of(rule));
+        }
+
+        nbt.put(KEY_RULES, all);
+        nbt.put(KEY_MANAGED, managedList);
+        nbt.put(KEY_LEGACY_ITEMS, legacyItems);
         return new FoodExclusionSyncPayload(nbt);
     }
 
-    public Set<String> toSet() {
-        Set<String> result = new HashSet<>();
-        if (nbt.contains(KEY_ITEMS, NbtElement.LIST_TYPE)) {
-            NbtList list = nbt.getList(KEY_ITEMS, NbtElement.STRING_TYPE);
-            for (int i = 0; i < list.size(); i++) result.add(list.getString(i));
-        }
+    /**
+     * The rules this packet carries, newest key preferred.
+     *
+     * <p>Falling back to the legacy key matters in the other direction: a 1.5 client on a
+     * 1.4 server reads the only list that server knows how to send, instead of deciding
+     * the server excludes nothing.
+     */
+    public List<String> rules() {
+        String key = nbt.contains(KEY_RULES, NbtElement.LIST_TYPE) ? KEY_RULES : KEY_LEGACY_ITEMS;
+        return readList(key);
+    }
+
+    /**
+     * The "manage this anyway" rules. Empty for a packet from a server that predates
+     * them, which is the right reading: such a server has no way to claim anything back,
+     * so its exclusions stand exactly as sent.
+     */
+    public List<String> managedRules() {
+        return readList(KEY_MANAGED);
+    }
+
+    private List<String> readList(String key) {
+        List<String> result = new ArrayList<>();
+        if (!nbt.contains(key, NbtElement.LIST_TYPE)) return result;
+        NbtList list = nbt.getList(key, NbtElement.STRING_TYPE);
+        for (int i = 0; i < list.size(); i++) result.add(list.getString(i));
         return result;
     }
 
