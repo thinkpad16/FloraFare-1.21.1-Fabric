@@ -2,6 +2,7 @@ package net.tend1tnuy.florafare;
 
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.fabricmc.fabric.api.entity.event.v1.ServerEntityWorldChangeEvents;
 import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.CommonLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -135,6 +136,17 @@ public class Florafare implements ModInitializer {
         PayloadTypeRegistry.playS2C().register(FlorafareServerConfigSyncPayload.ID, FlorafareServerConfigSyncPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(FoodExclusionSyncPayload.ID, FoodExclusionSyncPayload.CODEC);
 
+        // 5b. The one C2S payload: a client asking for its own state back.
+        //
+        // See RequestStateSyncPayload for why a client ever needs to ask. The answer is
+        // always and only that player's own component, so there is nothing in the packet
+        // to validate — but it is a packet a client controls the timing of, so it is
+        // rate-limited rather than served on demand.
+        PayloadTypeRegistry.playC2S().register(RequestStateSyncPayload.ID, RequestStateSyncPayload.CODEC);
+        ServerPlayNetworking.registerGlobalReceiver(RequestStateSyncPayload.ID,
+                (payload, context) -> resendState(context.player(),
+                        context.server().getTicks(), RESYNC_COOLDOWN_TICKS));
+
         // 6. Commands — registered together in one logical block (#22)
         CommandRegistrationCallback.EVENT.register(DumpFoodsCommand::register);
         CommandRegistrationCallback.EVENT.register(SetBuffCommand::register);
@@ -229,12 +241,38 @@ public class Florafare implements ModInitializer {
 
         // 9b. A player who never became sendable is dropped from the retry map when they
         // leave, so a vanilla client reconnecting in a loop cannot accumulate entries.
-        ServerPlayConnectionEvents.DISCONNECT.register((handler, server) ->
-                pendingInitialSync.remove(handler.player.getUuid()));
+        ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
+            pendingInitialSync.remove(handler.player.getUuid());
+            lastResyncTick.remove(handler.player.getUuid());
+        });
 
         // 10. Re-sync after respawn
         ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) ->
-                ((IFoodComponentProvider) newPlayer).florafare$getFoodComponent().sync());
+                resendState(newPlayer, newPlayer.server.getTicks(), 1));
+
+        // 10b. ...and after a dimension change, for the same reason.
+        //
+        // This was the gap behind "sometimes eating on the server does nothing". The
+        // server keeps one ServerPlayerEntity across a portal — ServerPlayerEntity
+        // #teleportTo reuses the instance — so its component, its buffs and its journal
+        // are all intact and no server-side event fires. But the packet it sends the
+        // client is PlayerRespawnS2CPacket, and the client answers that by building a
+        // *new* ClientPlayerEntity through ClientPlayerInteractionManager#createPlayer.
+        // The Florafare component hangs off that entity, so the client's copy is replaced
+        // by an empty one: no buffs in the overlay, an entirely locked journal, and
+        // placeholder tooltips on every food.
+        //
+        // Nothing then put it back. Respawn had this covered (above) and join had it
+        // covered; a nether portal did not, and neither did /execute in or an end-portal
+        // return. What the player saw afterwards was food that "was not counted": the
+        // journal would not list what they had just eaten, because the server knew it was
+        // discovered long ago and had no new discovery to announce; and the overlay showed
+        // free buff slots the server was in fact holding full, so the next bite granted
+        // nothing. Both correct themselves after a relog, which is what made it look
+        // intermittent.
+        ServerEntityWorldChangeEvents.AFTER_PLAYER_CHANGE_WORLD.register(
+                (player, origin, destination) ->
+                        resendState(player, player.server.getTicks(), 1));
     }
 
     // -------------------------------------------------------------------------
@@ -269,6 +307,36 @@ public class Florafare implements ModInitializer {
      * handlers all run there), so a plain HashMap is enough.
      */
     private static final Map<UUID, Integer> pendingInitialSync = new HashMap<>();
+
+    /**
+     * Server tick of the last resync this player was granted, so a client cannot turn
+     * {@link RequestStateSyncPayload} into a way to make the server serialize and send
+     * its whole discovery list — kilobytes in a large modpack — as fast as it can ask.
+     *
+     * <p>Same thread story as {@link #pendingInitialSync}: play payload handlers run on
+     * the server thread, as do the connection events that clean this up.
+     */
+    private static final Map<UUID, Integer> lastResyncTick = new HashMap<>();
+
+    /** How often one player may be served a <em>requested</em> resync. */
+    private static final int RESYNC_COOLDOWN_TICKS = 20;
+
+    /**
+     * Sends one player their whole Florafare state again, unless they have already had it
+     * within {@code minIntervalTicks}.
+     *
+     * <p>Both pushes pass 1, which suppresses nothing but a same-tick duplicate — and
+     * there is one to suppress: dying in the Nether and respawning in the Overworld fires
+     * {@code AFTER_RESPAWN} and {@code AFTER_PLAYER_CHANGE_WORLD} back to back, and this
+     * is the largest packet the mod sends per player. A client's own request passes
+     * {@link #RESYNC_COOLDOWN_TICKS} instead, since it controls how often it asks.
+     */
+    private static void resendState(ServerPlayerEntity player, int tick, int minIntervalTicks) {
+        Integer last = lastResyncTick.get(player.getUuid());
+        if (last != null && tick - last < minIntervalTicks) return;
+        lastResyncTick.put(player.getUuid(), tick);
+        ((IFoodComponentProvider) player).florafare$getFoodComponent().sync();
+    }
 
     /**
      * How long a join is kept in the retry map. Generous on purpose — it costs one map

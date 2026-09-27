@@ -91,11 +91,13 @@ public class PlayerFoodComponent {
     // a busy server "the server crashed" should not also mean "everyone lost an evening
     // of journal progress".
     //
-    // So a new discovery asks for a save of its own. Throttled, because the flag is set
-    // by eating and a player working through a modpack's food list can discover several
-    // items a minute: one write per player per PERSIST_INTERVAL_TICKS at the very most,
-    // and none at all for the vast majority of players, who discover nothing new in a
-    // given session. The window of loss goes from five minutes to thirty seconds.
+    // So a durable change asks for a save of its own. Throttled, because these flags are
+    // set by eating and a player working through a modpack's food list can discover
+    // several items a minute: one write per player per interval at the very most, and none
+    // at all for the vast majority of players, who change nothing durable in a given
+    // session. The window of loss goes from five minutes to five seconds for the two
+    // things a player would actually miss — a buff, and a newly discovered food — and to
+    // thirty for everything else.
     // -------------------------------------------------------------------------
 
     /** Ticks between forced saves for journal progress. */
@@ -104,17 +106,34 @@ public class PlayerFoodComponent {
     /**
      * The same, for a buff being gained or lost — five seconds rather than thirty.
      *
-     * <p>Not the same number, because the two kinds of progress are not equally missed.
-     * A discovery lost to a crash costs a journal row the player will re-earn the next
-     * time they eat that food and probably never notices. A buff lost to a crash is the
-     * thing they were in the middle of using, and it is indistinguishable from the bug
-     * this whole area exists to stop — "I ate it and got nothing".
+     * <p>Shorter than {@link #PERSIST_INTERVAL_TICKS} because a buff lost to a crash is
+     * the thing the player was in the middle of using, and losing it is indistinguishable
+     * from the bug this whole area exists to stop — "I ate it and got nothing".
+     * {@link #DISCOVERY_PERSIST_INTERVAL_TICKS} matches it for the same reason; what is
+     * left on the slow deadline is only the journal-granted flag, which no player can
+     * tell has been rolled back.
      *
      * <p>Affordable because eating is rate-limited by the game: a bite takes 1.6 seconds,
      * so this can cost at most one player save per player per five seconds even if
      * somebody does nothing but eat.
      */
     static final int BUFF_PERSIST_INTERVAL_TICKS = 100;
+
+    /**
+     * The same again, for a food being discovered.
+     *
+     * <p>Thirty seconds at first, on the reasoning that a lost discovery costs a journal
+     * row the player re-earns the next time they eat that food. Which is true, and still
+     * the wrong trade for a server: the row is the thing the player was collecting, the
+     * loss is invisible until they next open the journal, and "the journal forgot what I
+     * ate" is indistinguishable from the bug where the bite never registered at all.
+     *
+     * <p>Costs no more than the buff deadline does, and for the same reason: a bite takes
+     * 1.6 seconds, so a player who does nothing but eat their way through a modpack still
+     * cannot ask for more than one save per five seconds — and the two requests arrive
+     * together anyway, since eating a new food both discovers it and grants its buff.
+     */
+    static final int DISCOVERY_PERSIST_INTERVAL_TICKS = 100;
 
     /** Something durable changed and has not been written to disk yet. */
     private boolean persistPending = false;
@@ -152,6 +171,15 @@ public class PlayerFoodComponent {
     }
 
     /**
+     * The same, for a discovery, which is owed to disk sooner.
+     *
+     * @see #DISCOVERY_PERSIST_INTERVAL_TICKS
+     */
+    private void markDiscoveryPending() {
+        requestPersist(DISCOVERY_PERSIST_INTERVAL_TICKS);
+    }
+
+    /**
      * @param interval the longest this change may sit in memory, in ticks
      */
     // Package-private, like modifierScope above and for the same reason: the two
@@ -186,7 +214,7 @@ public class PlayerFoodComponent {
 
     public boolean unlockFood(String itemId) {
         if (!discoveredFoods.add(itemId)) return false;
-        markPersistPending();
+        markDiscoveryPending();
         // Deliberately not marked dirty: the discovery list is the largest part of the
         // state and never changes again once a food is known, so it travels in its own
         // one-string payload below instead of riding along on every buff update.
@@ -219,7 +247,7 @@ public class PlayerFoodComponent {
             }
         }
         if (added > 0) {
-            markPersistPending();
+            markDiscoveryPending();
             sync();
         }
         return added;
@@ -260,7 +288,7 @@ public class PlayerFoodComponent {
      */
     public boolean unlockSynergy(String synergyId) {
         if (!discoveredSynergies.add(synergyId)) return false;
-        markPersistPending();
+        markDiscoveryPending();
         if (player instanceof ServerPlayerEntity serverPlayer) {
             Florafare.sendTo(serverPlayer, new SynergyUnlockedPayload(synergyId));
         }
@@ -274,7 +302,7 @@ public class PlayerFoodComponent {
             if (discoveredSynergies.add(synergyId)) added++;
         }
         if (added > 0) {
-            markPersistPending();
+            markDiscoveryPending();
             sync();
         }
         return added;
@@ -623,32 +651,73 @@ public class PlayerFoodComponent {
     }
 
     /**
+     * Takes every Florafare modifier off the player and puts back the ones that a buff
+     * still running is entitled to — which is the whole of what {@code /florafare repair}
+     * should mean.
+     *
+     * <p>The command used to call {@link #stripFlorafareModifiers()} and stop there. That
+     * scan is indiscriminate by design — it has to be, because the orphans it exists to
+     * find are precisely the ones the buff list no longer knows about — so running it on a
+     * player who simply had three buffs going stripped all three of them down to nothing.
+     * The buffs stayed in the overlay, kept their slots and kept counting down, with none
+     * of their stats; and nothing would ever have put those back, because the apply path
+     * runs on eating and the reapply path runs on loading. An admin reaching for the
+     * command to un-stick one player quietly broke every buff that player was holding.
+     *
+     * <p>The load path in {@code PlayerEntityMixin} always did both halves. This is the
+     * same pair, in one method, so the two cannot be called apart again.
+     *
+     * @return how many modifiers were left off — the genuinely orphaned ones
+     */
+    public int repairModifiers() {
+        int stripped  = stripFlorafareModifiers();
+        int reapplied = reapplyAttributes();
+        // A modifier recorded with an amount of zero is stripped but not reapplied (it
+        // does nothing either way), so clamp rather than report a negative count.
+        return Math.max(0, stripped - reapplied);
+    }
+
+    /**
      * Reapplies the recorded attribute modifiers of every active buff and synergy.
      * Needed whenever the player entity is (re)built — loading from disk, or being
      * recreated on a dimension change — because the modifiers are temporary and
      * vanilla carries over only BASE attribute values.
+     *
+     * @return how many modifiers were put back
      */
-    public void reapplyAttributes() {
-        if (player.getWorld().isClient) return;
-        for (ActiveFoodBuff buff : activeBuffs)    reapplyBuffModifiers(buff);
-        for (ActiveFoodBuff buff : activeSynergies) reapplyBuffModifiers(buff);
+    public int reapplyAttributes() {
+        if (player.getWorld().isClient) return 0;
+        int reapplied = 0;
+        for (ActiveFoodBuff buff : activeBuffs)     reapplied += reapplyBuffModifiers(buff);
+        for (ActiveFoodBuff buff : activeSynergies) reapplied += reapplyBuffModifiers(buff);
+        return reapplied;
     }
 
-    private void reapplyBuffModifiers(ActiveFoodBuff buff) {
-        buff.getAppliedModifiers().forEach((modId, modifier) -> {
-            if (modifier.amount() == 0) return;
-            Registries.ATTRIBUTE.getEntry(modifier.attributeId()).ifPresent(entry -> {
-                EntityAttributeInstance instance = player.getAttributeInstance(entry);
-                if (instance == null) return;
-                instance.removeModifier(modId);
-                try {
-                    instance.addTemporaryModifier(new EntityAttributeModifier(
-                            modId, modifier.amount(), mapOperation(modifier.operation())));
-                } catch (Exception e) {
-                    Florafare.LOGGER.error("Failed to reapply attribute modifier: {}", modId, e);
-                }
-            });
-        });
+    private int reapplyBuffModifiers(ActiveFoodBuff buff) {
+        int reapplied = 0;
+        for (Map.Entry<Identifier, ActiveFoodBuff.AppliedModifier> record
+                : buff.getAppliedModifiers().entrySet()) {
+            Identifier modId = record.getKey();
+            ActiveFoodBuff.AppliedModifier modifier = record.getValue();
+            if (modifier.amount() == 0) continue;
+
+            Optional<RegistryEntry.Reference<EntityAttribute>> entry =
+                    Registries.ATTRIBUTE.getEntry(modifier.attributeId());
+            if (entry.isEmpty()) continue;
+
+            EntityAttributeInstance instance = player.getAttributeInstance(entry.get());
+            if (instance == null) continue;
+
+            instance.removeModifier(modId);
+            try {
+                instance.addTemporaryModifier(new EntityAttributeModifier(
+                        modId, modifier.amount(), mapOperation(modifier.operation())));
+                reapplied++;
+            } catch (Exception e) {
+                Florafare.LOGGER.error("Failed to reapply attribute modifier: {}", modId, e);
+            }
+        }
+        return reapplied;
     }
 
     private EntityAttributeModifier.Operation mapOperation(String op) {
@@ -808,7 +877,7 @@ public class PlayerFoodComponent {
                 FlorafareEvents.SYNERGY_ACTIVATED.invoker().onSynergyActivated(player, synergy, synergyBuff);
 
                 if (discoveredSynergies.add(synergy.id())) {
-                    markPersistPending();
+                    markDiscoveryPending();
                     if (player instanceof ServerPlayerEntity serverPlayer) {
                         Florafare.sendTo(serverPlayer, new SynergyUnlockedPayload(synergy.id()));
                     }

@@ -898,17 +898,20 @@ public class SetBuffCommand {
 
     /**
      * Scans every registered attribute (vanilla and modded) for modifiers Florafare
-     * applied, and removes them regardless of the mod's current in-memory buff state.
+     * applied, drops the ones no live buff accounts for, and leaves the rest in place.
      * Recovers a player whose stats got stuck from a corrupted save, a version
-     * migration, or Florafare being removed and reinstalled.
+     * migration, or Florafare being removed and reinstalled — without costing them the
+     * buffs they happen to be holding while the command runs.
      */
     private static int executeRepair(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
         ServerPlayerEntity player = EntityArgumentType.getPlayer(context, "player");
 
-        // Same scan the component runs on every load; kept as a command because a
-        // player can also get stuck without relogging (a crash mid-buff, say).
+        // Same pair the component runs on every load — strip everything, then put back
+        // what a still-running buff is entitled to. Kept as a command because a player can
+        // also get stuck without relogging (a crash mid-buff, say), and it is the reapply
+        // half that keeps the fix from costing them the buffs they are holding right now.
         int removed = ((IFoodComponentProvider) player).florafare$getFoodComponent()
-                .stripFlorafareModifiers();
+                .repairModifiers();
 
         context.getSource().sendFeedback(() -> Text.translatable(
                 "command.florafare.repair.success", removed, player.getName().getString()), true);

@@ -37,6 +37,7 @@ import net.tend1tnuy.florafare.network.FoodExclusionSyncPayload;
 import net.tend1tnuy.florafare.network.FoodSynergySyncPayload;
 import net.tend1tnuy.florafare.network.FoodUnlockedPayload;
 import net.tend1tnuy.florafare.network.OpenFoodJournalPayload;
+import net.tend1tnuy.florafare.network.RequestStateSyncPayload;
 import net.tend1tnuy.florafare.network.SynergyUnlockedPayload;
 import org.lwjgl.glfw.GLFW;
 
@@ -49,6 +50,42 @@ public class FlorafareClient implements ClientModInitializer {
     /** Reassembly buffers for the two chunked datapack syncs; client-side, one connection at a time. */
     private final ChunkedNbtSync configSync  = new ChunkedNbtSync("food_buffs");
     private final ChunkedNbtSync synergySync = new ChunkedNbtSync("food_synergies");
+
+    // -------------------------------------------------------------------------
+    // THE PLAYER-ENTITY WATCHDOG
+    //
+    // Every Florafare surface on the client — the buff overlay, the journal's unlocked
+    // rows, the buff block on a food tooltip — reads the PlayerFoodComponent hanging off
+    // MinecraftClient#player. Vanilla replaces that entity outright whenever it handles a
+    // PlayerRespawnS2CPacket: on death, and on every dimension change, /execute in and
+    // end-portal return. The new entity's component starts empty, so all three surfaces
+    // go blank while the server still holds the real state.
+    //
+    // The server pushes a full sync on each of those paths, which is the actual fix (see
+    // Florafare#onInitialize, sections 10 and 10b). This is the net under it: if the
+    // entity was swapped and no full sync has arrived a moment later, ask for one. That
+    // also covers a join whose initial sync was lost, and any path a future Minecraft
+    // version might add.
+    // -------------------------------------------------------------------------
+
+    /**
+     * Identity of the player entity the component state on screen belongs to. Compared by
+     * reference on purpose — the question is "is this the same object", not "is this the
+     * same player", and a respawn hands back a new object for the same player.
+     */
+    private ClientPlayerEntity lastSeenPlayer = null;
+
+    /** Client ticks left before an unanswered entity swap turns into a request, or -1. */
+    private int resyncCountdown = -1;
+
+    /** Requests already made for the current swap, so a silent server is asked a few times, not forever. */
+    private int resyncAttempts = 0;
+
+    /** How long the server is given to push the sync on its own before we ask. */
+    private static final int RESYNC_GRACE_TICKS = 40;
+
+    /** Ceiling on requests per swap. Past this the server is simply not answering. */
+    private static final int MAX_RESYNC_ATTEMPTS = 3;
 
     @Override
     public void onInitializeClient() {
@@ -78,12 +115,18 @@ public class FlorafareClient implements ClientModInitializer {
                 // renders buff slots and synergy availability off these values.
                 FoodJournalScreen.invalidateCache();
             }
+            // The next connection starts from a clean slate; its join sync is what fills
+            // the component, so nothing is owed to the one that just ended.
+            lastSeenPlayer  = null;
+            resyncCountdown = -1;
+            resyncAttempts  = 0;
         });
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             while (hudConfigKey.wasPressed()) {
                 client.setScreen(new HudConfigScreen());
             }
+            watchForPlayerSwap(client.player);
         });
 
         ClientPlayNetworking.registerGlobalReceiver(FoodBuffSyncPayload.ID, (payload, context) ->
@@ -92,6 +135,13 @@ public class FlorafareClient implements ClientModInitializer {
                     if (player != null) {
                         ((IFoodComponentProvider) player)
                                 .florafare$getFoodComponent().readFromNbt(payload.nbt());
+                        // The full state is here, so whatever entity swap armed the
+                        // watchdog has been answered. Recorded against the entity this
+                        // landed on, not just as a flag: a sync that arrives for the old
+                        // entity while the new one is already in place must not count.
+                        lastSeenPlayer  = player;
+                        resyncCountdown = -1;
+                        resyncAttempts  = 0;
                     }
                     // This packet replaces the discovery lists wholesale, and the
                     // journal's static cache stores each entry's unlocked flag. It only
@@ -260,5 +310,48 @@ public class FlorafareClient implements ClientModInitializer {
                 }));
 
         HudRenderCallback.EVENT.register(new FlorafareHud());
+    }
+
+    /**
+     * Notices the player entity being replaced and makes sure the state comes back.
+     *
+     * <p>Run every client tick, so it is deliberately a reference comparison and two int
+     * checks in the overwhelming case where nothing has changed.
+     */
+    private void watchForPlayerSwap(ClientPlayerEntity player) {
+        if (player == null) {
+            // Between worlds, or on the title screen. Not a swap — there is nothing to
+            // sync into and no connection to ask over.
+            lastSeenPlayer  = null;
+            resyncCountdown = -1;
+            return;
+        }
+
+        if (player != lastSeenPlayer) {
+            lastSeenPlayer  = player;
+            resyncCountdown = RESYNC_GRACE_TICKS;
+            resyncAttempts  = 0;
+            return;
+        }
+
+        if (resyncCountdown < 0) return;
+        if (--resyncCountdown > 0) return;
+
+        // The grace period ran out with no full sync. Ask, and arm the countdown again in
+        // case this request is the one that goes missing.
+        if (resyncAttempts++ >= MAX_RESYNC_ATTEMPTS) {
+            resyncCountdown = -1;
+            return;
+        }
+        resyncCountdown = RESYNC_GRACE_TICKS;
+
+        // A server without Florafare installed never declares the channel, and sending
+        // to one throws rather than being ignored — the same asymmetry Florafare#sendTo
+        // guards on the other side.
+        if (ClientPlayNetworking.canSend(RequestStateSyncPayload.ID)) {
+            ClientPlayNetworking.send(new RequestStateSyncPayload());
+        } else {
+            resyncCountdown = -1;
+        }
     }
 }

@@ -191,6 +191,31 @@ class BuffDurabilityTest {
         }
 
         @Test
+        @DisplayName("a discovery is written within seconds, not within half a minute")
+        void discoveriesUseTheShortDeadline() {
+            PlayerFoodComponent comp = component();
+            comp.setHasReceivedJournal(true);
+            assertTrue(comp.isPersistDue(1000)); // consume the free first write
+
+            // What unlockFood() asks for. A player who eats something new and is dropped
+            // by a crash a few seconds later must still find it in their journal.
+            comp.requestPersist(PlayerFoodComponent.DISCOVERY_PERSIST_INTERVAL_TICKS);
+            assertFalse(comp.isPersistDue(1080), "still inside the discovery window");
+            assertTrue(comp.isPersistDue(1100),
+                    "a discovery must not wait out the thirty-second throttle the "
+                            + "journal flag is happy with");
+        }
+
+        @Test
+        @DisplayName("the discovery deadline is the tight one, not the slow one")
+        void discoveryDeadlineIsTight() {
+            assertTrue(PlayerFoodComponent.DISCOVERY_PERSIST_INTERVAL_TICKS
+                            < PlayerFoodComponent.PERSIST_INTERVAL_TICKS,
+                    "a discovery on the slow deadline is a journal row a crash can eat, "
+                            + "which is the symptom this whole area exists to stop");
+        }
+
+        @Test
         @DisplayName("a write is not repeated until something else changes")
         void staysQuietOnceWritten() {
             PlayerFoodComponent comp = component();
