@@ -170,7 +170,15 @@ public class FlorafareClient implements ClientModInitializer {
                     NbtCompound complete =
                             configSync.accept(payload.nbt(), payload.index(), payload.total());
                     if (complete == null) return;
-                    FoodBuffManager.loadConfigsFromNbt(complete);
+                    // Not for our own integrated server, for the reason the exclusion
+                    // receiver below gives: client and server share one config map in
+                    // that process, so this packet is a snapshot of the very map it would
+                    // overwrite. Applied anyway it raced the server thread — a /florafare
+                    // edit made between the snapshot and its arrival was reverted, and a
+                    // bite resolving mid-swap could see the map being rebuilt.
+                    if (context.client().getServer() == null) {
+                        FoodBuffManager.loadConfigsFromNbt(complete);
+                    }
                     // Invalidate the journal cache so the next screen open re-reads
                     // the updated configs (#7).
                     FoodJournalScreen.invalidateCache();
@@ -185,8 +193,11 @@ public class FlorafareClient implements ClientModInitializer {
         // wholesale and would wipe every other entry this packet does not carry.
         ClientPlayNetworking.registerGlobalReceiver(FoodConfigEntrySyncPayload.ID, (payload, context) ->
                 context.client().execute(() -> {
-                    FoodBuffManager.applyConfigEntry(payload.target(),
-                            payload.removed() ? null : FoodBuffData.fromNbt(payload.data()));
+                    // The integrated server has already made this change to the shared map.
+                    if (context.client().getServer() == null) {
+                        FoodBuffManager.applyConfigEntry(payload.target(),
+                                payload.removed() ? null : FoodBuffData.fromNbt(payload.data()));
+                    }
                     FoodJournalScreen.invalidateCache();
                     EmiReloadBridge.requestReload();
                 }));
@@ -196,7 +207,10 @@ public class FlorafareClient implements ClientModInitializer {
                     NbtCompound complete =
                             synergySync.accept(payload.nbt(), payload.index(), payload.total());
                     if (complete == null) return;
-                    FoodSynergyManager.loadSynergiesFromNbt(complete);
+                    // Same as the config map: in our own world it is already the server's.
+                    if (context.client().getServer() == null) {
+                        FoodSynergyManager.loadSynergiesFromNbt(complete);
+                    }
                     // Invalidate the journal cache so synergy data is also refreshed (#7).
                     FoodJournalScreen.invalidateCache();
                     // EMI has already finished building its recipe list by the time this
@@ -211,12 +225,6 @@ public class FlorafareClient implements ClientModInitializer {
 
         ClientPlayNetworking.registerGlobalReceiver(FlorafareServerConfigSyncPayload.ID, (payload, context) ->
                 context.client().execute(() -> {
-                    // Applied in-memory only (never written to disk) so a dedicated
-                    // server stays authoritative every time this client (re)connects —
-                    // mirrors FoodBuffManager.loadConfigsFromNbt's approach.
-                    FlorafareConfig.maxBuffSlots = payload.maxBuffSlots();
-                    FlorafareConfig.autoGenDurationMultiplier = payload.autoGenDurationMultiplier();
-                    FlorafareConfig.autoGenHealthMultiplier = payload.autoGenHealthMultiplier();
                     // FoodBuffManager keeps its own copy of the multipliers, and on a
                     // dedicated server nothing else ever sets it: the reload listener that
                     // normally does is SERVER_DATA and never runs here. Without this the
@@ -228,6 +236,25 @@ public class FlorafareClient implements ClientModInitializer {
                     // Auto-generated results are memoized, so the ones built with the old
                     // multipliers have to go.
                     FoodBuffManager.invalidateResolutionCache();
+                    FoodJournalScreen.invalidateCache();
+
+                    // Our own world (single-player, or one we opened to LAN): stop here.
+                    // The integrated server shares every one of these FlorafareConfig
+                    // fields with us already, so there is nothing to copy — but the
+                    // multipliers in this packet are the ones *in force*, which a
+                    // datapack's config_generation.json may have changed, and writing
+                    // those into FlorafareConfig made them this player's own settings.
+                    // ClientConfigOverride takes no snapshot for a local world, so nothing
+                    // put them back: they followed the player into every other world and
+                    // were written into florafare.json by the next save().
+                    if (context.client().getServer() != null) return;
+
+                    // Applied in-memory only (never written to disk) so a dedicated
+                    // server stays authoritative every time this client (re)connects —
+                    // mirrors FoodBuffManager.loadConfigsFromNbt's approach.
+                    FlorafareConfig.maxBuffSlots = payload.maxBuffSlots();
+                    FlorafareConfig.autoGenDurationMultiplier = payload.autoGenDurationMultiplier();
+                    FlorafareConfig.autoGenHealthMultiplier = payload.autoGenHealthMultiplier();
                     FlorafareConfig.enableSynergies = payload.enableSynergies();
                     FlorafareConfig.enableAlwaysEdibleOverride = payload.enableAlwaysEdibleOverride();
                     // Needed client-side too: Item#use runs on the client for prediction,
@@ -236,7 +263,6 @@ public class FlorafareClient implements ClientModInitializer {
                     FlorafareConfig.respectVanillaFoodEffects = payload.respectVanillaFoodEffects();
                     FlorafareConfig.enableForgottenMead = payload.enableForgottenMead();
                     PlayerFoodComponent.setMaxBuffSlots(payload.maxBuffSlots());
-                    FoodJournalScreen.invalidateCache();
                 }));
 
         ClientPlayNetworking.registerGlobalReceiver(FoodExclusionSyncPayload.ID, (payload, context) ->

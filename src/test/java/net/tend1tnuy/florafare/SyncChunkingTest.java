@@ -190,4 +190,75 @@ class SyncChunkingTest {
             assertFalse(second.contains("old"), "entries leaked across two reloads");
         }
     }
+
+    @Nested
+    @DisplayName("a modpack-sized config map")
+    class RealisticPayload {
+
+        /**
+         * Roughly what a large modpack ships: 700 item entries, each with several
+         * attributes and effects, plus a batch of potion targets — serialized by the real
+         * {@link net.tend1tnuy.florafare.food.FoodBuffData#toNbt()}, so the compound and
+         * key overhead the client's NbtSizeTracker charges is the real overhead.
+         */
+        private NbtCompound modpackMap() {
+            NbtCompound root = new NbtCompound();
+            for (int i = 0; i < 700; i++) {
+                String target = "somemodpackmod:food_item_number_" + i;
+                var builder = net.tend1tnuy.florafare.food.FoodBuffData.builder(target)
+                        .duration(6000 + i).priority(10);
+                List<net.tend1tnuy.florafare.food.FoodBuffData.EffectData> effects = new ArrayList<>();
+                List<net.tend1tnuy.florafare.food.FoodBuffData.AttributeData> attributes = new ArrayList<>();
+                for (int j = 0; j < 4; j++) {
+                    effects.add(new net.tend1tnuy.florafare.food.FoodBuffData.EffectData(
+                            net.minecraft.util.Identifier.of("minecraft", "effect_" + j), 600, j));
+                    attributes.add(new net.tend1tnuy.florafare.food.FoodBuffData.AttributeData(
+                            net.minecraft.util.Identifier.of("minecraft", "generic.attribute_" + j),
+                            0.5 * j, "add_multiplied_base"));
+                }
+                net.tend1tnuy.florafare.food.FoodBuffData base = builder.build();
+                net.tend1tnuy.florafare.food.FoodBuffData data = new net.tend1tnuy.florafare.food.FoodBuffData(
+                        base.target(), base.duration(), 6, 0.6f, 2.0, effects, attributes,
+                        base.priority(), false);
+                root.put(target, data.toNbt());
+            }
+            for (int i = 0; i < 60; i++) {
+                String target = "potion:minecraft:potion_number_" + i;
+                root.put(target, net.tend1tnuy.florafare.food.FoodBuffData.builder(target)
+                        .duration(1200).build().toNbt());
+            }
+            return root;
+        }
+
+        @Test
+        @DisplayName("splits into chunks every one of which the client's real decoder accepts")
+        void everyChunkDecodes() {
+            NbtCompound root = modpackMap();
+            List<String> skipped = new ArrayList<>();
+
+            List<NbtCompound> chunks = Florafare.chunk(root, "food_buffs", skipped);
+
+            assertTrue(skipped.isEmpty(), "no ordinary entry should be too big: " + skipped);
+            for (NbtCompound chunk : chunks) {
+                assertTrue(Florafare.decodesWithinLimit(chunk), "a chunk the client would refuse");
+                assertTrue(Florafare.encodedSize(chunk) <= Florafare.CHUNK_TARGET_BYTES);
+            }
+        }
+
+        @Test
+        @DisplayName("and reassembles into exactly the map that was sent, entries intact")
+        void roundTripsWithRealEntries() {
+            NbtCompound root = modpackMap();
+
+            NbtCompound rebuilt = reassemble(Florafare.chunk(root, "food_buffs", new ArrayList<>()));
+
+            assertNotNull(rebuilt);
+            assertEquals(root, rebuilt);
+            var sample = net.tend1tnuy.florafare.food.FoodBuffData.fromNbt(
+                    rebuilt.getCompound("somemodpackmod:food_item_number_699"));
+            assertEquals(4, sample.attributes().size());
+            assertEquals(4, sample.effects().size());
+            assertTrue(rebuilt.contains("potion:minecraft:potion_number_59"));
+        }
+    }
 }
