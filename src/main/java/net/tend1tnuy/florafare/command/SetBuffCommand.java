@@ -36,6 +36,7 @@ import net.tend1tnuy.florafare.food.FoodBuffData;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
 import net.tend1tnuy.florafare.food.FoodSynergyData;
 import net.tend1tnuy.florafare.food.FoodSynergyManager;
+import net.tend1tnuy.florafare.util.DurationFormat;
 import net.tend1tnuy.registry.ItemRegistry;
 
 import java.util.ArrayList;
@@ -406,14 +407,14 @@ public class SetBuffCommand {
     }
 
     /**
-     * {@code mm:ss} for a tick count. Deliberately duplicated from
-     * {@code BuffDescription#mmss} instead of reused: that class reads the local player's
-     * discovery set through {@code MinecraftClient} and must never be loaded on a
-     * dedicated server, which is exactly where this command runs.
+     * A tick count as a clock time. Through {@link DurationFormat}, which the client's
+     * tooltips use too: {@code BuffDescription} reads the local player's discovery set
+     * through {@code MinecraftClient} and must never be loaded on a dedicated server, so
+     * this used to keep a copy of the formatter — one that knew neither hours nor
+     * {@link java.util.Locale#ROOT}.
      */
     private static String ticksToMmss(int ticks) {
-        int seconds = Math.max(0, ticks) / 20;
-        return String.format("%02d:%02d", seconds / 60, seconds % 60);
+        return DurationFormat.format(ticks);
     }
 
     private static int executeJournalGive(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {

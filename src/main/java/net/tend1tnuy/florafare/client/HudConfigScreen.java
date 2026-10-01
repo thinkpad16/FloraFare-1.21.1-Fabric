@@ -9,6 +9,8 @@ import net.minecraft.util.Formatting;
 import net.minecraft.util.math.MathHelper;
 import net.tend1tnuy.florafare.config.FlorafareConfig;
 
+import java.util.Locale;
+
 /**
  * The quick HUD settings screen, opened with the mod's keybind.
  *
@@ -117,12 +119,12 @@ public class HudConfigScreen extends Screen {
 
     private static Text layoutLabel() {
         return Text.translatable("gui.florafare.hud_config.mode",
-                Text.translatable("gui.florafare.layout." + HudConfig.layoutMode.name().toLowerCase()));
+                Text.translatable("gui.florafare.layout." + HudConfig.layoutMode.name().toLowerCase(Locale.ROOT)));
     }
 
     private static Text iconLabel() {
         return Text.translatable("gui.florafare.hud_config.icons",
-                Text.translatable("gui.florafare.icon_size." + HudConfig.iconSize.name().toLowerCase()));
+                Text.translatable("gui.florafare.icon_size." + HudConfig.iconSize.name().toLowerCase(Locale.ROOT)));
     }
 
     /**

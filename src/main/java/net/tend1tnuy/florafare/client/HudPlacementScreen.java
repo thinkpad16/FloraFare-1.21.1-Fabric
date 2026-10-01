@@ -9,6 +9,8 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.tend1tnuy.florafare.component.PlayerFoodComponent;
 
+import java.util.Locale;
+
 /**
  * Drag the buff overlay where you want it.
  *
@@ -194,7 +196,7 @@ public class HudPlacementScreen extends Screen {
                 this.width / 2, 30, 0xAAAAAA);
         context.drawCenteredTextWithShadow(this.textRenderer,
                 Text.translatable("gui.florafare.hud_placement.anchor",
-                        Text.translatable("gui.florafare.position." + HudConfig.position.name().toLowerCase()))
+                        Text.translatable("gui.florafare.position." + HudConfig.position.name().toLowerCase(Locale.ROOT)))
                         .formatted(Formatting.DARK_GRAY),
                 this.width / 2, 42, 0x888888);
 
