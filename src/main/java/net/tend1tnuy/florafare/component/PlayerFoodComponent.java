@@ -818,12 +818,25 @@ public class PlayerFoodComponent {
      * it inverts the arithmetic inside several vanilla effects and is never intended.
      */
     private void applyEffect(Identifier effectId, int duration, int amplifier) {
+        int ticks = effectDurationTicks(duration);
+        if (ticks == 0) return;
         Registries.STATUS_EFFECT.getEntry(effectId).ifPresent(status ->
-                player.addStatusEffect(new StatusEffectInstance(
-                        status,
-                        ActiveFoodBuff.clampDuration(duration),
-                        clampAmplifier(amplifier)))
+                player.addStatusEffect(new StatusEffectInstance(status, ticks, clampAmplifier(amplifier)))
         );
+    }
+
+    /**
+     * The tick count handed to {@link StatusEffectInstance} for a datapack effect.
+     *
+     * <p>{@code -1} is vanilla's infinite duration and the tooltip already shows it as ∞, so
+     * it passes through untouched instead of being clamped to zero like any other negative
+     * value used to be (which silently made an "infinite" effect do nothing). Other
+     * negatives and zero return 0, which the caller treats as "don't apply": a zero-tick
+     * effect would only flash its icon. Everything else is clamped to the buff ceiling.
+     */
+    static int effectDurationTicks(int duration) {
+        if (duration == StatusEffectInstance.INFINITE) return StatusEffectInstance.INFINITE;
+        return ActiveFoodBuff.clampDuration(duration);
     }
 
     /** Status effect amplifiers are a byte on the wire; keep them in a sane, positive range. */
