@@ -1,157 +1,219 @@
 package net.tend1tnuy.florafare.command;
 
+import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.builder.ArgumentBuilder;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
-import net.fabricmc.loader.api.FabricLoader;
+import com.mojang.brigadier.suggestion.Suggestions;
+import com.mojang.brigadier.suggestion.SuggestionsBuilder;
+import net.minecraft.command.CommandSource;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.recipe.Ingredient;
-import net.minecraft.recipe.Recipe;
-import net.minecraft.recipe.RecipeEntry;
-import net.minecraft.recipe.RecipeManager;
 import net.minecraft.registry.Registries;
-import net.minecraft.registry.RegistryWrapper;
 import net.minecraft.server.command.CommandManager;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.text.ClickEvent;
-import net.minecraft.text.HoverEvent;
 import net.minecraft.text.MutableText;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
-import net.minecraft.util.Identifier;
 import net.minecraft.util.Util;
 import net.tend1tnuy.florafare.Florafare;
+import net.tend1tnuy.florafare.command.dump.FoodDump;
+import net.tend1tnuy.florafare.command.dump.FoodDumpCollector;
+import net.tend1tnuy.florafare.command.dump.FoodDumpWriter;
+import net.tend1tnuy.florafare.command.dump.FoodDumpWriter.Format;
 
-import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.util.*;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.TreeSet;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 
-public class DumpFoodsCommand {
+/**
+ * {@code /florafare dumpfoods [modFilter] [json|txt|csv|all] [maxDepth]} — every food in
+ * the game, what FloraFare does with it, and every recipe that makes it, written to
+ * {@code <game dir>/florafare/dumps/foods-<timestamp>.<ext>}.
+ *
+ * <p>For building datapacks: the JSON is for scripts, the text for reading, the CSV for a
+ * spreadsheet. The format is described in the README; {@link FoodDumpCollector} explains
+ * how the data is gathered and {@link net.tend1tnuy.florafare.command.dump.RecipeGraph}
+ * how recipes are classified.
+ *
+ * <h2>Arguments</h2>
+ * <ul>
+ *   <li>{@code modFilter} — a namespace ({@code farmersdelight}), or {@code *} for every
+ *       mod. The format can also follow {@code dumpfoods} directly, for all mods.</li>
+ *   <li>format — {@code all} (default), {@code json}, {@code txt} or {@code csv}.</li>
+ *   <li>{@code maxDepth} — levels of the text tree, default {@value #DEFAULT_DEPTH}.</li>
+ * </ul>
+ *
+ * <h2>Threads and files</h2>
+ * The data is gathered on the server thread, because it reads the registries and the
+ * recipe manager, and then handed to the IO pool to be serialized and written, so the
+ * megabytes of text are never built while the server is not ticking. Only one dump runs at
+ * a time — a second one is refused until the first has written its files, where it used
+ * to race the first one into the same fixed file name — and each run writes new files
+ * with a timestamp in their name.
+ *
+ * <p>The write level: it writes into the server's file system.
+ */
+public final class DumpFoodsCommand {
 
-    /**
-     * Holds the resolved ingredients and metadata for a single recipe result.
-     *
-     * @param ingredients Map of ingredient item to slot count.
-     * @param typeId      Registry id of the recipe type (e.g. "minecraft:crafting").
-     * @param outputCount Number of items produced by the recipe (e.g. 9 for nuggets).
-     */
-    private record RecipeInfo(Map<Item, Integer> ingredients, Identifier typeId, int outputCount) {}
+    private DumpFoodsCommand() {}
 
-    /**
-     * The {@code dumpfoods} branch, for {@link FlorafareCommands} to hang off the one
-     * {@code /florafare} root. It writes into the server's file system, so it is the
-     * write level.
-     */
-    public static com.mojang.brigadier.builder.ArgumentBuilder<ServerCommandSource, ?> branch() {
-        return CommandManager.literal("dumpfoods")
+    static final int DEFAULT_DEPTH = 3;
+    static final int MAX_DEPTH = 10;
+
+    /** The literal that stands for "every mod" in the filter position. */
+    static final String ALL_MODS = "*";
+
+    /** Held from the moment a dump starts until its files are written (or it fails). */
+    private static final AtomicBoolean RUNNING = new AtomicBoolean();
+
+    public static ArgumentBuilder<ServerCommandSource, ?> branch() {
+        LiteralArgumentBuilder<ServerCommandSource> root = CommandManager.literal("dumpfoods")
                 .requires(CommandPermissions::canWrite)
-                .executes(DumpFoodsCommand::executeDump);
+                .executes(context -> execute(context, null, "all", DEFAULT_DEPTH));
+
+        // /florafare dumpfoods <format> [maxDepth] — every mod. Literals, so Brigadier
+        // tries them before the free-text filter argument below.
+        for (String format : List.of("all", "json", "txt", "csv")) {
+            root.then(CommandManager.literal(format)
+                    .executes(context -> execute(context, null, format, DEFAULT_DEPTH))
+                    .then(depthArgument(context -> execute(context, null, format,
+                            IntegerArgumentType.getInteger(context, "maxDepth")))));
+        }
+
+        // /florafare dumpfoods <modFilter> [format] [maxDepth]
+        root.then(CommandManager.argument("modFilter", StringArgumentType.word())
+                .suggests(DumpFoodsCommand::suggestMods)
+                .executes(context -> execute(context, filter(context), "all", DEFAULT_DEPTH))
+                .then(CommandManager.argument("format", StringArgumentType.word())
+                        .suggests((context, builder) -> CommandSource.suggestMatching(
+                                List.of("all", "json", "txt", "csv"), builder))
+                        .executes(context -> execute(context, filter(context),
+                                StringArgumentType.getString(context, "format"), DEFAULT_DEPTH))
+                        .then(depthArgument(context -> execute(context, filter(context),
+                                StringArgumentType.getString(context, "format"),
+                                IntegerArgumentType.getInteger(context, "maxDepth"))))));
+        return root;
     }
 
-    private static int executeDump(CommandContext<ServerCommandSource> context) {
-        ServerCommandSource source = context.getSource();
-        RecipeManager recipeManager = source.getServer().getRecipeManager();
-        RegistryWrapper.WrapperLookup registries = source.getRegistryManager();
+    private static ArgumentBuilder<ServerCommandSource, ?> depthArgument(
+            com.mojang.brigadier.Command<ServerCommandSource> command) {
+        return CommandManager.argument("maxDepth", IntegerArgumentType.integer(0, MAX_DEPTH))
+                .executes(command);
+    }
 
-        List<Item> foodItems = new ArrayList<>();
-        for (Identifier id : Registries.ITEM.getIds()) {
-            Item item = Registries.ITEM.get(id);
+    private static String filter(CommandContext<ServerCommandSource> context) {
+        String raw = StringArgumentType.getString(context, "modFilter");
+        return ALL_MODS.equals(raw) ? null : raw.toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /** {@code *} and every namespace that adds a food. */
+    private static CompletableFuture<Suggestions> suggestMods(
+            CommandContext<ServerCommandSource> context, SuggestionsBuilder builder) {
+        TreeSet<String> namespaces = new TreeSet<>();
+        for (Item item : Registries.ITEM) {
             if (item.getComponents().contains(DataComponentTypes.FOOD)) {
-                foodItems.add(item);
+                namespaces.add(Registries.ITEM.getId(item).getNamespace());
             }
         }
+        List<String> suggestions = new ArrayList<>();
+        suggestions.add(ALL_MODS);
+        suggestions.addAll(namespaces);
+        return CommandSource.suggestMatching(suggestions, builder);
+    }
 
-        // One pass over the recipe list, not one pass per item.
-        //
-        // getRecipeInfo used to scan every recipe in the game to answer "how is this one
-        // item made", and it was called once per food AND again for every ingredient of
-        // every food as the tree was expanded. On a modpack with several thousand recipes
-        // and a few hundred foods that is tens of millions of Recipe#getResult calls, all
-        // on the server thread, all while the server is not ticking. Indexing the recipes
-        // by their result item once makes the whole command linear in the recipe count.
-        Map<Item, RecipeInfo> recipeIndex = indexRecipesByResult(recipeManager, registries);
+    // -------------------------------------------------------------------------
+    // RUN
+    // -------------------------------------------------------------------------
 
-        StringBuilder out = new StringBuilder(1 << 16);
-        out.append("=================================================================================\n");
-        out.append("=== FLORAFARE FOODS RECIPE TREE DUMP ===\n");
-        out.append("Total edible items found: ").append(foodItems.size()).append('\n');
-        out.append("=================================================================================\n\n");
-
-        for (Item food : foodItems) {
-            out.append("ITEM ID: ").append(Registries.ITEM.getId(food)).append('\n');
-
-            RecipeInfo info = recipeIndex.get(food);
-            if (info == null) {
-                out.append("-> Direct Recipe: None (Raw item / drops / special condition)\n");
-            } else {
-                String typeStr  = info.typeId() != null ? info.typeId().toString() : "unknown";
-                String yieldStr = info.outputCount() > 1
-                        ? " (Yields " + info.outputCount() + ")" : "";
-                out.append("-> Direct Ingredients").append(yieldStr)
-                   .append(" [").append(typeStr).append("]: ")
-                   .append(formatItemList(info.ingredients())).append('\n');
-                out.append("-> Full Crafting Tree:\n");
-
-                Set<Item>    alreadyExpanded = new HashSet<>();
-                List<String> recipeHistory   = new ArrayList<>();
-                buildTree(food, recipeIndex, alreadyExpanded, recipeHistory, 3);
-
-                for (String line : recipeHistory) out.append(line).append('\n');
-            }
-            out.append("---------------------------------------------------------------------------------\n\n");
+    private static int execute(CommandContext<ServerCommandSource> context, String modFilter,
+                               String formatName, int maxDepth) {
+        ServerCommandSource source = context.getSource();
+        List<Format> formats = Format.parse(formatName);
+        if (formats == null) {
+            source.sendError(Text.translatable("command.florafare.dumpfoods.bad_format", formatName));
+            return 0;
+        }
+        if (!RUNNING.compareAndSet(false, true)) {
+            source.sendError(Text.translatable("command.florafare.dumpfoods.busy"));
+            return 0;
         }
 
-        File dumpFile = new File(
-                FabricLoader.getInstance().getGameDir().toFile(),
-                "florafare_edible_items_dump.txt");
+        FoodDump dump;
+        try {
+            dump = FoodDumpCollector.collect(source.getServer(),
+                    new FoodDumpCollector.Options(modFilter, maxDepth));
+        } catch (Exception e) {
+            RUNNING.set(false);
+            Florafare.LOGGER.error("dumpfoods failed while reading the game's food and recipe data", e);
+            source.sendError(Text.translatable("command.florafare.dumpfoods.error", String.valueOf(e.getMessage())));
+            return 0;
+        }
 
-        // Written off the server thread. Everything above needed the recipe manager and
-        // the registries, so it has to happen here; the file I/O does not, and on a big
-        // pack the dump is megabytes.
-        final String contents = out.toString();
-        final int    count    = foodItems.size();
+        if (dump.foods().isEmpty()) {
+            RUNNING.set(false);
+            source.sendError(Text.translatable("command.florafare.dumpfoods.nothing",
+                    modFilter == null ? ALL_MODS : modFilter));
+            return 0;
+        }
+
+        // Named now, on the server thread, so the summary can say where they went.
+        Path dir = ReportFiles.directory("dumps");
+        String base = "foods-" + ReportFiles.stampNow() + (modFilter == null ? "" : "-" + modFilter);
+        List<Path> files = new ArrayList<>();
+        for (Format format : formats) files.add(ReportFiles.uniqueFile(dir, base, format.extension));
+
         // Auto-open only for the person actually sitting at this machine. On a LAN world
-        // any player with the permission level could previously pop a text editor onto
-        // the host's desktop, which is not something a chat command should be able to do.
-        final boolean openWhenDone = isLocalHost(source);
+        // any player with the permission level could otherwise pop a text editor onto
+        // the host's desktop, and a dedicated server has no desktop to open it on.
+        boolean openWhenDone = isLocalHost(source);
+        source.sendFeedback(() -> Text.translatable("command.florafare.dumpfoods.started",
+                dump.foods().size()).formatted(Formatting.GRAY), false);
 
         Util.getIoWorkerExecutor().execute(() -> {
-            try (FileWriter writer = new FileWriter(dumpFile)) {
-                writer.write(contents);
-            } catch (IOException e) {
-                Florafare.LOGGER.error("Failed to dump food recipe trees", e);
+            try {
+                for (int i = 0; i < formats.size(); i++) {
+                    ReportFiles.writeNew(files.get(i), FoodDumpWriter.write(dump, formats.get(i)));
+                }
+            } catch (Exception e) {
+                Florafare.LOGGER.error("Failed to write the Florafare food dump into {}", dir, e);
                 source.getServer().execute(() -> source.sendError(Text.translatable(
-                        "command.florafare.dumpfoods.error", String.valueOf(e.getMessage()))
-                        .formatted(Formatting.RED)));
+                        "command.florafare.dumpfoods.error", String.valueOf(e.getMessage()))));
                 return;
+            } finally {
+                RUNNING.set(false);
             }
 
-            if (openWhenDone) Util.getOperatingSystem().open(dumpFile);
-            Florafare.LOGGER.info("Exported {} items with recipe tree to {}",
-                    count, dumpFile.getAbsolutePath());
+            if (openWhenDone) {
+                Path preferred = files.get(0);
+                for (Path file : files) if (file.toString().endsWith(".txt")) preferred = file;
+                Util.getOperatingSystem().open(preferred.toFile());
+            }
+            FoodDump.Counts counts = dump.meta().counts();
+            Florafare.LOGGER.info("Exported {} foods and {} potion targets ({} recipe outputs, {} unreadable recipes) to {}",
+                    counts.foods(), counts.potions(), counts.recipesIndexed(), counts.recipesFailed(), dir);
 
             source.getServer().execute(() -> {
-                MutableText fileLink = Text.literal(dumpFile.getName())
-                        .formatted(Formatting.UNDERLINE, Formatting.AQUA)
-                        .styled(style -> style
-                                .withClickEvent(new ClickEvent(
-                                        ClickEvent.Action.COPY_TO_CLIPBOARD,
-                                        dumpFile.getAbsolutePath()))
-                                .withHoverEvent(new HoverEvent(
-                                        HoverEvent.Action.SHOW_TEXT,
-                                        Text.translatable("command.florafare.dumpfoods.hover.copy")))
-                        );
-                source.sendFeedback(() -> Text.translatable(
-                                "command.florafare.dumpfoods.success", count)
-                        .formatted(Formatting.GREEN)
-                        .append(fileLink), false);
+                source.sendFeedback(() -> Text.translatable("command.florafare.dumpfoods.success",
+                        counts.foods(), counts.potions(), counts.recipesIndexed())
+                        .formatted(Formatting.GREEN), false);
+                if (counts.recipesFailed() > 0) {
+                    source.sendFeedback(() -> Text.translatable("command.florafare.dumpfoods.failed_recipes",
+                            counts.recipesFailed()).formatted(Formatting.YELLOW), false);
+                }
+                for (Path file : files) {
+                    MutableText line = Text.literal(" • ").formatted(Formatting.DARK_GRAY)
+                            .append(ReportFiles.link(file));
+                    source.sendFeedback(() -> line, false);
+                }
             });
         });
-
-        return 1;
+        return dump.foods().size();
     }
 
     /**
@@ -164,98 +226,5 @@ public class DumpFoodsCommand {
         ServerPlayerEntity player = source.getPlayer();
         // A console/command-block source on an integrated server is the host's own game.
         return player == null || source.getServer().isHost(player.getGameProfile());
-    }
-
-    /**
-     * Best recipe per result item, resolved in a single pass over the recipe list.
-     * "Best" is the same ranking {@link #scoreRecipeType} always applied.
-     */
-    private static Map<Item, RecipeInfo> indexRecipesByResult(
-            RecipeManager recipeManager, RegistryWrapper.WrapperLookup registries) {
-
-        Map<Item, RecipeInfo> best      = new HashMap<>();
-        Map<Item, Integer>    bestScore = new HashMap<>();
-
-        for (RecipeEntry<?> entry : recipeManager.values()) {
-            Recipe<?> recipe = entry.value();
-            try {
-                ItemStack result = recipe.getResult(registries);
-                if (result.isEmpty()) continue;
-                Item resultItem = result.getItem();
-
-                Map<Item, Integer> ingredientCounts = new LinkedHashMap<>();
-                for (Ingredient ingredient : recipe.getIngredients()) {
-                    if (ingredient.isEmpty()) continue;
-                    ItemStack[] matchingStacks = ingredient.getMatchingStacks();
-                    if (matchingStacks.length == 0) continue;
-                    Item ingItem = matchingStacks[0].getItem();
-                    if (ingItem == Items.AIR) continue;
-                    ingredientCounts.merge(ingItem, 1, Integer::sum);
-                }
-                if (ingredientCounts.isEmpty()) continue;
-
-                Identifier typeId = Registries.RECIPE_TYPE.getId(recipe.getType());
-                int score = scoreRecipeType(typeId == null ? "" : typeId.getPath());
-
-                // Penalize recipes that require a tool (damageable item) as an ingredient.
-                for (Item ing : ingredientCounts.keySet()) {
-                    if (ing.getComponents().contains(DataComponentTypes.MAX_DAMAGE)) {
-                        score -= 200;
-                        break;
-                    }
-                }
-
-                if (score > bestScore.getOrDefault(resultItem, -999)) {
-                    bestScore.put(resultItem, score);
-                    best.put(resultItem,
-                            new RecipeInfo(ingredientCounts, typeId, result.getCount()));
-                }
-            } catch (Exception ignored) {}
-        }
-        return best;
-    }
-
-    private static void buildTree(Item item, Map<Item, RecipeInfo> recipeIndex,
-                                  Set<Item> alreadyExpanded, List<String> history, int depth) {
-        if (!alreadyExpanded.add(item)) return;
-
-        RecipeInfo info = recipeIndex.get(item);
-        if (info == null) return;
-
-        StringBuilder indent = new StringBuilder();
-        for (int i = 0; i < depth; i++) indent.append(" ");
-
-        // Prefix the result name with "Nx" when the recipe yields more than one item.
-        String outputPrefix = info.outputCount() > 1 ? info.outputCount() + "x " : "";
-        String typeStr      = info.typeId() != null
-                ? " [" + info.typeId().getPath() + "]" : "";
-
-        history.add(indent + "└─ " + outputPrefix + Registries.ITEM.getId(item)
-                + typeStr + " requires: " + formatItemList(info.ingredients()));
-
-        for (Item subItem : info.ingredients().keySet()) {
-            buildTree(subItem, recipeIndex, alreadyExpanded, history, depth + 4);
-        }
-    }
-
-    private static int scoreRecipeType(String type) {
-        if (type.equals("crafting"))                                        return 100;
-        if (type.contains("cooking") || type.contains("mixing")
-                || type.contains("baking"))                                 return 90;
-        if (type.equals("smelting"))                                        return 50;
-        if (type.equals("smoking"))                                         return 40;
-        if (type.equals("campfire_cooking"))                                return 30;
-        if (type.equals("blasting"))                                        return 20;
-        return 10;
-    }
-
-    private static String formatItemList(Map<Item, Integer> ingredients) {
-        List<String> formatted = new ArrayList<>();
-        for (Map.Entry<Item, Integer> entry : ingredients.entrySet()) {
-            int    count  = entry.getValue();
-            String prefix = count > 1 ? count + "x " : "";
-            formatted.add(prefix + Registries.ITEM.getId(entry.getKey()).toString());
-        }
-        return formatted.toString();
     }
 }
