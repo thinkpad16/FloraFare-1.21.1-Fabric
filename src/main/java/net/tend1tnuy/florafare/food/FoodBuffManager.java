@@ -139,7 +139,10 @@ public class FoodBuffManager {
     public static void clear() {
         CONFIGS.clear();
         AMBIGUOUS_TARGETS.clear();
+        SOURCES.clear();
+        PRIORITY_LOSSES.clear();
         CONFIGS.putAll(API_CONFIGS);
+        for (String target : API_CONFIGS.keySet()) SOURCES.put(target, API_SOURCE);
         invalidateResolutionCache();
     }
 
@@ -148,7 +151,97 @@ public class FoodBuffManager {
      */
     public static void putApiConfig(String target, FoodBuffData data) {
         API_CONFIGS.put(target, data);
-        putConfig(target, data);
+        putConfig(target, data, API_SOURCE);
+    }
+
+    // -------------------------------------------------------------------------
+    // WHERE EACH ENTRY CAME FROM, AND WHAT IT BEAT
+    //
+    // Two definitions of one target are settled by priority, and the loser used to
+    // vanish without a trace. That is the mechanism working when a pack deliberately
+    // outranks the bundled defaults — and the single most confusing thing about the mod
+    // when a pack simply forgot to set a priority, because Florafare's own files sit at
+    // 1 to 3 and an entry without one is 0. So every loss is now kept, with the file on
+    // each side, for /florafare explain and /florafare validate to show.
+    // -------------------------------------------------------------------------
+
+    /** The source recorded for entries registered from code through the API. */
+    public static final String API_SOURCE = "<api>";
+
+    /**
+     * The file (resource id, e.g. {@code mypack:meats}) each current entry was loaded
+     * from, or {@link #API_SOURCE}. Written only by {@link #putConfig}, so an operator's
+     * {@code /florafare edit} on top of an entry does not hide where the entry itself
+     * came from.
+     */
+    private static final Map<String, String> SOURCES = new ConcurrentHashMap<>();
+
+    /** Every definition that lost to another this reload, in the order they lost. */
+    private static final List<LostEntry> PRIORITY_LOSSES =
+            Collections.synchronizedList(new ArrayList<>());
+
+    /** A losing definition as recorded at the moment it lost; see {@link PriorityLoss}. */
+    private record LostEntry(String target, String file, int priority) {}
+
+    /**
+     * One definition of a target that is not in force because another one won.
+     *
+     * @param target         the contested target
+     * @param file           where the losing definition came from, or {@link #API_SOURCE}
+     * @param priority       the losing definition's priority
+     * @param winnerFile     where the definition in force now came from
+     * @param winnerPriority its priority
+     * @param tie            whether it has the same priority as the winner, so the load
+     *                       order settled it rather than a higher priority. Judged against
+     *                       the winner in force now, not the definition it first lost to.
+     */
+    public record PriorityLoss(String target, String file, int priority,
+                               String winnerFile, int winnerPriority, boolean tie) {}
+
+    /** What {@link #putConfig(String, FoodBuffData, String)} did with a definition. */
+    public enum PutResult {
+        /** The target was not defined before. */
+        ADDED,
+        /** It outranked the definition already there. */
+        REPLACED,
+        /** It tied with the definition already there and, being later, replaced it. */
+        REPLACED_ON_TIE,
+        /** The definition already there outranks it; it was discarded. */
+        LOST
+    }
+
+    /** Where the entry in force for {@code target} was loaded from, or null if nothing defines it. */
+    public static String sourceOf(String target) {
+        return target == null ? null : SOURCES.get(target);
+    }
+
+    /**
+     * Every definition that lost this reload, with the winner each lost to as things
+     * stand now — a definition that beat one entry may itself have lost to a later one.
+     */
+    public static List<PriorityLoss> getPriorityLosses() {
+        List<LostEntry> snapshot;
+        synchronized (PRIORITY_LOSSES) {
+            snapshot = new ArrayList<>(PRIORITY_LOSSES);
+        }
+        List<PriorityLoss> losses = new ArrayList<>(snapshot.size());
+        for (LostEntry lost : snapshot) {
+            FoodBuffData winner = CONFIGS.get(lost.target());
+            int winnerPriority = winner == null ? 0 : winner.priority();
+            losses.add(new PriorityLoss(lost.target(), lost.file(), lost.priority(),
+                    SOURCES.getOrDefault(lost.target(), API_SOURCE),
+                    winnerPriority, lost.priority() == winnerPriority));
+        }
+        return losses;
+    }
+
+    /** The definitions of one target that lost this reload; empty when it was uncontested. */
+    public static List<PriorityLoss> getPriorityLosses(String target) {
+        List<PriorityLoss> matching = new ArrayList<>();
+        for (PriorityLoss loss : getPriorityLosses()) {
+            if (loss.target().equals(target)) matching.add(loss);
+        }
+        return matching;
     }
 
     /**
@@ -195,21 +288,66 @@ public class FoodBuffManager {
         return id != null ? id.toString() : target;
     }
 
+    /**
+     * {@link #putConfig(String, FoodBuffData, String)} for a definition with no known file.
+     * Still {@code void}, as it has been since 1.0, so code compiled against it keeps
+     * linking.
+     */
     public static void putConfig(String target, FoodBuffData data) {
+        putConfig(target, data, null);
+    }
+
+    /**
+     * Registers one definition of a target, settling a conflict with any definition
+     * already there.
+     *
+     * <ul>
+     *   <li>A higher priority replaces the existing definition, and settles the target:
+     *       any earlier tie on it stops being ambiguous.</li>
+     *   <li>An equal priority also replaces it — the later definition wins a tie — and
+     *       flags the target as ambiguous, unless both came from the same file (inside
+     *       one file the last entry wins, which is a decision the author can see).</li>
+     *   <li>A lower priority is discarded and changes nothing else. In particular it does
+     *       <em>not</em> clear the ambiguity flag: A and B tying at 1 is still a coin toss
+     *       after C turns up at 0 and loses to both.</li>
+     * </ul>
+     *
+     * <p>Which definition is "later" is the caller's to make deterministic: the datapack
+     * listener feeds files in pack order, then by file id. Every loser is kept for
+     * {@link #getPriorityLosses()}.
+     *
+     * @param source the file the definition came from, or null when unknown
+     */
+    public static PutResult putConfig(String target, FoodBuffData data, String source) {
         invalidateResolutionCache();
-        if (CONFIGS.containsKey(target)) {
-            FoodBuffData existing = CONFIGS.get(target);
-            if (data.priority() == existing.priority()) {
-                AMBIGUOUS_TARGETS.add(target);
-            } else {
-                AMBIGUOUS_TARGETS.remove(target);
-            }
-            if (data.priority() >= existing.priority()) {
-                CONFIGS.put(target, data);
-            }
-        } else {
+        String from = source == null ? API_SOURCE : source;
+        FoodBuffData existing = CONFIGS.get(target);
+        if (existing == null) {
             CONFIGS.put(target, data);
+            SOURCES.put(target, from);
+            return PutResult.ADDED;
         }
+
+        String existingSource = SOURCES.getOrDefault(target, API_SOURCE);
+        if (data.priority() > existing.priority()) {
+            AMBIGUOUS_TARGETS.remove(target);
+            PRIORITY_LOSSES.add(new LostEntry(target, existingSource, existing.priority()));
+            CONFIGS.put(target, data);
+            SOURCES.put(target, from);
+            return PutResult.REPLACED;
+        }
+        if (data.priority() == existing.priority()) {
+            // Unknown sources are never assumed to be the same file: two anonymous
+            // definitions tying is exactly the case worth flagging.
+            boolean sameFile = source != null && source.equals(existingSource);
+            if (!sameFile) AMBIGUOUS_TARGETS.add(target);
+            PRIORITY_LOSSES.add(new LostEntry(target, existingSource, existing.priority()));
+            CONFIGS.put(target, data);
+            SOURCES.put(target, from);
+            return PutResult.REPLACED_ON_TIE;
+        }
+        PRIORITY_LOSSES.add(new LostEntry(target, from, data.priority()));
+        return PutResult.LOST;
     }
 
     /**
@@ -445,11 +583,27 @@ public class FoodBuffManager {
             return resolveConfig(stack);
         }
 
-        FoodBuffData cached = RESOLVED_CACHE.get(stack.getItem());
+        Item item = stack.getItem();
+        FoodBuffData cached = RESOLVED_CACHE.get(item);
         if (cached != null) return cached == NO_CONFIG ? null : cached;
 
+        // Check-then-put across threads: in single-player the client (tooltips, HUD) and
+        // the integrated server (canConsume, eating) both fill this cache, and a reload or
+        // config sync can invalidate it between the resolve and the put. Unguarded, the
+        // put then stored an answer computed from the previous configs into the freshly
+        // cleared cache, where it stood until the next invalidation — a food granting
+        // last reload's buff for the rest of the session. So the generation is captured
+        // first, and an answer is only kept if nothing was invalidated in the meantime.
+        // The second check, after the put, closes the window between the first check and
+        // the put itself: an invalidation landing there bumps the counter before it
+        // clears, so either its clear removes the entry or this removes it.
+        int generation = CONFIG_GENERATION.get();
         FoodBuffData resolved = resolveConfig(stack);
-        RESOLVED_CACHE.put(stack.getItem(), resolved == null ? NO_CONFIG : resolved);
+        FoodBuffData toCache = resolved == null ? NO_CONFIG : resolved;
+        if (CONFIG_GENERATION.get() == generation) {
+            RESOLVED_CACHE.put(item, toCache);
+            if (CONFIG_GENERATION.get() != generation) RESOLVED_CACHE.remove(item, toCache);
+        }
         return resolved;
     }
 

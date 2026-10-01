@@ -19,15 +19,29 @@ public class FoodSynergyManager {
      */
     private static final Map<String, FoodSynergyData> API_SYNERGIES = new ConcurrentHashMap<>();
 
+    /**
+     * The file each current synergy was loaded from (resource id), or
+     * {@link FoodBuffManager#API_SOURCE} for one registered from code.
+     */
+    private static final Map<String, String> SOURCES = new ConcurrentHashMap<>();
+
     public static void clear() {
         SYNERGIES.clear();
+        SOURCES.clear();
         SYNERGIES.putAll(API_SYNERGIES);
+        for (String id : API_SYNERGIES.keySet()) SOURCES.put(id, FoodBuffManager.API_SOURCE);
     }
 
     /** Registers a synergy that survives datapack reloads. See {@link #API_SYNERGIES}. */
     public static void putApiSynergy(FoodSynergyData synergy) {
         API_SYNERGIES.put(synergy.id(), synergy);
         SYNERGIES.put(synergy.id(), synergy);
+        SOURCES.put(synergy.id(), FoodBuffManager.API_SOURCE);
+    }
+
+    /** Where the synergy in force under {@code id} came from, or null if there is none. */
+    public static String sourceOf(String id) {
+        return id == null ? null : SOURCES.get(id);
     }
 
     public static NbtCompound serializeSynergies() {
@@ -54,7 +68,19 @@ public class FoodSynergyManager {
     }
 
     public static void putSynergy(FoodSynergyData synergy) {
-        SYNERGIES.put(synergy.id(), synergy);
+        putSynergy(synergy, null);
+    }
+
+    /**
+     * Registers a synergy loaded from {@code source}, replacing any synergy with the same
+     * id — the later definition wins, which the listener makes deterministic by loading
+     * files in pack order. The caller reports the replacement; this only does it.
+     *
+     * @return the synergy it replaced, or null
+     */
+    public static FoodSynergyData putSynergy(FoodSynergyData synergy, String source) {
+        SOURCES.put(synergy.id(), source == null ? FoodBuffManager.API_SOURCE : source);
+        return SYNERGIES.put(synergy.id(), synergy);
     }
 
     public static List<FoodSynergyData> getAllSynergies() {

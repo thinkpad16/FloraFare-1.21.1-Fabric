@@ -15,6 +15,9 @@ import static org.junit.jupiter.api.Assertions.*;
  * directory down — which is how anyone with more than a handful of them organises the
  * folder — and it produced a two-colon string that is not a valid identifier, so the buff
  * silently never matched anything.
+ *
+ * <p>The fallback itself was unreachable until the listener learned to recognize an
+ * id-less single-entry file; that end of it is covered in {@link FoodReloadListenerTest}.
  */
 class DefaultTargetTest {
 

@@ -2,18 +2,71 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/thinkpad16/FloraFare-1.21.1-Fabric/schemas/food_buffs.schema.json",
   "title": "FloraFare food_buffs file",
-  "description": "A file in data/<namespace>/food_buffs/. Either an object with an 'entries' array, a single entry object, or (legacy) a bare array of entries. config_generation.json uses its own schema.",
+  "description": "A file in data/<namespace>/food_buffs/. Either an object with an 'entries' array, a single entry object (whose id defaults to the file name), or (legacy) a bare array of entries. config_generation.json uses its own schema.",
   "oneOf": [
     {
       "$ref": "#/definitions/entriesFile"
     },
     {
-      "$ref": "#/definitions/entry"
+      "description": "A single entry at the root. Without an 'id' the target is the file's namespace plus its file name: data/mypack/food_buffs/meats/beef.json targets mypack:beef.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/entry"
+        },
+        {
+          "anyOf": [
+            {
+              "required": [
+                "id"
+              ]
+            },
+            {
+              "required": [
+                "duration"
+              ]
+            },
+            {
+              "required": [
+                "nutrition"
+              ]
+            },
+            {
+              "required": [
+                "saturation"
+              ]
+            },
+            {
+              "required": [
+                "health_bonus"
+              ]
+            },
+            {
+              "required": [
+                "effects"
+              ]
+            },
+            {
+              "required": [
+                "attributes"
+              ]
+            }
+          ]
+        }
+      ]
     },
     {
       "type": "array",
       "items": {
-        "$ref": "#/definitions/entry"
+        "allOf": [
+          {
+            "$ref": "#/definitions/entry"
+          },
+          {
+            "required": [
+              "id"
+            ]
+          }
+        ]
       }
     }
   ],
@@ -37,7 +90,16 @@
         "entries": {
           "type": "array",
           "items": {
-            "$ref": "#/definitions/entry"
+            "allOf": [
+              {
+                "$ref": "#/definitions/entry"
+              },
+              {
+                "required": [
+                  "id"
+                ]
+              }
+            ]
           }
         },
         "_comment": {
@@ -48,13 +110,10 @@
     },
     "entry": {
       "type": "object",
-      "required": [
-        "id"
-      ],
       "properties": {
         "id": {
           "type": "string",
-          "description": "What this entry targets: an item id (minecraft:bread), a tag (#c:foods/vegetable), a namespace (namespace:farmersdelight), the catch-all (template:default), or a brewed potion by its potion id (potion:minecraft:strength), granted when that potion is drunk.",
+          "description": "What this entry targets: an item id (minecraft:bread), a tag (#c:foods/vegetable), a namespace (namespace:farmersdelight), the catch-all (template:default), or a brewed potion by its potion id (potion:minecraft:strength), granted when that potion is drunk. Required inside 'entries' and in a bare array; optional in a single-entry file, where it defaults to <file namespace>:<file name>.",
           "pattern": "^(#?[a-z0-9_.-]+:[a-z0-9_./-]+|#?[a-z0-9_./-]+|namespace:[a-z0-9_.-]+|template:default|potion:[a-z0-9_.-]+:[a-z0-9_./-]+)$"
         },
         "duration": {

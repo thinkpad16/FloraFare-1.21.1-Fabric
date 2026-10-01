@@ -113,7 +113,8 @@ are split further until they genuinely fit. The only thing that can still be ref
 
 ## `food_buffs` syntax
 
-Each file is a JSON object with an optional file-wide `priority` and an `entries` array:
+Each file is a JSON object with an optional file-wide `priority` and an `entries` array
+(the other accepted shapes are listed [below the example](#other-file-shapes)):
 
 ```json
 {
@@ -143,11 +144,33 @@ Each file is a JSON object with an optional file-wide `priority` and an `entries
 }
 ```
 
+### Other file shapes
+
+- **A single entry at the root.** `data/mypack/food_buffs/meats/beef.json` holding
+  `{ "duration": 2400, "health_bonus": 2 }` targets `mypack:beef`: with no `id`, the target
+  is the file's namespace plus its file name (folders are ignored). With an `id`, the `id`
+  wins.
+- **A bare list of entries** (legacy), at priority 0.
+
+A file that matches none of these — `entries` misspelled (`"entires"`), `entries` holding
+a single object instead of a list, only `priority` with nothing else — is skipped as a
+whole with an error naming the file, instead of loading as nothing.
+
+**Mistakes are reported, not guessed at.** A field of the wrong type (`"nutrition":
+"eight"`, `"always_edible": "yes"`, `"effects": { ... }`) is logged with the file and
+entry and falls back to its default; a key the loader does not read (`healthBonus`,
+`attribute` for `attributes`) is logged with a suggestion, once per file however many
+entries repeat it. Keys starting with `_` (such as `_comment`) or `$` are never reported.
+Entries whose item does not exist or is not food (a block, the potion bottle — use a
+`potion:` target for brewed potions) are reported too, as are `#tag` targets whose tag is
+missing or empty once tags have loaded. The log prints the first few of each kind;
+`/florafare validate` lists them all.
+
 ### Entry fields
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `id` | string | **required** | What this entry targets — see [target types](#target-types) below. |
+| `id` | string | **required** (except in a [single-entry file](#other-file-shapes)) | What this entry targets — see [target types](#target-types) below. |
 | `duration` | int | `6000` | Buff duration in **ticks** (20 ticks = 1 second, 6000 = 5 minutes). `0` or less makes the entry **hunger-only** — see below. |
 | `nutrition` | int | item's own | Hunger points restored. **Whole numbers only** — 1 point = half a drumstick; the hunger bar holds 20 points. Fractional values like `0.5` are truncated to `0` and do nothing. Negative values drain hunger; `0` restores none. **Leave it out to keep the eaten item's own nutrition** — resolved per item, so one `#tag` or `template:default` entry keeps every food it covers at that food's value. |
 | `saturation` | float | item's own | Saturation **modifier**, vanilla semantics: added saturation = `nutrition × saturation × 2`. (So it does nothing if `nutrition` is 0.) **Leave it out to keep the eaten item's own modifier.** With both fields left out the bite's hunger is exactly vanilla's. |
@@ -278,6 +301,21 @@ buff onto something that is not normally edible.
 1. **Same target defined twice** (e.g. two datapacks both define `minecraft:bread`): the entry with the higher priority is kept.
 2. **An item in several configured tags** (e.g. carrot is in both `#c:foods` and `#c:foods/vegetable`): the entry with the higher priority is used. On a tie, the **more specific tag path** wins (`#c:foods/vegetable` beats `#c:foods`), so broad tags naturally act as fallbacks; remaining ties resolve alphabetically for deterministic results.
 
+**Bundled priorities.** Florafare's own `food_buffs` files use `priority: 1` (every
+category file and `tag_categories.json`), `2` (`golden_foods.json`) and `3` (the enchanted
+golden apple). An entry with no `priority` is `0`, so **a pack entry without a priority
+loses to the bundled default for the same target**. Give pack entries `priority: 10` or
+more to override the bundled values. Every entry that loses is kept and listed by
+`/florafare validate`, and each reload logs one line counting them.
+
+**Ties.** When two files define the same target at the same priority, the one that loads
+later wins: files are applied in data pack order (a pack higher in `/datapack list` loads
+later), then alphabetically by file id. The result is the same on every server and every
+reload, but nobody chose it, so the target is reported as ambiguous — raise one entry's
+priority to settle it. Inside one file the last definition of a target wins a tie, and
+the duplicate is reported. Synergies with the same `id` in two files follow the same
+order: the later file's replaces the earlier, with a warning.
+
 This makes the "broad rule + specific overrides" pattern work in one file:
 
 ```json
@@ -309,11 +347,16 @@ Foods with no matching entry get a buff generated from their vanilla stats. Tune
 - nutrition and saturation are the item's own, and so are its vanilla status effects —
   an auto-generated buff never suppresses them
 
+Both values are held to the same ranges as the config file (`0`–`72000` and `0`–`10`);
+anything outside is clamped with a warning. If several data packs ship this file, they
+apply field by field in load order (data pack order, then file id), so the last one sets
+any field it names; that situation is reported too.
+
 ---
 
 ## `food_synergies` syntax
 
-Files live in `data/<namespace>/food_synergies/`. A file is either a single synergy object or an object with an `entries` array:
+Files live in `data/<namespace>/food_synergies/`. A file is a single synergy object, an object with an `entries` array, or a bare list of synergies:
 
 ```json
 {
@@ -484,7 +527,12 @@ it came from is left as it was, which is almost always what was meant by a comma
 one item. To retune the whole category, name the category: `/florafare edit tag
 florafare:meats duration 1200`.
 
-`/reload` re-reads all `food_buffs` and `food_synergies` files and re-syncs connected clients.
+`/reload` re-reads all `food_buffs` and `food_synergies` files **and the server-side
+settings in `config/florafare.json`** — the gameplay settings, `commandPermissionLevel`,
+`notifyOnFullBuffSlots`, `consumptionLogging` and all three exclusion lists — then
+re-syncs connected clients. A `florafare.json` that does not parse at that moment is left
+alone and the settings already in force are kept; fix it and `/reload` again. Client-only
+settings (HUD, toasts, tooltips) are not touched by a reload.
 
 ### What survives a crash
 

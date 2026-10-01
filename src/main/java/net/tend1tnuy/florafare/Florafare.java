@@ -98,8 +98,36 @@ public class Florafare implements ModInitializer {
         //
         // TAGS_LOADED is the one hook that fires at the moment the binding changes, on
         // both sides, for world load and /reload alike.
-        CommonLifecycleEvents.TAGS_LOADED.register((registries, client) ->
-                FoodBuffManager.invalidateResolutionCache());
+        CommonLifecycleEvents.TAGS_LOADED.register((registries, client) -> {
+            FoodBuffManager.invalidateResolutionCache();
+            // ...and the one moment a #tag target can be checked for being missing or
+            // empty: during the reload listeners the registry still holds the previous
+            // pack's tags (or none, on world load). Server side only — the client's copy
+            // of the same event has nothing new to say — and never allowed to break the
+            // reload it is reporting on.
+            if (!client) {
+                try {
+                    FoodReloadListener.validateTags(net.tend1tnuy.florafare.food.DatapackLookup.LIVE);
+                } catch (Exception e) {
+                    LOGGER.warn("Florafare could not check datapack tag targets.", e);
+                }
+            }
+        });
+
+        // 3c. /reload re-reads florafare.json, not only the datapacks.
+        //
+        // Before the datapack load rather than after it: the food listener seeds the
+        // auto-generation multipliers from these settings, and the exclusions it applies
+        // decide what every item resolves to. The END_DATA_PACK_RELOAD handler below then
+        // sends the refreshed server settings and exclusion list to everyone online.
+        // commandPermissionLevel is read each time a command checks its permission, so it
+        // applies as soon as the field changes.
+        ServerLifecycleEvents.START_DATA_PACK_RELOAD.register((server, resourceManager) -> {
+            if (net.tend1tnuy.florafare.config.FlorafareConfig.reloadServerSettings()) {
+                PlayerFoodComponent.setMaxBuffSlots(
+                        net.tend1tnuy.florafare.config.FlorafareConfig.maxBuffSlots);
+            }
+        });
 
         // 4. Runtime buff persistence (command-applied buffs).
         // Bound to the server's lifetime, not the mod's: these live in the world save

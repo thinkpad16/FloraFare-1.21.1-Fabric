@@ -115,13 +115,116 @@ class JsonFieldsTest {
         }
 
         @Test
-        @DisplayName("a word where a flag belongs follows Gson, which reads anything but "
-                + "\"true\" as false")
+        @DisplayName("a word where a flag belongs keeps the fallback instead of silently meaning false")
         void textAsBoolean() {
-            assertFalse(JsonFields.getBoolean(json("{\"always_edible\": \"yes\"}"),
-                    "always_edible", true),
-                    "not the fallback: Gson parses the string rather than rejecting it, and "
-                            + "this documents that it is the same reading the mod has always had");
+            // Gson reads every string but "true" as false, so "yes" used to switch the
+            // flag OFF. It is now treated like any other unreadable value.
+            assertTrue(JsonFields.getBoolean(json("{\"always_edible\": \"yes\"}"),
+                    "always_edible", true));
+            assertFalse(JsonFields.getBoolean(json("{\"always_edible\": 1}"),
+                    "always_edible", false));
+        }
+
+        @Test
+        @DisplayName("the words true and false in quotes are still understood")
+        void quotedBoolean() {
+            assertTrue(JsonFields.getBoolean(json("{\"always_edible\": \"TRUE\"}"),
+                    "always_edible", false));
+            assertFalse(JsonFields.getBoolean(json("{\"always_edible\": \"false\"}"),
+                    "always_edible", true));
+        }
+    }
+
+    @Nested
+    @DisplayName("a present but unusable field is reported")
+    class Reporting {
+
+        private final java.util.List<String> problems = new java.util.ArrayList<>();
+
+        private <T> T reading(java.util.function.Supplier<T> read) {
+            try (JsonFields.Scope ignored = JsonFields.reportTo((key, message) -> problems.add(message))) {
+                return read.get();
+            }
+        }
+
+        @Test
+        @DisplayName("text where a number belongs names the field and the value")
+        void wrongTypeIsReported() {
+            int value = reading(() -> JsonFields.getInt(json("{\"nutrition\": \"eight\"}"),
+                    "nutrition", 4));
+            assertEquals(4, value);
+            assertEquals(1, problems.size());
+            assertTrue(problems.get(0).contains("'nutrition'"), problems.get(0));
+            assertTrue(problems.get(0).contains("\"eight\""), problems.get(0));
+        }
+
+        @Test
+        @DisplayName("an absent field, a null and a correct value report nothing")
+        void validReadsAreSilent() {
+            reading(() -> JsonFields.getInt(json("{}"), "duration", 1));
+            reading(() -> JsonFields.getInt(json("{\"duration\": null}"), "duration", 1));
+            reading(() -> JsonFields.getDouble(json("{\"amount\": 2.5}"), "amount", 0));
+            reading(() -> JsonFields.getInt(json("{\"duration\": \"2400\"}"), "duration", 0));
+            reading(() -> JsonFields.getBoolean(json("{\"always_edible\": true}"), "always_edible", false));
+            assertTrue(problems.isEmpty(), problems.toString());
+        }
+
+        @Test
+        @DisplayName("a fractional whole number is used truncated, as before, but said")
+        void fractionIsTruncatedAndReported() {
+            assertEquals(8, (int) reading(() -> JsonFields.getInt(json("{\"nutrition\": 8.5}"),
+                    "nutrition", 0)));
+            assertEquals(1, problems.size());
+            assertTrue(problems.get(0).contains("truncated to 8"), problems.get(0));
+        }
+
+        @Test
+        @DisplayName("a number too large for an int is refused rather than wrapped")
+        void overflowIsRefused() {
+            assertEquals(6000, (int) reading(() -> JsonFields.getInt(
+                    json("{\"duration\": 99999999999}"), "duration", 6000)));
+            assertEquals(1, problems.size());
+        }
+
+        @Test
+        @DisplayName("an object where a list belongs is reported by hasArray")
+        void objectWhereListBelongs() {
+            assertFalse(reading(() -> JsonFields.hasArray(json("{\"effects\": {\"id\": \"x\"}}"),
+                    "effects")));
+            assertEquals(1, problems.size());
+        }
+
+        @Test
+        @DisplayName("with no sink installed nothing is reported anywhere")
+        void noSinkNoReport() {
+            assertEquals(4, JsonFields.getInt(json("{\"nutrition\": \"eight\"}"), "nutrition", 4));
+            assertTrue(problems.isEmpty());
+        }
+    }
+
+    @Nested
+    @DisplayName("unknown keys")
+    class Keys {
+
+        private final java.util.Set<String> known =
+                java.util.Set.of("id", "duration", "health_bonus", "attributes", "entries");
+
+        @Test
+        @DisplayName("are listed in file order, comments and $schema excepted")
+        void listsUnknownKeys() {
+            assertEquals(java.util.List.of("healthBonus", "attribute"),
+                    JsonFields.unknownKeys(json("{\"id\": \"a\", \"healthBonus\": 1, "
+                            + "\"_comment\": \"x\", \"$schema\": \"y\", \"attribute\": []}"), known));
+        }
+
+        @Test
+        @DisplayName("get a suggestion for a different spelling or a near miss")
+        void suggestions() {
+            assertEquals("health_bonus", JsonFields.suggestKey("healthBonus", known));
+            assertEquals("health_bonus", JsonFields.suggestKey("Health-Bonus", known));
+            assertEquals("attributes", JsonFields.suggestKey("attribute", known));
+            assertEquals("entries", JsonFields.suggestKey("entires", known));
+            assertNull(JsonFields.suggestKey("flavor_text", known));
         }
     }
 

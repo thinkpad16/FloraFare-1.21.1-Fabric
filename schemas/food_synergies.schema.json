@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/thinkpad16/FloraFare-1.21.1-Fabric/schemas/food_synergies.schema.json",
   "title": "FloraFare food_synergies file",
-  "description": "A file in data/<namespace>/food_synergies/. Either an object with an 'entries' array, or a single synergy object.",
+  "description": "A file in data/<namespace>/food_synergies/. Either an object with an 'entries' array, a single synergy object, or a bare array of synergies. Files load in data pack order, then by file id; a synergy id defined twice keeps the later definition.",
   "oneOf": [
     {
       "type": "object",
@@ -24,6 +24,12 @@
     },
     {
       "$ref": "#/definitions/synergy"
+    },
+    {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/synergy"
+      }
     }
   ],
   "definitions": {

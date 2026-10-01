@@ -218,5 +218,70 @@ class FoodBuffManagerTest {
 
             assertFalse(FoodBuffManager.getAmbiguousTargets().contains("minecraft:bread"));
         }
+
+        @Test
+        @DisplayName("a losing third definition does not clear an earlier tie")
+        void lowerPriorityLoserKeepsTheTieFlagged() {
+            // A(1) and B(1) tie; C(0) then loses to both. It decided nothing, so the
+            // target is exactly as ambiguous as before — it used to clear the flag.
+            FoodBuffManager.putConfig("minecraft:bread",
+                    FoodBuffData.builder("minecraft:bread").priority(1).build(), "a:one");
+            FoodBuffManager.putConfig("minecraft:bread",
+                    FoodBuffData.builder("minecraft:bread").priority(1).build(), "b:two");
+            FoodBuffManager.putConfig("minecraft:bread",
+                    FoodBuffData.builder("minecraft:bread").priority(0).build(), "c:three");
+
+            assertTrue(FoodBuffManager.getAmbiguousTargets().contains("minecraft:bread"));
+            assertEquals("b:two", FoodBuffManager.sourceOf("minecraft:bread"));
+        }
+
+        @Test
+        @DisplayName("two definitions in one file are not ambiguous: the later one wins")
+        void sameFileTieIsNotAmbiguous() {
+            FoodBuffManager.putConfig("minecraft:bread",
+                    FoodBuffData.builder("minecraft:bread").priority(1).duration(100).build(), "a:file");
+            FoodBuffManager.PutResult result = FoodBuffManager.putConfig("minecraft:bread",
+                    FoodBuffData.builder("minecraft:bread").priority(1).duration(200).build(), "a:file");
+
+            assertEquals(FoodBuffManager.PutResult.REPLACED_ON_TIE, result);
+            assertEquals(200, FoodBuffManager.getConfigByTarget("minecraft:bread").duration());
+            assertFalse(FoodBuffManager.getAmbiguousTargets().contains("minecraft:bread"));
+        }
+
+        @Test
+        @DisplayName("every loser is kept, with the file it came from and the winner as it stands now")
+        void losersAreRecorded() {
+            assertEquals(FoodBuffManager.PutResult.ADDED, FoodBuffManager.putConfig("minecraft:bread",
+                    FoodBuffData.builder("minecraft:bread").priority(1).build(), "florafare:breads"));
+            assertEquals(FoodBuffManager.PutResult.LOST, FoodBuffManager.putConfig("minecraft:bread",
+                    FoodBuffData.builder("minecraft:bread").priority(0).build(), "mypack:bread"));
+            assertEquals(FoodBuffManager.PutResult.REPLACED, FoodBuffManager.putConfig("minecraft:bread",
+                    FoodBuffData.builder("minecraft:bread").priority(10).build(), "other:bread"));
+
+            java.util.List<FoodBuffManager.PriorityLoss> losses =
+                    FoodBuffManager.getPriorityLosses("minecraft:bread");
+            assertEquals(2, losses.size());
+            assertEquals("mypack:bread", losses.get(0).file());
+            assertEquals(0, losses.get(0).priority());
+            assertEquals("florafare:breads", losses.get(1).file());
+            for (FoodBuffManager.PriorityLoss loss : losses) {
+                assertEquals("other:bread", loss.winnerFile(), "judged against the final winner");
+                assertEquals(10, loss.winnerPriority());
+                assertFalse(loss.tie());
+            }
+        }
+
+        @Test
+        @DisplayName("a reload forgets the previous reload's losers and sources")
+        void clearForgetsLosers() {
+            FoodBuffManager.putConfig("minecraft:bread",
+                    FoodBuffData.builder("minecraft:bread").priority(1).build(), "a:one");
+            FoodBuffManager.putConfig("minecraft:bread",
+                    FoodBuffData.builder("minecraft:bread").priority(0).build(), "b:two");
+            FoodBuffManager.clear();
+
+            assertTrue(FoodBuffManager.getPriorityLosses().isEmpty());
+            assertNull(FoodBuffManager.sourceOf("minecraft:bread"));
+        }
     }
 }
