@@ -291,8 +291,10 @@ So an item entry always beats a tag entry, which beats a namespace entry, and so
 Steps 2–6 only ever apply to **food** — an item with a `minecraft:food` component. A
 `template:default` or `namespace:` entry therefore covers every edible item and nothing
 else; it will not put a buff block on the tooltip of a sword or list stone in the
-journal. Step 1 is the deliberate exception, so `/florafare setbuff` can still stamp a
-buff onto something that is not normally edible.
+journal. Step 1 sits ahead of the chain so a stamped stack wins over every entry, but
+`/florafare setbuff` only stamps edible stacks — an item, or a single stack, carrying a
+`minecraft:food` component — because nothing else is ever eaten, and a buff stamped onto
+a sword used to be saved, synced and reported as a success and then never fire.
 
 ### Priority rules
 
@@ -484,7 +486,27 @@ Notes:
 
 ## Commands
 
-All commands require permission level 2 (op) by default — configurable via `commandPermissionLevel`.
+There is one `/florafare` command tree with two permission levels:
+
+- **Read level** — `commandPermissionLevel`, default `2`: `help`, `buffs`, `explain`,
+  `validate` (in chat), `buff give|remove`, `clear`, `journal …`, and the listing halves of
+  `edit` (`edit`, `edit list`, `edit <target> [show]`) and `ignore` (`ignore [list]`).
+  These are also the per-player tools command blocks (level 2) are commonly built around.
+- **Write level** — `writeCommandPermissionLevel`, default `3`: everything that changes
+  the rules for everybody or writes files on the server — `setbuff`, every changing form of
+  `edit`, `ignore add|remove`, `repair`, `dumpfoods` and `validate file`.
+
+Both are re-read by `/reload`, and tab-completion follows at once. `/florafarehelp commands`
+prints the full reference with the level each subcommand needs, listing only what the
+reader can run. (Before 1.5 the tree was registered twice, and Brigadier silently kept only
+one of the two permission checks.)
+
+Argument ranges are the same everywhere a buff's numbers are typed (`setbuff` and `edit`):
+duration `0`–`1728000` ticks (`0` is hunger-only: nutrition and effects, no buff and no
+slot, the same as a datapack's `duration <= 0`), nutrition `-20`–`20` (negative drains
+hunger), saturation modifier `-5`–`5`, health bonus `-1024`–`1024` (the range of
+`generic.max_health`). Attribute operations accept the 1.21 names and the older spellings
+datapacks may use (`addition`, `multiply_base`, `multiply_total`), stored under the 1.21 name.
 
 | Command | What it does |
 |---|---|
@@ -492,10 +514,11 @@ All commands require permission level 2 (op) by default — configurable via `co
 | `/florafare buff remove <player> <targetId>` | Removes one active buff, addressed by its config target or by the item that was eaten — tab-completion offers exactly what that player is currently carrying. Forgotten Mead only ever drops the newest buff; this is how you clear one out of the middle of a full set. |
 | `/florafare buffs <player>` | Lists what a player currently has running: every active buff and synergy, its config target, the item it came from, time remaining out of its full length, and the attribute modifiers actually applied. The modifiers are read off the live buff rather than off its config, so a buff that has drifted out of step with the datapack — the case `/florafare repair` exists for — shows what is really on the player. |
 | `/florafare clear <player>` | Removes all active buffs and synergies from a player. |
-| `/florafare setbuff <duration> <nutrition> <saturation> <health> [<attr_id> <attr_amount> <attr_op>]` | Attaches a **custom buff to the item stack in your main hand** (via NBT). Anyone who eats that exact stack gets this buff instead of the normal config. Persists across restarts, in the world save (`<world>/florafare_runtime.dat`), written the moment the command runs rather than at shutdown, so a server that is killed rather than stopped does not come back with the stacks intact and their buffs gone; a pre-1.4 `config/florafare_runtime.dat` is migrated into the first world that loads without one. |
-| `/florafare edit <target> <field> <value>` | **Retunes a food's buff on a running server**, without a datapack edit or a `/reload`. `<target>` is an item id, `namespace:<modid>`, `template:default`, or `tag <namespace:path>` for an item tag (typed without the leading `#`, which a command argument cannot read). `<field>` is `duration` (ticks), `nutrition`, `saturation`, `health`, `priority` or `always_edible`. The change is live on the tick the command runs, saved into the world (`<world>/florafare_overrides.dat`), re-sent to every player online so their tooltips, journal, EMI and hunger prediction stay in step, and re-asserted after the next `/reload` and the next restart. |
+| `/florafare setbuff <duration> <nutrition> <saturation> <health> [<attr_id> <attr_amount> <attr_op>]` | Attaches a **custom buff to the food stack in your main hand** (via NBT). Anyone who eats that exact stack gets this buff instead of the normal config. Refused for a stack that is not edible or is on the ignore list, since such a buff would never fire. Persists across restarts, in the world save (`<world>/florafare_runtime.dat`), written once, the moment the command runs, so a server that is killed rather than stopped does not come back with the stacks intact and their buffs gone; a pre-1.4 `config/florafare_runtime.dat` is migrated into the first world that loads without one. Sent to every client, so tooltips, the journal and hunger prediction describe the stamped buff on a dedicated server too. Entries no stack has been seen carrying for `runtimeBuffRetentionDays` are pruned when the world loads (see below). |
+| `/florafare setbuff prune <days>` | Prunes now: drops every stack buff not seen for more than `<days>` days, saves, and re-syncs clients. "Seen" means the server resolved a stack carrying it (eaten, used, hovered by a player whose client asked) or found one in a player's inventory or ender chest when they joined; a stack left untouched in a chest is not seen. |
+| `/florafare edit <target> <field> <value>` | **Retunes a food's buff on a running server**, without a datapack edit or a `/reload`. `<target>` is an item id, `namespace:<modid>`, `template:default`, `tag <namespace:path>` for an item tag (typed without the leading `#`, which a command argument cannot read), or `potion <potion id>` for a `potion:` target. A target with no definition yet must name something real — an edible item, an existing tag (an empty one is accepted with a warning), a namespace a mod or item uses, a registered potion — or it is refused; a typo used to be stored and re-applied forever. Targets that already have an entry stay editable whatever they name, so an entry left behind by a removed mod can still be retuned or reset. `<field>` is `duration` (ticks), `nutrition`, `saturation`, `health`, `priority` or `always_edible`, within the ranges above. The change is live on the tick the command runs, saved into the world (`<world>/florafare_overrides.dat`), re-sent to every player online so their tooltips, journal, EMI and hunger prediction stay in step, and re-asserted after the next `/reload` and the next restart. |
 | `/florafare edit <target> effect add <effect> <ticks> [amplifier]` | Adds or replaces one status effect on that target's buff. Keyed by effect id — adding the same effect twice replaces it rather than stacking a second copy that could never be addressed again. `effect remove <effect>` and `effect clear` are the other two directions. |
-| `/florafare edit <target> attribute add <attribute> <amount> [operation]` | Same for attribute modifiers. `operation` is `add_value` (default), `add_multiplied_base` or `add_multiplied_total`. `attribute remove <attribute>` and `attribute clear` undo it. |
+| `/florafare edit <target> attribute add <attribute> <amount> [operation]` | Same for attribute modifiers. `operation` is `add_value` (default), `add_multiplied_base` or `add_multiplied_total`, or one of the older spellings. `attribute remove <attribute>` and `attribute clear` undo it. |
 | `/florafare edit <target> [show]` | What that target resolves to right now, and where the values came from: an operator override, a datapack entry, or inheritance from a tag/namespace/template/auto-generation. |
 | `/florafare edit <target> reset` | Drops the override for one target. Restores the datapack's own entry if there was one, and otherwise stops defining that target at all, so it falls back through the resolution chain again. `/florafare edit reset all` does the lot; `/florafare edit list` shows what is currently overridden. |
 | `/florafare journal give <player>` | Gives the player a Food Journal, for replacing one that was lost (dropped in lava, died without `keepInventory`, etc.) without needing creative mode. The journal is also craftable in survival — see [Items](#items). |
@@ -506,14 +529,16 @@ All commands require permission level 2 (op) by default — configurable via `co
 | `/florafare journal lock <player> all` | Forgets every discovered food, resetting the journal to a fresh player's state. Synergies are kept — see below. |
 | `/florafare journal synergy unlock\|lock <player> <synergyId>\|all` | The same four operations for discovered synergies. Unlocking one records it without having to actually trigger it; locking it hides it from the journal again. Neither touches the buffs currently running — use `/florafare clear` for those. |
 | `/florafare repair <player>` | Strips any Florafare-namespaced attribute modifier from the player, scanning every registered attribute directly rather than relying on the mod's own tracked buff state. Since 1.3 the same scan runs automatically on every player load, so stuck stats should no longer happen at all — this stays as a manual escape hatch for a player who got stuck without relogging. |
-| `/florafare validate` | Diagnoses the currently loaded `food_buffs`/`food_synergies` configs for problems that don't show up as load-time errors: synergies that can never activate because they need more buffs than `maxBuffSlots` allows, requirements that can never be satisfied (non-edible item, excluded item, or empty tag), and datapack targets left ambiguous by a same-priority tie. Reports to chat and mirrors each finding to the server log. |
+| `/florafare validate` | Everything wrong with the loaded food data, grouped into sections with a count each: one per datapack diagnostics category (malformed files and entries, wrong field types, unknown keys, missing or non-food targets, invalid effects/attributes/operations, duplicate entries and synergies, missing or empty tags, `config_generation.json` problems), plus `synergy_reachability` (synergies needing more buffs than `maxBuffSlots`, requirements no edible managed item satisfies), `ambiguous_tie` (same-priority ties, decided by load order), `priority_loss` (definitions that lost on priority, with the winner in force now) and `sync` (entries too large to reach clients). The first three findings of each section are shown, then "…and N more"; every finding is click-to-copy and every section name opens it. |
+| `/florafare validate <section> [page]` | One section in full, ten findings a page, with a clickable next page. Tab-completion lists the section names. |
+| `/florafare validate file` | Writes the whole report to `<game dir>/florafare/reports/validate-<timestamp>.txt` (off the server thread) and answers with the path, click-to-copy. Write level. |
 | `/florafare explain [<item>]` | Why does *this* item have *that* buff? Walks the same resolution chain the mod uses — exclusions, per-stack command buffs, item entry, tag entries, `namespace:`, `template:default`, auto-generation — and prints which rung decided it, every entry that could have applied with its priority, why each of the others lost, and the values the winner produces. With no argument it reads the stack in your main hand, components and all. This is the command for "my datapack entry did nothing". |
 | `/florafare ignore list` | Every rule currently keeping Florafare away from something, and where each one came from — the config file, another mod's API call, or the `#florafare:ignored` tag. |
-| `/florafare ignore add <item\|modid:*\|#tag>` | Excludes one item, one whole mod, or one item tag, live. Takes effect on the next bite, is re-sent to every player online so their tooltips and hunger prediction stay in step, and is written into `config/florafare.json` so it survives a restart. Tab-completion offers every edible item and a `modid:*` rule per mod that adds one. |
+| `/florafare ignore add <item\|modid:*\|#tag>` | Excludes one item, one whole mod, or one item tag, live. The rule must name something real — an edible item (or `minecraft:potion`, which switches the potion feature off), a namespace a loaded mod or item uses, an existing tag (an empty one is accepted with a warning) — or it is refused rather than written to the config. Takes effect on the next bite, is re-sent to every player online so their tooltips and hunger prediction stay in step, and is written into `config/florafare.json` so it survives a restart. Tab-completion offers every edible item and a `modid:*` rule per mod that adds one. |
 | `/florafare ignore add inventory [<player>]` | Ignores **every food currently in your inventory** (main slots, armour and off hand) in one go — for when you are standing in front of another mod's drinks and would otherwise be typing thirty-five ids. Non-food stacks are skipped, since Florafare never looks at those, and so is anything already ignored, so running it twice does not fill the config with duplicates. Prints what it changed and how many stacks it passed over. |
 | `/florafare ignore remove inventory [<player>]` | The undo, and the other useful direction: hands every food you are carrying back to Florafare, whatever was excluding it. |
 | `/florafare ignore remove <entry>` | Puts one back under Florafare's management, whatever excluded it. If the rule is one this config file owns it is deleted; if it came from the `#florafare:ignored` tag or another mod's API call — neither of which a command can edit — an entry is written to `managedFoodItems` instead, which beats the exclusion and survives the next datapack reload. Tab-completion offers the config's own rules plus every food currently being skipped, so `/florafare ignore remove vinery:mead` completes. |
-| `/florafare dumpfoods` | Exports every edible item in the game (with recipe trees) to `florafare_edible_items_dump.txt` in the game directory — handy for building datapacks. |
+| `/florafare dumpfoods [<mod>\|*] [all\|json\|txt\|csv] [<maxDepth>]` | Exports every edible item (or one mod's, or `*` for all), what FloraFare does with it and every recipe that makes it, for building datapacks — see [Food dump format](#food-dump-format). The format may also follow `dumpfoods` directly (`/florafare dumpfoods csv`); the defaults are all mods, all three formats, tree depth 3 (`0`–`10`). Files go to `<game dir>/florafare/dumps/foods-<timestamp>[-<mod>].<ext>`, written off the server thread; the answer lists each file, click-to-copy. One dump at a time: a second is refused until the first has written its files. On the host of a single-player or LAN world the text file is also opened; never on a dedicated server. |
 
 `/florafare edit` and `/florafare setbuff` are easy to mix up. `edit` changes the **rule** for
 an item, a tag or a whole mod, for everybody, and is the one to reach for while balancing a
@@ -528,11 +553,70 @@ one item. To retune the whole category, name the category: `/florafare edit tag
 florafare:meats duration 1200`.
 
 `/reload` re-reads all `food_buffs` and `food_synergies` files **and the server-side
-settings in `config/florafare.json`** — the gameplay settings, `commandPermissionLevel`,
-`notifyOnFullBuffSlots`, `consumptionLogging` and all three exclusion lists — then
+settings in `config/florafare.json`** — the gameplay settings, both permission levels,
+`runtimeBuffRetentionDays`, `notifyOnFullBuffSlots`, `consumptionLogging` and all three exclusion lists — then
 re-syncs connected clients. A `florafare.json` that does not parse at that moment is left
 alone and the settings already in force are kept; fix it and `/reload` again. Client-only
 settings (HUD, toasts, tooltips) are not touched by a reload.
+
+### Food dump format
+
+`/florafare dumpfoods` writes up to three files from one gathering pass.
+
+**JSON** (`foods-<timestamp>.json`) — for scripts. `meta` holds `formatVersion` (2),
+`minecraftVersion`, `modVersion`, `timestamp`, `modFilter`, `maxDepth`, `counts` (`foods`,
+`potions`, `recipesIndexed`, `recipesFailed` — recipes whose class threw while being read,
+the first few logged with their exception — `foodsWithPrimaryRecipe`, `feastBlocks`,
+`synergies`), `feastDetection` and `notes` (what the dump knowingly leaves out: brewing,
+loot tables, trades). `foods` is one object per edible item, sorted by id, then one per
+configured `potion:` target:
+
+- `id`, `kind` (`item`, `potion`, or `feast` for a placeable feast block), `nameKey` (the
+  translation key — the dump is server-side and language-neutral), `mod`;
+- vanilla values: `nutrition`, `saturationModifier`, `saturationPoints`, `alwaysEdible`,
+  `eatSeconds`, `effects` (`id`, `duration`, `amplifier`, `probability`), `remainder` (what
+  is left in hand: `using_converts_to` or the crafting remainder), `maxStack`;
+- `florafare`: `source` (`item_entry`, `tag_entry`, `namespace_entry`, `template_entry`,
+  `auto_generated`, `excluded_by_*`, `not_food`, `potion_entry`), `target`, `file` (the
+  datapack file in force, `<api>` for code), `priority`, `override` (a `/florafare edit` is
+  in force), `hungerOnly`, `duration`, `healthBonus`, `nutrition` and `saturationPoints`
+  with inheritance resolved, `alwaysEdible`, `effects`, `attributes`, `losingDefinitions`
+  (other definitions of the target that lost on priority, with the winner) and `candidates`
+  (every entry that could have applied, as `/florafare explain` shows them);
+- `synergies`: the ids of synergies with a requirement this item satisfies;
+- `recipes`: **every** recipe producing it, in recipe id order — `id`, `type`, `count`,
+  `chance` (where the recipe exposes one, e.g. a cutting board), `ingredients` (`choices`,
+  capped at 32 with `totalChoices` beside them, `tag` when it can be recovered, `count` —
+  identical slots merged), `container` and `tool` where the recipe class exposes them
+  (Farmer's Delight's cooking pot and cutting board, found by reflection, best effort),
+  `flags` and `primary`;
+- `primaryRecipe` and `feast` (`block`, `servings`, `role`: `serving` on what a feast serves,
+  `feast` on the placeable item, with its `serving`).
+
+Recipe `flags`: `storage` — a single-item recipe whose input is itself made, by another
+single-item recipe, from this one's output, with one side multiplying (crate ↔ apples, block
+↔ ingots, pie ↔ slices); `reversible` — its output is an ingredient of a recipe for one of its
+own ingredients; `decomposition` — one item in, several out, where the output is an ingredient
+of some recipe for that input; `self_reference` — the output is one of its own ingredients.
+The **primary** recipe is never `storage` or `self_reference`; of the rest it prefers a recipe
+from the item's own namespace (`minecraft:bucket`, not another mod's alternative), then the
+recipe type (crafting and modded kitchen stations, then the furnace family), then anything but
+a decomposition, then the recipe id — never load order. An item only ever unpacked from storage
+has no primary recipe.
+
+Feast blocks are found by shape: a block item whose block has an int property named
+`servings`, linked to its serving item when the block answers `getServingItem` /
+`getServingStack`. `meta.feastDetection` says how many were found and linked.
+
+**Text** (`.txt`) — the same per food, for reading, plus a crafting **tree** following primary
+recipes only: storage edges are never followed, ingredients are expanded up to `maxDepth`
+levels and food alone for up to four more, so a dish chain is shown whole while ingots and
+planks become leaves; tags and multi-choice slots are leaves; an ingredient that is its own
+ancestor is marked `(cycle, not followed)` and one already expanded `(expanded above)`.
+
+**CSV** (`.csv`) — one row per food with the key numbers: vanilla values, the FloraFare
+source, target, file, priority, buff duration, effective hunger, health, effects, attributes,
+synergies, recipe count and the primary recipe's id, type, yield and ingredients.
 
 ### What survives a crash
 
@@ -573,6 +657,8 @@ Every field below is editable in-game via **ModMenu** (if installed — Cloth Co
   "enableForgottenMead": true,
   "grantJournalOnFirstJoin": true,
   "commandPermissionLevel": 2,
+  "writeCommandPermissionLevel": 3,
+  "runtimeBuffRetentionDays": 180,
   "enableHud": true,
   "hideHudWhenEmpty": true,
   "enableDiscoveryToasts": true,
@@ -608,7 +694,9 @@ Every field below is editable in-game via **ModMenu** (if installed — Cloth Co
 
 | Key | Values | Meaning |
 |---|---|---|
-| `commandPermissionLevel` | int `0`-`4`, default `2` | Permission level required for all `/florafare` subcommands. |
+| `commandPermissionLevel` | int `0`-`4`, default `2` | Permission level for the read-only `/florafare` subcommands and the per-player tools (`help`, `buffs`, `explain`, `validate`, `buff`, `clear`, `journal`, listing `edit`/`ignore`). See [Commands](#commands). |
+| `writeCommandPermissionLevel` | int `0`-`4`, default `3` | Permission level for the subcommands that change the rules for everybody or write files: `setbuff`, changing `edit`, `ignore add\|remove`, `repair`, `dumpfoods`, `validate file`. Normally at least `commandPermissionLevel`. |
+| `runtimeBuffRetentionDays` | int `0`-`36500`, default `180` | How long a `/florafare setbuff` stack buff is kept after the server last saw a stack carrying it; older ones are pruned when the world loads. `0` keeps them forever. Generous by default, because a stack left untouched in a chest past this loses its buff. |
 | `notifyOnFullBuffSlots` | bool, default `true` | Tells a player on the action bar when a bite granted no buff because all `maxBuffSlots` were already taken. The refusal itself is unchanged and always has been — what it replaces is the silence, which is the mod's most confusing moment: the food is still eaten, the hunger still goes up, the journal still records it, so an ordinary bite appears to do nothing and reads as a bug. Server-side, so a vanilla client sees it too. |
 | `consumptionLogging` | `NONE` / `REDUCED` / `ALL`, default `NONE` | How much Florafare writes to the **server** log during play. `ALL` logs every consumption and synergy with full stats; `REDUCED` logs synergy activations plus every health-restoring food (exploit tracking) — note that covers roughly half the bundled foods, so it is only a little quieter than `ALL`; `NONE` (the default) keeps normal gameplay out of the log entirely. Read from the config of whichever side is running the logic, so on a dedicated server it is the **server's** `florafare.json` that decides — changing it client-side in ModMenu while connected to one has no effect. |
 | `ignoredFoodMods` | array of mod ids, default `[]` | Whole mods Florafare must never intercept, e.g. `["loot_n_explore"]`. Exactly equivalent to putting `"loot_n_explore:*"` in `ignoredFoodItems`; it exists because "exclude this mod" is the common case. |
