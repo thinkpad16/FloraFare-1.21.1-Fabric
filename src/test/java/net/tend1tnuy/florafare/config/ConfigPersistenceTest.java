@@ -177,4 +177,59 @@ class ConfigPersistenceTest {
         assertEquals(truncated, Files.readString(configDir.resolve("florafare.json")),
                 "the original must be left exactly as it was, not rewritten from defaults");
     }
+
+    // -------------------------------------------------------------------------
+    // /reload
+    // -------------------------------------------------------------------------
+
+    @Test
+    @DisplayName("/reload re-reads the server settings and puts the new exclusions in force")
+    void reloadRereadsServerSettings() throws Exception {
+        FlorafareConfig.maxBuffSlots = 3;
+        FlorafareConfig.commandPermissionLevel = 2;
+        Files.writeString(configDir.resolve("florafare.json"), """
+                {
+                  "maxBuffSlots": 5,
+                  "commandPermissionLevel": 3,
+                  "autoGenHealthMultiplier": -1,
+                  "ignoredFoodMods": ["vinery"]
+                }
+                """);
+
+        assertTrue(FlorafareConfig.reloadServerSettings());
+
+        assertEquals(5, FlorafareConfig.maxBuffSlots);
+        assertEquals(3, FlorafareConfig.commandPermissionLevel);
+        assertEquals(0.0, FlorafareConfig.autoGenHealthMultiplier, "clamped like a startup load");
+        assertTrue(FoodExclusions.canonicalEntries(FoodExclusions.Effect.EXCLUDE).contains("vinery:*"));
+    }
+
+    @Test
+    @DisplayName("an unparseable file on /reload keeps the settings in force instead of resetting them")
+    void reloadKeepsSettingsOnBrokenFile() throws Exception {
+        FlorafareConfig.maxBuffSlots = 4;
+        FlorafareConfig.ignoredFoodMods = new ArrayList<>(List.of("vinery"));
+        FlorafareConfig.applyExclusions();
+        String broken = "{ \"maxBuffSlots\": 1, ";
+        Files.writeString(configDir.resolve("florafare.json"), broken);
+
+        assertFalse(FlorafareConfig.reloadServerSettings());
+
+        assertEquals(4, FlorafareConfig.maxBuffSlots);
+        assertEquals(List.of("vinery"), FlorafareConfig.ignoredFoodMods);
+        assertEquals(broken, Files.readString(configDir.resolve("florafare.json")),
+                "a reload never writes the file");
+    }
+
+    @Test
+    @DisplayName("the auto-generation clamps shared with config_generation.json")
+    void autoGenClamps() {
+        assertEquals(0, FlorafareConfig.clampAutoGenDuration(-5));
+        assertEquals(1200, FlorafareConfig.clampAutoGenDuration(1200));
+        assertEquals(FlorafareConfig.MAX_AUTO_GEN_DURATION_MULT,
+                FlorafareConfig.clampAutoGenDuration(Integer.MAX_VALUE));
+        assertEquals(0.0, FlorafareConfig.clampAutoGenHealth(-1));
+        assertEquals(0.5, FlorafareConfig.clampAutoGenHealth(Double.NaN));
+        assertEquals(FlorafareConfig.MAX_AUTO_GEN_HEALTH_MULT, FlorafareConfig.clampAutoGenHealth(1e9));
+    }
 }

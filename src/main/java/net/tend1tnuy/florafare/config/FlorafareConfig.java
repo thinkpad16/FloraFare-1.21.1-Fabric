@@ -98,7 +98,8 @@ public class FlorafareConfig {
      */
     public static volatile boolean notifyOnFullBuffSlots = true;
 
-    // --- Server-only settings (not synced; read at command registration time) ---
+    // --- Server-only settings (not synced). commandPermissionLevel is read each time a
+    //     command checks its permission, so a /reload that re-reads it applies at once. ---
     public static int commandPermissionLevel = 2;
 
     // -------------------------------------------------------------------------
@@ -378,6 +379,72 @@ public class FlorafareConfig {
     }
 
     /**
+     * Re-reads the server-side settings from {@code florafare.json}, for {@code /reload}.
+     *
+     * <p>{@code /reload} used to re-read the datapacks and nothing else, while the README
+     * promised it re-read this file too — so an admin who edited the exclusion lists,
+     * {@code maxBuffSlots} or {@code commandPermissionLevel} and reloaded saw nothing
+     * change until a restart. This applies everything the server side reads: the gameplay
+     * settings synced to clients, the server-only ones and all three exclusion lists.
+     *
+     * <p>The client-only cosmetic settings are deliberately left alone. In single-player
+     * this runs on the integrated server's thread while the render thread reads those
+     * fields, and nothing about a datapack reload should move the player's HUD.
+     *
+     * <p>Unlike {@link #load()} it never writes the file, and a file that cannot be parsed
+     * leaves every setting exactly as it was rather than falling back to defaults: a typo
+     * made while the server is running must not cost it its exclusion list.
+     *
+     * <p>Values go through the {@code setLocal...} setters, so if a server override were
+     * ever in force they would land in the player's own snapshot rather than over the
+     * server's values. (A process hosting a server never has one, so in practice they
+     * land in the live fields.)
+     *
+     * @return true if the file was read and applied
+     */
+    public static boolean reloadServerSettings() {
+        File file = configFile();
+        if (!file.exists()) {
+            Florafare.LOGGER.info("No florafare.json to re-read on reload; keeping the current settings.");
+            return false;
+        }
+        ConfigData data;
+        try (FileReader reader = new FileReader(file)) {
+            data = GSON.fromJson(reader, ConfigData.class);
+        } catch (Exception e) {
+            Florafare.LOGGER.error(
+                    "Florafare config could not be parsed on reload; keeping the settings already "
+                            + "in force. Fix the JSON in {} and reload again.", file.getAbsolutePath(), e);
+            return false;
+        }
+        if (data == null) return false;
+
+        if (data.consumptionLogging != null) consumptionLogging = data.consumptionLogging;
+        setLocalEnableSynergies(data.enableSynergies);
+        setLocalMaxBuffSlots(data.maxBuffSlots);
+        setLocalAutoGenDurationMultiplier(data.autoGenDurationMultiplier);
+        setLocalAutoGenHealthMultiplier(data.autoGenHealthMultiplier);
+        setLocalEnableAlwaysEdibleOverride(data.enableAlwaysEdibleOverride);
+        setLocalAllowEatingWhenFull(data.allowEatingWhenFull);
+        setLocalRespectVanillaFoodEffects(data.respectVanillaFoodEffects);
+        setLocalEnableForgottenMead(data.enableForgottenMead);
+        grantJournalOnFirstJoin = data.grantJournalOnFirstJoin;
+        notifyOnFullBuffSlots   = data.notifyOnFullBuffSlots;
+        commandPermissionLevel  = data.commandPermissionLevel;
+        ignoredFoodItems = data.ignoredFoodItems != null ? data.ignoredFoodItems : new java.util.ArrayList<>();
+        ignoredFoodMods  = data.ignoredFoodMods  != null ? data.ignoredFoodMods  : new java.util.ArrayList<>();
+        managedFoodItems = data.managedFoodItems != null ? data.managedFoodItems : new java.util.ArrayList<>();
+
+        clampToValidRanges();
+        applyExclusions();
+        Florafare.LOGGER.info("Re-read server settings from florafare.json (maxBuffSlots={}, "
+                        + "commandPermissionLevel={}, {} exclusion rule(s)).",
+                maxBuffSlots, commandPermissionLevel,
+                ignoredFoodItems.size() + ignoredFoodMods.size());
+        return true;
+    }
+
+    /**
      * Copies an unparseable config file aside as {@code florafare.json.bak} so the
      * user can recover their settings by hand. Any previous backup is replaced —
      * the newest broken file is the one worth keeping.
@@ -415,22 +482,18 @@ public class FlorafareConfig {
         // auto-generated duration (nutrition x this) cannot reach the point of overflowing
         // an int, and the admin gets a log line naming the setting instead of foods that
         // quietly grant nothing.
-        autoGenDurationMultiplier = clamp(autoGenDurationMultiplier, 0, MAX_AUTO_GEN_DURATION_MULT,
-                "autoGenDurationMultiplier");
+        int durationMult = clampAutoGenDuration(autoGenDurationMultiplier);
+        if (durationMult != autoGenDurationMultiplier) {
+            warnClamped("autoGenDurationMultiplier", autoGenDurationMultiplier, durationMult);
+            autoGenDurationMultiplier = durationMult;
+        }
         commandPermissionLevel    = clamp(commandPermissionLevel, 0, 4, "commandPermissionLevel");
         toastDisplayTimeMs        = clamp(toastDisplayTimeMs, MIN_TOAST_MS, MAX_TOAST_MS, "toastDisplayTimeMs");
 
-        if (Double.isNaN(autoGenHealthMultiplier)
-                || autoGenHealthMultiplier < 0.0
-                || autoGenHealthMultiplier > MAX_AUTO_GEN_HEALTH_MULT) {
-            // The upper bound matters as much as the lower one: this is multiplied by a
-            // food's nutrition and becomes a max-health modifier, so a stray extra digit
-            // hands every player on the server hundreds of hearts.
-            double corrected = Double.isNaN(autoGenHealthMultiplier)
-                    ? 0.5
-                    : Math.min(Math.max(autoGenHealthMultiplier, 0.0), MAX_AUTO_GEN_HEALTH_MULT);
-            warnClamped("autoGenHealthMultiplier", autoGenHealthMultiplier, corrected);
-            autoGenHealthMultiplier = corrected;
+        double healthMult = clampAutoGenHealth(autoGenHealthMultiplier);
+        if (Double.compare(healthMult, autoGenHealthMultiplier) != 0) {
+            warnClamped("autoGenHealthMultiplier", autoGenHealthMultiplier, healthMult);
+            autoGenHealthMultiplier = healthMult;
         }
         if (Float.isNaN(hudScale) || hudScale < HUD_SCALE_MIN || hudScale > HUD_SCALE_MAX) {
             float corrected = Float.isNaN(hudScale)
@@ -441,6 +504,31 @@ public class FlorafareConfig {
         ignoredFoodItems = cleaned(ignoredFoodItems);
         ignoredFoodMods  = cleaned(ignoredFoodMods);
         managedFoodItems = cleaned(managedFoodItems);
+    }
+
+    /**
+     * The auto-generation duration multiplier forced into {@code 0..}{@link
+     * #MAX_AUTO_GEN_DURATION_MULT}. Capped where a plausible typo stops being plausible:
+     * bounding it means the auto-generated duration (nutrition x this) cannot reach the
+     * point of overflowing an int.
+     *
+     * <p>Public because {@code config_generation.json} sets the same value from a
+     * datapack and must be held to the same range — it used to be taken as written.
+     */
+    public static int clampAutoGenDuration(int value) {
+        return Math.min(Math.max(value, 0), MAX_AUTO_GEN_DURATION_MULT);
+    }
+
+    /**
+     * The auto-generation health multiplier forced into {@code 0..}{@link
+     * #MAX_AUTO_GEN_HEALTH_MULT}, NaN becoming the default 0.5. Both bounds matter: this is
+     * multiplied by a food's nutrition and becomes a max-health modifier, so a negative
+     * value makes eating <em>lower</em> max health, and a stray extra digit hands every
+     * player on the server hundreds of hearts. Shared with {@code config_generation.json}.
+     */
+    public static double clampAutoGenHealth(double value) {
+        if (Double.isNaN(value)) return 0.5;
+        return Math.min(Math.max(value, 0.0), MAX_AUTO_GEN_HEALTH_MULT);
     }
 
     /** A never-null, blank-free copy; both exclusion lists are hand-edited. */
