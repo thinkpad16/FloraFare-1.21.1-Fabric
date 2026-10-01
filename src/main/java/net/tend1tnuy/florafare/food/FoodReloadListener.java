@@ -217,9 +217,39 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
             }
         }
 
+        // A potion target names a Potion registry entry, not an item, so it is checked
+        // there. It used to pass unchecked, so a typo'd potion id loaded in silence and
+        // produced a journal row with no potion that could ever unlock it.
+        if (target.startsWith(FoodBuffManager.POTION_PREFIX)) {
+            Identifier potionId = Identifier.tryParse(
+                    target.substring(FoodBuffManager.POTION_PREFIX.length()));
+            if (potionId == null) {
+                Florafare.LOGGER.warn(
+                        "Warning in file {}: '{}' is not a valid potion id! "
+                                + "Buff may never trigger.", fileId, target);
+            } else if (!net.minecraft.registry.Registries.POTION.containsId(potionId)) {
+                if (net.fabricmc.loader.api.FabricLoader.getInstance()
+                        .isModLoaded(potionId.getNamespace())) {
+                    Florafare.LOGGER.warn(
+                            "Warning in file {}: Potion '{}' does not exist! "
+                                    + "Buff may never trigger.", fileId, target);
+                } else {
+                    absentModTargets++;
+                }
+            }
+        }
+
         int    duration    = JsonFields.getInt(json, KEY_DURATION, 6000);
-        int    nutrition   = JsonFields.getInt(json, KEY_NUTRITION, 0);
-        float  saturation  = JsonFields.getFloat(json, KEY_SATURATION, 0.0f);
+        // An absent nutrition or saturation means "whatever the eaten item restores on
+        // its own", not zero. Both used to default to 0, and the hunger hook applies the
+        // entry's numbers in place of the item's — so a pack that only wanted to give the
+        // golden apple a buff, and said nothing about hunger, turned it into a food that
+        // restored nothing at all. The sentinel is resolved per item at the moment of
+        // eating, which is what lets a single #tag or template:default entry keep every
+        // food it covers at that food's own value. An explicit value, 0 and negative
+        // included, is still taken exactly as written.
+        int    nutrition   = JsonFields.getInt(json, KEY_NUTRITION, FoodBuffData.INHERIT_NUTRITION);
+        float  saturation  = JsonFields.getFloat(json, KEY_SATURATION, FoodBuffData.INHERIT_SATURATION);
         double healthBonus = JsonFields.getDouble(json, KEY_HEALTH_BONUS, 0.0);
         int    priority    = JsonFields.getInt(json, KEY_PRIORITY, filePriority);
 
@@ -264,10 +294,21 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
                                     + "exist! Attribute skipped.", fileId, target, rawId);
                     continue;
                 }
-                // "add_value" is both the commonest operation and the one mapOperation
-                // already falls back to for anything it does not recognise, so defaulting
-                // to it here changes no behaviour — it only stops the omission throwing.
-                String operation = JsonFields.getString(attrObj, KEY_OPERATION, "add_value");
+                // An omitted operation is "add_value", the commonest one. A misspelled
+                // one is not: it used to be stored verbatim and turned into add_value at
+                // apply time, so "multiply_total" (the pre-1.20.5 name) silently became a
+                // flat addition. Old names are now understood, and anything else is an
+                // error that costs this one line rather than a wrong number in game.
+                String rawOperation = JsonFields.getString(attrObj, KEY_OPERATION, "add_value");
+                String operation    = AttributeOperations.canonicalize(rawOperation);
+                if (operation == null) {
+                    Florafare.LOGGER.error(
+                            "Error in file {}: entry '{}' gives attribute '{}' the unknown "
+                                    + "operation '{}' (expected one of {}). Attribute skipped.",
+                            fileId, target, rawId, rawOperation,
+                            String.join(", ", AttributeOperations.CANONICAL_NAMES));
+                    continue;
+                }
                 attributes.add(new FoodBuffData.AttributeData(
                         attrId,
                         JsonFields.getDouble(attrObj, KEY_AMOUNT, 0.0),

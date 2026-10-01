@@ -143,7 +143,11 @@ public class AppleSkinIntegration implements AppleSkinApi {
             return;
         }
 
-        event.defaultFoodComponent  = viewOf(data);
+        // An entry that sets neither nutrition nor saturation leaves the bite's hunger to
+        // vanilla, so whatever AppleSkin worked out for the item is already the answer.
+        if (data.inheritsHunger()) return;
+
+        event.defaultFoodComponent  = viewOf(data, stack);
         event.modifiedFoodComponent = event.defaultFoodComponent;
     }
 
@@ -157,10 +161,22 @@ public class AppleSkinIntegration implements AppleSkinApi {
      * purpose: configs are shared instances handed out by the resolution cache, and the
      * map is dropped whole whenever that cache is, so a reloaded datapack cannot be
      * served a stale entry.
+     *
+     * <p>Only an entry that sets both halves itself is cached. One that inherits either
+     * half from the eaten item is shared by every item its target covers — a #tag entry,
+     * template:default — and resolves to a different answer for each, so it is built per
+     * stack instead. That is the rarer shape, and the build is a builder and a record.
      */
     private static Map<FoodBuffData, FoodComponent> viewCache = new IdentityHashMap<>();
 
-    private static synchronized FoodComponent viewOf(FoodBuffData data) {
+    private static synchronized FoodComponent viewOf(FoodBuffData data, ItemStack stack) {
+        if (!data.hasNutrition() || !data.hasSaturation()) {
+            return new FoodComponent.Builder()
+                    .nutrition(data.effectiveNutrition(stack))
+                    .saturationModifier(data.effectiveSaturation(stack))
+                    .build();
+        }
+
         FoodComponent cached = viewCache.get(data);
         if (cached != null) return cached;
 

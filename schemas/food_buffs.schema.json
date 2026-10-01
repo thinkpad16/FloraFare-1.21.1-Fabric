@@ -54,24 +54,21 @@
       "properties": {
         "id": {
           "type": "string",
-          "description": "What this entry targets: an item id (minecraft:bread), a tag (#c:foods/vegetable), a namespace (namespace:farmersdelight), the catch-all (template:default), or a journal-only potion row (potion:minecraft:strength).",
+          "description": "What this entry targets: an item id (minecraft:bread), a tag (#c:foods/vegetable), a namespace (namespace:farmersdelight), the catch-all (template:default), or a brewed potion by its potion id (potion:minecraft:strength), granted when that potion is drunk.",
           "pattern": "^(#?[a-z0-9_.-]+:[a-z0-9_./-]+|#?[a-z0-9_./-]+|namespace:[a-z0-9_.-]+|template:default|potion:[a-z0-9_.-]+:[a-z0-9_./-]+)$"
         },
         "duration": {
           "type": "integer",
           "default": 6000,
-          "minimum": 0,
-          "description": "Buff duration in TICKS. 20 ticks = 1 second; 6000 = 5 minutes."
+          "description": "Buff duration in TICKS. 20 ticks = 1 second; 6000 = 5 minutes. 0 or less makes the entry hunger-only: nutrition, saturation and effects apply, but no buff, no slot and no buff events."
         },
         "nutrition": {
           "type": "integer",
-          "default": 0,
-          "description": "Hunger points restored. Whole numbers only \u2014 1 point = half a drumstick. Negative drains hunger."
+          "description": "Hunger points restored. Whole numbers only \u2014 1 point = half a drumstick. Negative drains hunger. Omit to keep the eaten item's own nutrition."
         },
         "saturation": {
           "type": "number",
-          "default": 0.0,
-          "description": "Saturation MODIFIER, vanilla semantics: restored saturation = nutrition x saturation x 2. Does nothing when nutrition is 0."
+          "description": "Saturation MODIFIER, vanilla semantics: restored saturation = nutrition x saturation x 2. Does nothing when nutrition is 0. Omit to keep the eaten item's own modifier."
         },
         "health_bonus": {
           "type": "number",
@@ -157,9 +154,13 @@
           "enum": [
             "add_value",
             "add_multiplied_base",
-            "add_multiplied_total"
+            "add_multiplied_total",
+            "addition",
+            "add",
+            "multiply_base",
+            "multiply_total"
           ],
-          "description": "Anything else falls back to add_value."
+          "description": "The three 1.21 names, plus legacy aliases: addition/add = add_value, multiply_base = add_multiplied_base, multiply_total = add_multiplied_total. Anything else is an error and the attribute line is skipped."
         },
         "_comment": {
           "description": "Ignored by the loader \u2014 a note for whoever edits the file. Florafare's own tag_categories.json uses it."

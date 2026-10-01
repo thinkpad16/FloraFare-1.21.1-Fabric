@@ -20,6 +20,7 @@ import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
 import net.tend1tnuy.florafare.Florafare;
 import net.tend1tnuy.florafare.component.ActiveFoodBuff;
+import net.tend1tnuy.florafare.food.AttributeOperations;
 import net.tend1tnuy.florafare.food.FoodBuffData;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
 import net.tend1tnuy.florafare.food.FoodBuffOverrides;
@@ -77,9 +78,8 @@ public final class EditBuffCommand {
 
     private EditBuffCommand() {}
 
-    /** The three operations {@code PlayerFoodComponent#mapOperation} understands. */
-    private static final List<String> VALID_OPERATIONS =
-            List.of("add_value", "add_multiplied_base", "add_multiplied_total");
+    /** The three 1.21 operation names; see {@link AttributeOperations}. */
+    private static final List<String> VALID_OPERATIONS = AttributeOperations.CANONICAL_NAMES;
 
     /**
      * Reads the target out of a parsed command. Two spellings reach the same subtree —
@@ -347,9 +347,9 @@ public final class EditBuffCommand {
         String target = FoodBuffManager.normalizeTarget(targetFn.get(context));
         FoodBuffData base = current(target);
 
-        // Keyed by attribute alone, not by attribute-and-operation: the modifier ids
-        // PlayerFoodComponent builds are keyed that way too, so a second entry for one
-        // attribute would silently overwrite the first's modifier at apply time.
+        // Keyed by attribute alone, not by attribute-and-operation: "add this attribute"
+        // from the command line reads as setting that attribute's line, so a second add
+        // replaces the first rather than stacking a second modifier next to it.
         List<FoodBuffData.AttributeData> attributes = new ArrayList<>();
         for (FoodBuffData.AttributeData attribute : base.attributes()) {
             if (!attribute.attributeId().equals(attributeId)) attributes.add(attribute);
@@ -465,7 +465,7 @@ public final class EditBuffCommand {
     private static String summary(FoodBuffData data) {
         StringBuilder text = new StringBuilder();
         text.append(data.duration() / 20).append("s");
-        text.append(", ").append(data.nutrition()).append(" nutrition");
+        text.append(", ").append(nutritionText(data)).append(" nutrition");
         if (data.healthBonus() != 0) text.append(", ").append(data.healthBonus()).append(" health");
         if (!data.effects().isEmpty()) {
             text.append(", ").append(data.effects().size()).append(" effect(s)");
@@ -476,12 +476,24 @@ public final class EditBuffCommand {
         return text.toString();
     }
 
+    /**
+     * What an entry that leaves a hunger field to the eaten item shows for it. A target
+     * can cover many items, so there is no one number to print — and the raw field holds
+     * a sentinel that must never reach the chat.
+     */
+    private static final String ITEM_DEFAULT = "item default";
+
+    private static String nutritionText(FoodBuffData data) {
+        return data.hasNutrition() ? String.valueOf(data.nutrition()) : ITEM_DEFAULT;
+    }
+
     /** The full form printed after an edit and by {@code show}. */
     private static List<Text> describe(FoodBuffData data) {
         List<Text> lines = new ArrayList<>();
         lines.add(field("duration", data.duration() + " ticks (" + (data.duration() / 20) + "s)"));
-        lines.add(field("nutrition", String.valueOf(data.nutrition())));
-        lines.add(field("saturation", String.valueOf(data.saturation())));
+        lines.add(field("nutrition", nutritionText(data)));
+        lines.add(field("saturation", data.hasSaturation()
+                ? String.valueOf(data.saturation()) : ITEM_DEFAULT));
         lines.add(field("health", String.valueOf(data.healthBonus())));
         lines.add(field("priority", String.valueOf(data.priority())));
         lines.add(field("always_edible", String.valueOf(data.alwaysEdible())));

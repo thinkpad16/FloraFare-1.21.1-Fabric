@@ -501,23 +501,29 @@ public class FoodJournalScreen extends Screen {
     // DETAIL PAGE BUILDING
     // -------------------------------------------------------------------------
 
-    private void buildDetailPages(FoodBuffData data) {
+    private void buildDetailPages(ItemStack stack, FoodBuffData data) {
         detailPages.clear();
         detailCurrentPage = 0;
         List<RenderLine> allLines = new ArrayList<>();
 
+        // A hunger-only entry grants no buff, so it has no buff length to list.
+        if (!data.isHungerOnly()) {
+            allLines.add(new RenderLine(
+                    Text.translatable("gui.florafare.journal.duration",
+                            BuffDescription.mmss(data.duration())).getString(),
+                    COLOR_INK_MID, 12, 0));
+        }
+        // Resolved against this entry's own item: an entry that leaves nutrition or
+        // saturation to the food stores a sentinel in that field, not a number.
         allLines.add(new RenderLine(
-                Text.translatable("gui.florafare.journal.duration",
-                        BuffDescription.mmss(data.duration())).getString(),
-                COLOR_INK_MID, 12, 0));
-        allLines.add(new RenderLine(
-                Text.translatable("gui.florafare.journal.nutrition", data.nutrition()).getString(),
+                Text.translatable("gui.florafare.journal.nutrition",
+                        data.effectiveNutrition(stack)).getString(),
                 COLOR_INK_MID, 12, 0));
         // The datapack field is a saturation *modifier*; the page shows what it actually
         // restores, the same number the item tooltip and the EMI panel print.
         allLines.add(new RenderLine(
                 Text.translatable("gui.florafare.journal.saturation",
-                        BuffDescription.trimFloat(data.nutrition() * data.saturation() * 2.0f)).getString(),
+                        BuffDescription.trimFloat(data.effectiveSaturationPoints(stack))).getString(),
                 COLOR_INK_MID, 12, 0));
 
         buildCommonDetailLines(allLines, data.healthBonus(), data.attributes(), data.effects());
@@ -1203,7 +1209,7 @@ public class FoodJournalScreen extends Screen {
                             FoodEntry entry = displayItems().get(i);
                             if (entry.isUnlocked) {
                                 selectedEntry = entry;
-                                buildDetailPages(entry.data);
+                                buildDetailPages(entry.stack, entry.data);
                                 setState(ScreenState.FOOD_DETAIL);
                                 updatePageButtons();
                                 playPageTurnSound();

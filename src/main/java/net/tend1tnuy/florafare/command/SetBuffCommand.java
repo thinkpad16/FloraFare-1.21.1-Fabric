@@ -34,6 +34,7 @@ import net.tend1tnuy.florafare.Florafare;
 import net.tend1tnuy.florafare.component.ActiveFoodBuff;
 import net.tend1tnuy.florafare.component.IFoodComponentProvider;
 import net.tend1tnuy.florafare.component.PlayerFoodComponent;
+import net.tend1tnuy.florafare.food.AttributeOperations;
 import net.tend1tnuy.florafare.food.FoodBuffData;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
 import net.tend1tnuy.florafare.food.FoodSynergyData;
@@ -297,9 +298,8 @@ public class SetBuffCommand {
         return 1;
     }
 
-    /** The three operations {@code PlayerFoodComponent#mapOperation} understands. */
-    private static final List<String> VALID_OPERATIONS =
-            List.of("add_value", "add_multiplied_base", "add_multiplied_total");
+    /** The three 1.21 operation names; see {@link AttributeOperations}. */
+    private static final List<String> VALID_OPERATIONS = AttributeOperations.CANONICAL_NAMES;
 
     /**
      * Prints the buffs and synergies a player is carrying, with what each one is actually
@@ -808,7 +808,7 @@ public class SetBuffCommand {
 
         // Checked before anything is written. An unregistered attribute is skipped
         // without a word by PlayerFoodComponent#applyBuffEffects, and an unrecognised
-        // operation silently becomes add_value — so the command reported success and
+        // operation is skipped there too — so the command would have reported success and
         // stamped a UUID onto the stack for a buff that would never do what was asked.
         if (attrId != null) {
             if (!Registries.ATTRIBUTE.containsId(attrId)) {
@@ -1096,8 +1096,10 @@ public class SetBuffCommand {
         FoodBuffData data = resolution.data();
         if (data != null) {
             source.sendFeedback(() -> Text.translatable("command.florafare.explain.values",
-                    ticksToMmss(data.duration()), data.nutrition(),
-                    trim(data.nutrition() * data.saturation() * 2.0),
+                    // Resolved against the stack being explained: an entry that leaves
+                    // hunger to the item holds a sentinel in those fields, not a number.
+                    ticksToMmss(data.duration()), data.effectiveNutrition(stack),
+                    trim(data.effectiveSaturationPoints(stack)),
                     trim(data.healthBonus()),
                     data.attributes().size(), data.effects().size()), false);
             if (data.alwaysEdible()) {

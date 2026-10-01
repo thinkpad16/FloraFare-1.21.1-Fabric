@@ -100,15 +100,16 @@ public final class BuffDescription {
             return wrapToScreen(lines);
         }
 
-        lines.add(indent(durationLine(data.duration())));
+        // A hunger-only entry has no buff, so no buff length to show.
+        if (!data.isHungerOnly()) lines.add(indent(durationLine(data.duration())));
 
-        FoodValuesTooltip foodValues = FoodValuesTooltip.of(data);
+        FoodValuesTooltip foodValues = FoodValuesTooltip.of(stack, data);
         if (foodValues != null) {
             lines.add(foodValues.asText());
-        } else if (data.nutrition() < 0 && !FoodValuesTooltip.appleSkinOwnsFoodValues()) {
+        } else if (data.effectiveNutrition(stack) < 0 && !FoodValuesTooltip.appleSkinOwnsFoodValues()) {
             // A food that takes hunger away rather than restoring it has nothing the icon
             // row can express, so that one case is still spelled out.
-            lines.add(indent(nutritionLine(data.nutrition(), data.saturation())));
+            lines.add(indent(nutritionLine(stack, data)));
         }
 
         lines.addAll(effectBlock(data.healthBonus(), data.attributes(), data.effects()));
@@ -157,7 +158,7 @@ public final class BuffDescription {
             return lines;
         }
 
-        lines.addAll(foodBuffLines(data));
+        lines.addAll(foodBuffLines(stack, data));
         return lines;
     }
 
@@ -170,11 +171,11 @@ public final class BuffDescription {
      * still locked, or the panel it measured for two grey placeholder lines would clip
      * the full breakdown the moment the player eats the dish.
      */
-    public static List<Text> foodBuffLines(FoodBuffData data) {
+    public static List<Text> foodBuffLines(ItemStack stack, FoodBuffData data) {
         List<Text> lines = new ArrayList<>();
-        lines.add(indent(durationLine(data.duration())));
-        if (data.nutrition() != 0) {
-            lines.add(indent(nutritionLine(data.nutrition(), data.saturation())));
+        if (!data.isHungerOnly()) lines.add(indent(durationLine(data.duration())));
+        if (data.effectiveNutrition(stack) != 0) {
+            lines.add(indent(nutritionLine(stack, data)));
         }
         lines.addAll(effectBlock(data.healthBonus(), data.attributes(), data.effects()));
         if (data.alwaysEdible()) {
@@ -365,9 +366,22 @@ public final class BuffDescription {
      * nothing they could act on.
      */
     public static Text nutritionLine(int nutrition, float saturationModifier) {
-        float saturation = nutrition * saturationModifier * 2.0f;
+        return nutritionPointsLine(nutrition, FoodBuffData.saturationPoints(nutrition, saturationModifier));
+    }
+
+    /**
+     * The same line for what a config does to one particular item — the form every
+     * surface should use, since an entry that leaves nutrition or saturation to the item
+     * only has a number once it is resolved against that item.
+     */
+    public static Text nutritionLine(ItemStack stack, FoodBuffData data) {
+        return nutritionPointsLine(data.effectiveNutrition(stack),
+                data.effectiveSaturationPoints(stack));
+    }
+
+    private static Text nutritionPointsLine(int nutrition, float saturationPoints) {
         return Text.translatable("tooltip.florafare.buff.nutrition",
-                        String.valueOf(nutrition), trimFloat(saturation))
+                        String.valueOf(nutrition), trimFloat(saturationPoints))
                 .formatted(Formatting.GRAY);
     }
 

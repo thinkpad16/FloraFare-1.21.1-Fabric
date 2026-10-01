@@ -200,7 +200,7 @@ public class FoodBuffEmiRecipe implements EmiRecipe {
 
         List<Text> unlocked = new ArrayList<>();
         unlocked.add(BuffDescription.header());
-        unlocked.addAll(BuffDescription.foodBuffLines(data));
+        unlocked.addAll(BuffDescription.foodBuffLines(stack, data));
 
         return List.of(locked, unlocked);
     }

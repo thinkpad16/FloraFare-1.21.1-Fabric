@@ -4,6 +4,7 @@ import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.tooltip.TooltipComponent;
+import net.minecraft.item.ItemStack;
 import net.minecraft.item.tooltip.TooltipData;
 import net.minecraft.text.CharacterVisitor;
 import net.minecraft.text.OrderedText;
@@ -116,10 +117,13 @@ public final class FoodValuesTooltip implements TooltipComponent, TooltipData {
      * {@code HungerManager#add} carry — so it is converted here, once, rather than at each
      * of the places that display it.
      */
-    public static FoodValuesTooltip of(FoodBuffData data) {
+    public static FoodValuesTooltip of(ItemStack stack, FoodBuffData data) {
         if (appleSkinOwnsFoodValues()) return null;
-        if (data.nutrition() <= 0) return null;
-        return new FoodValuesTooltip(data.nutrition(), data.nutrition() * data.saturation() * 2.0f);
+        // Effective values, resolved against this stack: an entry that leaves either half
+        // to the item stores a sentinel in that field, never a number to draw.
+        int nutrition = data.effectiveNutrition(stack);
+        if (nutrition <= 0) return null;
+        return new FoodValuesTooltip(nutrition, data.effectiveSaturationPoints(stack));
     }
 
     /**

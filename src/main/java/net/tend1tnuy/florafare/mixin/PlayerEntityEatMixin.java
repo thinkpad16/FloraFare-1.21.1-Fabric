@@ -36,7 +36,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  *
  * <ul>
  *   <li>the configured nutrition and saturation, via the {@code HungerManager#eat}
- *       redirect in {@link PlayerEntityMixin};</li>
+ *       wrapper in {@link PlayerEntityMixin};</li>
  *   <li>the food's own vanilla status effects, via {@link LivingEntityEatMixin};</li>
  *   <li>the buff, the unlock and the logging — here, without cancelling anything.</li>
  * </ul>
@@ -58,8 +58,8 @@ public abstract class PlayerEntityEatMixin {
         PlayerFoodComponent component =
                 ((IFoodComponentProvider) self).florafare$getFoodComponent();
 
-        // First thing, ahead of every early return below: until tryAddBuff says
-        // otherwise, this bite belongs to vanilla and neither the hunger redirect nor
+        // First thing, ahead of every early return below: until eatFood says
+        // otherwise, this bite belongs to vanilla and neither the hunger wrapper nor
         // the effect suppression may touch it.
         component.beginBite();
 
@@ -78,42 +78,43 @@ public abstract class PlayerEntityEatMixin {
         String itemId = Registries.ITEM.getId(stack.getItem()).toString();
         component.unlockFood(itemId);
 
-        // Returns false for two quite different reasons, and only one of them is a
-        // "Florafare stays out of this bite":
+        // Four outcomes, and only one of them is "Florafare stays out of this bite":
         //
-        //   * every slot is taken — Florafare is still managing the food, the player
-        //     just cannot hold another buff, so the datapack's nutrition and the effect
-        //     suppression stand. The overlay does show the slots are full, but it is the
-        //     thing a player is least likely to be looking at in the moment the bite
-        //     does nothing, so this now says so on the action bar as well;
-        //   * a BUFF_APPLYING listener vetoed it — that is a mod asking Florafare to
-        //     keep its hands off, so tryAddBuff records it and the bite reverts to
-        //     vanilla in full.
-        if (!component.tryAddBuff(stack, data)
-                && FlorafareConfig.notifyOnFullBuffSlots
-                // Tells the two false cases apart. tryAddBuff records the veto by
-                // leaving the bite with vanilla, so "Florafare took the bite over and
-                // still granted nothing" is exactly the full-slots case — and the veto,
-                // which is another mod deliberately staying out, stays silent.
-                && PlayerFoodComponent.handlesCurrentBite(self)) {
+        //   * GRANTED — the buff is on (or refreshed);
+        //   * HUNGER_ONLY — the entry has no duration, so its hunger and effects apply
+        //     and it deliberately takes no slot;
+        //   * SLOTS_FULL — every slot is taken. Florafare is still managing the food,
+        //     so the datapack's nutrition, its effects and the vanilla-effect
+        //     suppression all stand; the player just cannot hold another buff. The
+        //     overlay does show the slots are full, but it is the thing a player is
+        //     least likely to be looking at in the moment the bite does nothing, so
+        //     this says so on the action bar as well;
+        //   * VETOED — a BUFF_APPLYING listener asked Florafare to keep its hands off,
+        //     so the bite reverts to vanilla in full, silently.
+        PlayerFoodComponent.BiteOutcome outcome = component.eatFood(stack, data);
+        if (outcome == PlayerFoodComponent.BiteOutcome.SLOTS_FULL
+                && FlorafareConfig.notifyOnFullBuffSlots) {
             player.sendMessage(Text.translatable("message.florafare.buff_slots_full",
                     PlayerFoodComponent.getMaxBuffSlots()), true);
         }
 
-        florafare$logConsumption(player, itemId, data);
+        florafare$logConsumption(player, itemId, data, food);
     }
 
     private static void florafare$logConsumption(ServerPlayerEntity player, String itemId,
-                                                 FoodBuffData data) {
+                                                 FoodBuffData data, FoodComponent food) {
         if (FlorafareConfig.consumptionLogging == FlorafareConfig.LogLevel.NONE) return;
 
         String playerName = player.getName().getString();
         if (FlorafareConfig.consumptionLogging == FlorafareConfig.LogLevel.ALL) {
+            // The effective values, never the raw fields: an entry that inherits the
+            // item's hunger stores a sentinel there, which means nothing in a log.
             Florafare.LOGGER.info(
                     "[Florafare Consume] Player {} consumed {}. Buff: {} | Health: +{} "
                             + "| Saturation: {} | Nutrition: {} | Duration: {}t",
                     playerName, itemId, data.target(), data.healthBonus(),
-                    data.saturation(), data.nutrition(), data.duration());
+                    data.effectiveSaturationPoints(food), data.effectiveNutrition(food),
+                    data.duration());
         } else if (FlorafareConfig.consumptionLogging == FlorafareConfig.LogLevel.REDUCED
                 && data.healthBonus() > 0) {
             Florafare.LOGGER.info(

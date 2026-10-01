@@ -9,11 +9,8 @@ import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
-import net.minecraft.item.Items;
 import net.minecraft.nbt.NbtCompound;
-import net.minecraft.registry.Registries;
 import net.minecraft.text.Text;
-import net.minecraft.util.Identifier;
 import net.tend1tnuy.florafare.client.BuffDescription;
 import net.tend1tnuy.florafare.client.ClientConfigOverride;
 import net.tend1tnuy.florafare.client.FlorafareHud;
@@ -278,10 +275,10 @@ public class FlorafareClient implements ClientModInitializer {
                     // shows the updated unlock state on next open (#7).
                     FoodJournalScreen.invalidateCache();
                     if (FlorafareConfig.enableDiscoveryToasts) {
-                        Identifier itemId = Identifier.tryParse(payload.itemId());
-                        var stack = (itemId != null && Registries.ITEM.containsId(itemId))
-                                ? Registries.ITEM.get(itemId).getDefaultStack()
-                                : Items.APPLE.getDefaultStack();
+                        // Through the same resolver the overlay uses, so a discovered
+                        // potion: target shows its bottle rather than an apple.
+                        var stack = net.tend1tnuy.florafare.component.ActiveFoodBuff
+                                .iconStackFor(payload.itemId());
                         context.client().getToastManager().add(FoodDiscoveryToast.forFood(stack));
                     }
                 }));

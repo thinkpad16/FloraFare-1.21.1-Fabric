@@ -3,10 +3,12 @@
   "package": "net.tend1tnuy.florafare.mixin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
+    "ItemUseMixin",
     "LivingEntityEatMixin",
     "PlayerEntityMixin",
     "PlayerEntityEatMixin",
-    "PlayerManagerInvoker"
+    "PlayerManagerInvoker",
+    "PotionItemMixin"
   ],
   "client": [
     "FlorafareTooltipComponentMixin",

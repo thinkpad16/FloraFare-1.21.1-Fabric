@@ -58,14 +58,28 @@ public abstract class PlayerEntityMixin implements IFoodComponentProvider {
      * the configured nutrition/saturation (the hunger manager simply clamps whatever
      * overflows 20), the buff, the health bonus, synergies, and the journal unlock.
      *
-     * canConsume() receives no stack, so the held stacks are what there is to inspect —
-     * which matches the vanilla call site, {@code Item#use} passing the stack in the
-     * hand being used.
+     * <p>canConsume() receives no stack, so which food is being asked about has to come
+     * from somewhere else. For the ordinary case — {@code Item#use}, which every plain
+     * food goes through — {@code ItemUseMixin} records the stack in the hand actually
+     * being used, and that one stack is all that is looked at. Both hands used to be
+     * inspected regardless, so a managed food in the main hand made an ignored food in
+     * the off hand edible on a full bar (and the reverse), handing the exemption to an
+     * item Florafare had explicitly been told to leave alone.
+     *
+     * <p>Callers that do not go through {@code Item#use} — {@code CakeBlock#tryEat}, and
+     * modded items that call canConsume from their own {@code use} — still get the
+     * held-stack inspection, since nothing better is known about them.
      */
     @Inject(method = "canConsume", at = @At("HEAD"), cancellable = true)
     private void florafare$allowAlwaysEdible(boolean ignoreHunger, CallbackInfoReturnable<Boolean> cir) {
         // ignoreHunger == true already returns true in vanilla; nothing to override.
         if (ignoreHunger) return;
+
+        ItemStack used = this.foodComponent.getConsumeCheckStack();
+        if (used != null) {
+            if (florafare$exemptFromHunger(used)) cir.setReturnValue(true);
+            return;
+        }
 
         PlayerEntity player = (PlayerEntity) (Object) this;
         ItemStack mainHand = player.getMainHandStack();
@@ -95,6 +109,17 @@ public abstract class PlayerEntityMixin implements IFoodComponentProvider {
         }
     }
 
+    /** The same two switches, for one known stack — the one in the hand being used. */
+    @Unique
+    private static boolean florafare$exemptFromHunger(ItemStack stack) {
+        if (net.tend1tnuy.florafare.config.FlorafareConfig.allowEatingWhenFull
+                && florafare$isManagedFood(stack)) {
+            return true;
+        }
+        return net.tend1tnuy.florafare.config.FlorafareConfig.enableAlwaysEdibleOverride
+                && FoodBuffManager.isAlwaysEdible(stack);
+    }
+
     /** Any edible item, whoever ends up managing it. */
     @Unique
     private static boolean florafare$isFood(ItemStack stack) {
@@ -109,6 +134,12 @@ public abstract class PlayerEntityMixin implements IFoodComponentProvider {
 
     /**
      * Applies Florafare's configured nutrition and saturation in place of the item's own.
+     *
+     * <p>Only the halves the entry actually sets. An entry with no {@code nutrition} or
+     * {@code saturation} keeps the item's value for that half (see
+     * {@link net.tend1tnuy.florafare.food.FoodBuffData#INHERIT_NUTRITION}), and one that
+     * sets neither hands the call to vanilla untouched — so a pack that only attaches a
+     * buff to a food no longer changes what the food restores.
      *
      * <p>This is now <em>the</em> place the swap happens. It used to be dead code: the
      * old {@code PlayerEntityEatMixin} cancelled {@code eatFood} at HEAD before this
@@ -149,9 +180,11 @@ public abstract class PlayerEntityMixin implements IFoodComponentProvider {
                                              Operation<Void> original,
                                              World world, ItemStack stack, FoodComponent foodComponent) {
         net.tend1tnuy.florafare.food.FoodBuffData data = FoodBuffManager.getConfig(stack);
-        if (data != null
+        if (data != null && !data.inheritsHunger()
                 && PlayerFoodComponent.handlesCurrentBite((PlayerEntity) (Object) this)) {
-            hungerManager.add(data.nutrition(), data.saturation());
+            // Resolved against the component vanilla was about to apply, which is the
+            // eaten item's own (or whatever an earlier wrapper in the chain made of it).
+            hungerManager.add(data.effectiveNutrition(food), data.effectiveSaturation(food));
             return;
         }
         original.call(hungerManager, food);

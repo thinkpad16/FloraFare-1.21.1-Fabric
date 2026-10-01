@@ -11,13 +11,13 @@ A datapack-driven food overhaul for **Minecraft 1.21.1 (Fabric)**. Eating food g
 
 ## How it works
 
-1. When a player eats any food, FloraFare looks up a config for that item (see [lookup order](#how-a-food-is-matched-to-a-config)) and applies the **configured** nutrition and saturation instead of the vanilla values.
+1. When a player eats any food, FloraFare looks up a config for that item (see [lookup order](#how-a-food-is-matched-to-a-config)) and applies the **configured** nutrition and saturation instead of the vanilla values (a config that leaves either field out keeps the item's own value for it).
 2. The food also grants a **buff** — a timed entry shown on the HUD that can add max health, attribute modifiers, and status effects for its duration.
-3. A player can hold at most **3 buffs** at once. Eating the same food again refreshes its buff; eating a 4th different food does nothing until a slot frees up.
+3. A player can hold at most **3 buffs** at once. Eating the same food again refreshes its buff; eating a 4th different food grants no buff until a slot frees up (its configured hunger and `effects` still apply, and the player is told the slots are full).
 4. While buffs are active, the mod checks all **synergies**. If the active buffs cover every requirement of a synergy, it activates as a bonus buff (its duration is the *shortest remaining* duration among the foods that satisfy it).
 5. Buffs and synergies expire over time, are saved with the player, and survive relogging and dimension changes.
 
-> **Intentional design:** vanilla food status effects are *not* applied — effects come only from datapack configs. Potions are untouched and stay fully vanilla.
+> **Intentional design:** for a food with an explicit config (a datapack entry, an API registration, `/florafare edit` or `/florafare setbuff`), vanilla food status effects are *not* applied — effects come only from that config. Foods FloraFare merely [auto-generates](#auto-generation-config_generationjson) a buff for keep their own vanilla effects, probabilities included. Potions keep all their vanilla effects; a `potion:` entry only adds to them.
 
 ### Discovery
 
@@ -148,13 +148,25 @@ Each file is a JSON object with an optional file-wide `priority` and an `entries
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `id` | string | **required** | What this entry targets — see [target types](#target-types) below. |
-| `duration` | int | `6000` | Buff duration in **ticks** (20 ticks = 1 second, 6000 = 5 minutes). |
-| `nutrition` | int | `0` | Hunger points restored. **Whole numbers only** — 1 point = half a drumstick; the hunger bar holds 20 points. Fractional values like `0.5` are truncated to `0` and do nothing. Negative values drain hunger. |
-| `saturation` | float | `0.0` | Saturation **modifier**, vanilla semantics: added saturation = `nutrition × saturation × 2`. (So it does nothing if `nutrition` is 0.) |
+| `duration` | int | `6000` | Buff duration in **ticks** (20 ticks = 1 second, 6000 = 5 minutes). `0` or less makes the entry **hunger-only** — see below. |
+| `nutrition` | int | item's own | Hunger points restored. **Whole numbers only** — 1 point = half a drumstick; the hunger bar holds 20 points. Fractional values like `0.5` are truncated to `0` and do nothing. Negative values drain hunger; `0` restores none. **Leave it out to keep the eaten item's own nutrition** — resolved per item, so one `#tag` or `template:default` entry keeps every food it covers at that food's value. |
+| `saturation` | float | item's own | Saturation **modifier**, vanilla semantics: added saturation = `nutrition × saturation × 2`. (So it does nothing if `nutrition` is 0.) **Leave it out to keep the eaten item's own modifier.** With both fields left out the bite's hunger is exactly vanilla's. |
 | `health_bonus` | double | `0.0` | Extra **max health** for the buff's duration. `2.0` = 1 heart. Negative values reduce max health (current health is clamped down immediately; max health can never drop below half a heart). Removed when the buff expires. |
 | `priority` | int | file's `priority` | Per-entry override of the file-wide priority. See [priority rules](#priority-rules). |
 | `effects` | array | `[]` | Status effects applied when the food is eaten (see below). |
 | `attributes` | array | `[]` | Attribute modifiers active while the buff lasts (see below). |
+
+**Hunger-only entries.** An entry with `duration` of `0` or less grants no buff at all: it
+takes no slot, shows nothing on the HUD, and fires no buff events, advancement triggers or
+synergy checks — and it is never refused for full slots. Its `nutrition`, `saturation` and
+`effects` still apply on every bite (and the food's vanilla effects are still replaced by
+them). `health_bonus` and `attributes` need a buff to live on, so they do nothing here.
+Use it to retune a food's hunger, or give it a one-off effect, without spending a buff
+slot on it.
+
+**When every slot is full**, a bite still applies the entry's hunger and its `effects`
+(which stand in for the food's suppressed vanilla effects); only the buff itself — and so
+its `health_bonus` and `attributes` — is withheld.
 
 #### `effects` entries
 
@@ -178,7 +190,7 @@ Each file is a JSON object with an optional file-wide `priority` and an `entries
 |---|---|---|
 | `attribute` | string | Any registered entity attribute id. |
 | `amount` | double | Modifier amount (negative allowed). |
-| `operation` | string | `add_value`, `add_multiplied_base`, or `add_multiplied_total`. Anything else falls back to `add_value`. |
+| `operation` | string | `add_value` (default), `add_multiplied_base`, or `add_multiplied_total`. The pre-1.20.5 spellings are accepted as aliases: `addition`/`add` → `add_value`, `multiply_base` → `add_multiplied_base`, `multiply_total` → `add_multiplied_total`. Case does not matter. Anything else is an **error**: it is logged with the file and entry, and that attribute line is skipped. The same rule applies to synergy attributes. |
 
 Attribute modifiers are applied for the buff's duration and removed on expiry; they survive relogging and returning from the End.
 
@@ -192,9 +204,16 @@ The `id` field accepts several forms:
 | Tag | `#c:foods/vegetable` | Every item in that item tag. |
 | Namespace | `namespace:farmersdelight` | Any food from that mod that has no more specific entry. |
 | Default template | `template:default` | Fallback for any food nothing else matched. |
-| Potion display | `potion:minecraft:strength` | **Journal display only** — potions are never intercepted, so these entries can't trigger. |
+| Potion | `potion:minecraft:strength` | Drinking a potion whose base potion is that id (`minecraft:strength`, `minecraft:long_swiftness`, …). Exact match only — tags, `namespace:` and `template:default` never claim potions. |
 
-If a plain item target doesn't exist, the loader logs a warning (or stays quiet when the whole mod is absent, so cross-mod packs don't spam).
+If a plain item target doesn't exist, the loader logs a warning (or stays quiet when the whole mod is absent, so cross-mod packs don't spam). The same goes for a `potion:` target whose potion is not registered.
+
+**Potion entries** grant their buff, `effects` and attributes when that potion is drunk,
+on top of the potion's own effects, which stay fully vanilla. They change no hunger
+(`nutrition` and `saturation` are ignored), take a slot like any food buff, refresh when
+the same potion is drunk again, and unlock the potion's journal row. Splash and lingering
+potions are thrown, not drunk, and are not affected. Excluding `minecraft:potion` turns
+the whole feature off.
 
 ### Florafare's own item tags
 
@@ -287,6 +306,8 @@ Foods with no matching entry get a buff generated from their vanilla stats. Tune
 
 - buff duration = `vanilla nutrition × duration_multiplier` ticks (default `1200`)
 - health bonus = `vanilla nutrition × health_multiplier` (default `0.5`)
+- nutrition and saturation are the item's own, and so are its vanilla status effects —
+  an auto-generated buff never suppresses them
 
 ---
 
@@ -320,7 +341,7 @@ Files live in `data/<namespace>/food_synergies/`. A file is either a single syne
 |---|---|---|---|
 | `id` | string | required | Unique synergy name (shown in logs and the journal). |
 | `requirements` | array of strings | required | Item ids and/or `#` tags. The synergy activates while the player's **active buffs** cover *every* requirement at once. A tag requirement is satisfied by any buff whose **eaten item** is in that tag — even if that item got its buff from its own item entry. |
-| `duration` | int | `2400` | Maximum duration in ticks. The synergy runs for the shortest remaining duration among the buffs that satisfy it, capped at this value — so it can never outlast its ingredients, and never exceed this ceiling either. `0` or less means "no ceiling", i.e. mirror the ingredients exactly. |
+| `duration` | int | `2400` | Maximum duration in ticks. The synergy runs for the shortest remaining duration among the buffs that satisfy it, capped at this value — so it can never outlast its ingredients, and never exceed this ceiling either. A capped synergy runs its cap **once**: eating some other food does not reset it, and once it runs out it stays off until one of its requirement foods is eaten again (gained or refreshed), which restarts it. `0` or less means "no ceiling", i.e. mirror the ingredients exactly. |
 | `health_bonus` | double | `0.0` | Extra max health while the synergy is active (negative allowed). |
 | `effects` | array | `[]` | Same format as food buffs; effect durations are stretched to the synergy's duration. |
 | `attributes` | array | `[]` | Same format as food buffs. |
@@ -703,10 +724,10 @@ deliberately deleted or leaving your file behind forever.
 It does not replace vanilla's eating code. `PlayerEntity#eatFood` runs in full, and
 Florafare makes three surgical changes to it:
 
-- the configured nutrition and saturation, by redirecting the one `HungerManager#eat`
-  call;
-- the food's own vanilla status effects, by cancelling `applyFoodEffects` for managed
-  foods while `respectVanillaFoodEffects` is off;
+- the configured nutrition and saturation, by wrapping the one `HungerManager#eat`
+  call (and passing it straight through when the entry sets neither);
+- the food's own vanilla status effects, by cancelling `applyFoodEffects` for foods with
+  an explicit config while `respectVanillaFoodEffects` is off;
 - the buff, the journal unlock and the log line, injected at the head of `eatFood`
   without cancelling it.
 
@@ -789,14 +810,17 @@ import net.tend1tnuy.florafare.api.FlorafareEvents;
 ```
 
 Informational hooks — none of them are cancellable, so listening to them never changes
-Florafare's own behavior. All fire on the logical server only.
+Florafare's own behavior. All fire on the logical server only, and always after the change
+they report is complete, so a listener may call back into `FlorafareAPI` (remove a buff,
+clear them all, apply another) without corrupting the state it is being told about.
+Hunger-only entries (`duration <= 0`) fire none of them.
 
 | Event | Fires when |
 |---|---|
 | `BUFF_APPLIED` | A buff is newly granted or refreshed on a player. |
-| `BUFF_REMOVED` | An active buff ends (expiry, Forgotten Mead, or `/florafare clear`). |
+| `BUFF_REMOVED` | An active buff ends (expiry, Forgotten Mead, `/florafare clear`, or death). |
 | `SYNERGY_ACTIVATED` | A synergy's requirements become satisfied. |
-| `SYNERGY_ENDED` | An active synergy ends (expiry or a requirement no longer being met). |
+| `SYNERGY_ENDED` | An active synergy ends (expiry, a requirement no longer being met, or death). |
 | `FOOD_DISCOVERED` | A player eats a food item for the first time. |
 
 ```java

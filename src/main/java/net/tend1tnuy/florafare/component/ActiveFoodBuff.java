@@ -114,6 +114,15 @@ public class ActiveFoodBuff {
                 new AppliedModifier(attributeId, amount, operation));
     }
 
+    /**
+     * Forgets every recorded modifier. Only for the caller that has just taken those
+     * modifiers off the player — dropping the records on their own would orphan the
+     * modifiers, which then nothing could ever remove short of {@code /florafare repair}.
+     */
+    public void clearModifierRecords() {
+        this.appliedModifiers.clear();
+    }
+
     public Map<Identifier, AppliedModifier> getAppliedModifiers() { return appliedModifiers; }
     public String  getTarget()            { return target; }
     public String  getConsumedItemId()    { return consumedItemId; }
@@ -160,16 +169,38 @@ public class ActiveFoodBuff {
     @ApiStatus.Internal
     public ItemStack peekConsumedItemStack() {
         if (cachedItemStack == null) {
-            Identifier id = consumedItemId == null || consumedItemId.isEmpty()
-                    ? null : Identifier.tryParse(consumedItemId);
-            if (id != null && Registries.ITEM.containsId(id)) {
-                Item item = Registries.ITEM.get(id);
-                cachedItemStack = item.getDefaultStack();
-            } else {
-                cachedItemStack = Items.APPLE.getDefaultStack();
-            }
+            cachedItemStack = iconStackFor(consumedItemId);
         }
         return cachedItemStack;
+    }
+
+    /**
+     * The stack that stands for a consumed id: the item itself, or — for a
+     * {@code potion:} target, which is what a drunk potion's buff records in place of an
+     * item id — a bottle of that potion, so the overlay and the discovery toast show the
+     * right colour rather than an apple. Anything unresolvable falls back to an apple.
+     */
+    public static ItemStack iconStackFor(String id) {
+        if (id != null && id.startsWith("potion:")) {
+            Identifier potionId = Identifier.tryParse(id.substring("potion:".length()));
+            if (potionId != null) {
+                java.util.Optional<net.minecraft.registry.entry.RegistryEntry.Reference<net.minecraft.potion.Potion>>
+                        potion = Registries.POTION.getEntry(potionId);
+                if (potion.isPresent()) {
+                    ItemStack bottle = new ItemStack(Items.POTION);
+                    bottle.set(net.minecraft.component.DataComponentTypes.POTION_CONTENTS,
+                            new net.minecraft.component.type.PotionContentsComponent(potion.get()));
+                    return bottle;
+                }
+            }
+            return Items.APPLE.getDefaultStack();
+        }
+        Identifier itemId = id == null || id.isEmpty() ? null : Identifier.tryParse(id);
+        if (itemId != null && Registries.ITEM.containsId(itemId)) {
+            Item item = Registries.ITEM.get(itemId);
+            return item.getDefaultStack();
+        }
+        return Items.APPLE.getDefaultStack();
     }
 
     // -------------------------------------------------------------------------

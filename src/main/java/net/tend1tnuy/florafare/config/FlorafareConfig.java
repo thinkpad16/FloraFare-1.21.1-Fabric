@@ -42,6 +42,12 @@ public class FlorafareConfig {
     // Logging levels: NONE (disabled), REDUCED (less spam, only heals), ALL (everything)
     public enum LogLevel { NONE, REDUCED, ALL }
 
+    // The switches below marked volatile are read by the eating and buff code on the
+    // server (and client) thread while being written from elsewhere — the server config
+    // packet on the network thread's hand-off, a command, the ModMenu screen. Each is
+    // a single independent flag, so visibility is all that is needed, and volatile is
+    // the whole cost of it.
+
     /**
      * Off by default. Both other levels write an INFO line per consumption on the
      * logical server — and {@code REDUCED} is not the escape hatch it sounds like,
@@ -50,16 +56,16 @@ public class FlorafareConfig {
      * lines an hour in {@code latest.log} for something nobody asked for, so an admin
      * who wants the audit trail opts into it instead of opting out.
      */
-    public static LogLevel consumptionLogging = LogLevel.NONE;
+    public static volatile LogLevel consumptionLogging = LogLevel.NONE;
 
     // --- Main settings ---
-    public static boolean enableSynergies = true;
+    public static volatile boolean enableSynergies = true;
 
     // --- Server-authoritative gameplay settings (synced to clients on join/reload) ---
     public static int maxBuffSlots = 3;
     public static int autoGenDurationMultiplier = 1200;
     public static double autoGenHealthMultiplier = 0.5;
-    public static boolean enableAlwaysEdibleOverride = true;
+    public static volatile boolean enableAlwaysEdibleOverride = true;
 
     /**
      * On by default: every food is edible on a full hunger bar, not just the ones
@@ -70,10 +76,10 @@ public class FlorafareConfig {
      * Florafare to keep its hands off an item stay in control of it. Set to false to
      * restore vanilla's "only when hungry" restriction.
      */
-    public static boolean allowEatingWhenFull = true;
+    public static volatile boolean allowEatingWhenFull = true;
 
-    public static boolean respectVanillaFoodEffects = false;
-    public static boolean enableForgottenMead = true;
+    public static volatile boolean respectVanillaFoodEffects = false;
+    public static volatile boolean enableForgottenMead = true;
     public static boolean grantJournalOnFirstJoin = true;
 
     /**
@@ -90,7 +96,7 @@ public class FlorafareConfig {
      * bug. It is especially hard to read right after a relog or a respawn, when the
      * overlay is the thing they have just stopped watching.
      */
-    public static boolean notifyOnFullBuffSlots = true;
+    public static volatile boolean notifyOnFullBuffSlots = true;
 
     // --- Server-only settings (not synced; read at command registration time) ---
     public static int commandPermissionLevel = 2;

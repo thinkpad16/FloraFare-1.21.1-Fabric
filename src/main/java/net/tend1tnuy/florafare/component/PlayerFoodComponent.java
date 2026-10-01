@@ -17,6 +17,7 @@ import net.minecraft.util.Identifier;
 import net.tend1tnuy.florafare.Florafare;
 import net.tend1tnuy.florafare.api.FlorafareEvents;
 import net.tend1tnuy.florafare.config.FlorafareConfig;
+import net.tend1tnuy.florafare.food.AttributeOperations;
 import net.tend1tnuy.florafare.food.FoodBuffData;
 import net.tend1tnuy.florafare.food.FoodSynergyData;
 import net.tend1tnuy.florafare.food.FoodSynergyManager;
@@ -63,6 +64,7 @@ public class PlayerFoodComponent {
     private static final String NBT_JOURNAL_KEY             = "FlorafareReceivedJournal";
     private static final String NBT_DISCOVERED_SYNERGIES_KEY = "FlorafareDiscoveredSynergies";
     private static final String NBT_ACTIVE_SYNERGIES_KEY    = "FlorafareActiveSynergies";
+    private static final String NBT_SPENT_SYNERGIES_KEY     = "FlorafareSpentSynergies";
 
     private final PlayerEntity player;
     private final List<ActiveFoodBuff> activeBuffs    = new ArrayList<>();
@@ -74,6 +76,37 @@ public class PlayerFoodComponent {
 
     // #11 — Map keyed by synergy id for O(1) "is this synergy already active?" lookup.
     private final Map<String, ActiveFoodBuff> activeSynergyMap = new HashMap<>();
+
+    /**
+     * Synergies that ran their full window out while their requirements were still met,
+     * and so must not start again until one of those requirements is eaten afresh.
+     *
+     * <p>A synergy with a {@code duration} cap shorter than its ingredients used to be
+     * re-granted by anything that re-evaluated synergies: every bite of any food reset it
+     * to its full cap, and once it did expire, the next bite or the next unrelated buff
+     * running out started it over — a fresh {@code SYNERGY_ACTIVATED}, log line and set of
+     * effects each time. With five-minute ingredients and a ten-second cap that was a
+     * ten-second synergy which in practice lasted five minutes. An id leaves this set when
+     * a requirement buff is gained or refreshed (which restarts it), or when its
+     * requirements stop being met (so the next time they are, it starts normally).
+     */
+    private final Set<String> spentSynergies = new HashSet<>();
+
+    /**
+     * Listener notifications waiting to be delivered — see {@link #fireQueuedEvents()}.
+     *
+     * <p>Every state change used to fire its event on the spot, which put
+     * {@code BUFF_REMOVED} and {@code SYNERGY_ENDED} inside index loops over the very lists
+     * being changed. A listener doing the reasonable thing — calling
+     * {@code FlorafareAPI.removeBuff} or {@code clearBuffs} in response — then shrank the
+     * list under the loop, which skipped entries or threw. Events now wait here until the
+     * change that produced them is complete, and are delivered from the queue, so a
+     * listener always sees, and may freely change, a consistent component.
+     */
+    private final ArrayDeque<Runnable> pendingEvents = new ArrayDeque<>();
+
+    /** Set while {@link #fireQueuedEvents()} is delivering, so re-entry only enqueues. */
+    private boolean firingEvents = false;
 
     /**
      * Set whenever buffs or synergies change, and flushed once at the end of the
@@ -330,7 +363,7 @@ public class PlayerFoodComponent {
     // THE BITE IN PROGRESS
     //
     // Florafare takes two things away from vanilla eating and puts its own in their
-    // place: the food's nutrition/saturation (the HungerManager#eat redirect in
+    // place: the food's nutrition/saturation (the HungerManager#eat wrapper in
     // PlayerEntityMixin) and the food's own status effects (LivingEntityEatMixin).
     // Both of those used to fire on nothing more than "this item has a Florafare
     // config", while the buff that justifies them was granted somewhere else entirely
@@ -345,9 +378,12 @@ public class PlayerFoodComponent {
     /**
      * Whether Florafare owns the bite currently being processed.
      *
-     * <p>Reset at the top of every {@code eatFood} by {@link #beginBite()} and set by
-     * {@link #tryAddBuff}, so it always describes the bite in progress and never a
-     * previous one.
+     * <p>Reset at the top of every {@code eatFood} by {@link #beginBite()} and set only by
+     * {@link #eatFood}, so it always describes the bite in progress and never a previous
+     * one. Deliberately <em>not</em> touched by {@link #tryAddBuff}: that is the API and
+     * command entry point, and a {@code BUFF_APPLIED} listener calling
+     * {@code FlorafareAPI.applyBuffToPlayer} in the middle of a bite used to overwrite this
+     * with the answer for its own, unrelated buff.
      */
     private boolean vanillaSuperseded = false;
 
@@ -376,51 +412,158 @@ public class PlayerFoodComponent {
         return ((IFoodComponentProvider) player).florafare$getFoodComponent().vanillaSuperseded;
     }
 
+    /**
+     * The stack whose edibility {@code PlayerEntity#canConsume} is being asked about, set
+     * by {@code ItemUseMixin} around that one call in {@code Item#use}; null otherwise.
+     * canConsume itself is handed no stack, and without this it could only guess from
+     * both hands.
+     */
+    private ItemStack consumeCheckStack = null;
+
+    @org.jetbrains.annotations.ApiStatus.Internal
+    public ItemStack getConsumeCheckStack() {
+        return consumeCheckStack;
+    }
+
+    @org.jetbrains.annotations.ApiStatus.Internal
+    public void setConsumeCheckStack(ItemStack stack) {
+        this.consumeCheckStack = stack;
+    }
+
     // -------------------------------------------------------------------------
     // BUFF MANAGEMENT
     // -------------------------------------------------------------------------
 
+    /** What became of one bite (or one drink) of a configured food. */
+    public enum BiteOutcome {
+        /**
+         * A {@code BUFF_APPLYING} listener refused. Nothing of the entry was applied, and
+         * for a bite the hunger and the vanilla effects are handed back to vanilla.
+         */
+        VETOED,
+        /** A buff was granted, or the running one for this food refreshed. */
+        GRANTED,
+        /**
+         * A hunger-only entry ({@code duration <= 0}): its hunger and status effects
+         * applied, and by design no buff, no slot and no buff events.
+         */
+        HUNGER_ONLY,
+        /**
+         * Every slot was taken. The entry's hunger and status effects still applied —
+         * the food is still Florafare's to manage — but no buff, so no attributes.
+         */
+        SLOTS_FULL
+    }
+
+    /**
+     * The eat hook's entry point: one bite of a configured food.
+     *
+     * <p>Differs from {@link #tryAddBuff} in two ways. It records whether the bite was
+     * taken over, for the two mixins that take hunger and vanilla effects away. And when
+     * there is no slot free it still applies the entry's {@code effects}: the bite's
+     * vanilla effects are suppressed on the strength of the entry replacing them, so an
+     * entry whose buff could not be granted used to leave the player with neither — a
+     * golden apple eaten on a full slot list gave its datapack hunger and nothing else.
+     */
+    public BiteOutcome eatFood(ItemStack stack, FoodBuffData data) {
+        BiteOutcome outcome = grant(stack, itemIdOf(stack), data, true);
+        // Recorded before any listener runs, so nothing a listener does can change it.
+        vanillaSuperseded = outcome != BiteOutcome.VETOED;
+        fireQueuedEvents();
+        return outcome;
+    }
+
+    /**
+     * A potion with a {@code potion:} entry has just been drunk. Same rules as a bite,
+     * keyed by the potion target rather than an item id (every potion is the one item
+     * {@code minecraft:potion}), and with no hunger and no effect suppression — the
+     * potion's own effects stay entirely vanilla.
+     */
+    public BiteOutcome drinkPotion(ItemStack stack, String potionTarget, FoodBuffData data) {
+        BiteOutcome outcome = grant(stack, potionTarget, data, true);
+        fireQueuedEvents();
+        return outcome;
+    }
+
+    /**
+     * Grants a buff from code — {@code FlorafareAPI.applyBuffToPlayer} and
+     * {@code /florafare buff give}.
+     *
+     * @return true if the entry was applied: the buff is now active, or the entry is
+     *         hunger-only and its effects were granted. False when every slot is taken
+     *         or a listener vetoed it.
+     */
     public boolean tryAddBuff(ItemStack stack, FoodBuffData data) {
+        BiteOutcome outcome = grant(stack, itemIdOf(stack), data, false);
+        fireQueuedEvents();
+        return outcome == BiteOutcome.GRANTED || outcome == BiteOutcome.HUNGER_ONLY;
+    }
+
+    private static String itemIdOf(ItemStack stack) {
+        return Registries.ITEM.getId(stack.getItem()).toString();
+    }
+
+    /**
+     * The shared core of every way a buff is granted.
+     *
+     * @param consumedId        what the buff records as eaten, and the key a second bite
+     *                          of the same thing refreshes by
+     * @param effectsWithoutSlot whether a full slot list still gets the entry's status
+     *                          effects — yes for a real bite or drink, no for the API
+     */
+    private BiteOutcome grant(ItemStack stack, String consumedId, FoodBuffData data,
+                              boolean effectsWithoutSlot) {
+        boolean isServer = !player.getWorld().isClient;
+
         // Asked before anything is decided, including before the "is it already active"
         // branch: a veto has to cover the refresh of a running buff too, or a mod that
-        // blocks a food can be worked around by eating it twice.
-        boolean vetoed = !player.getWorld().isClient
-                && !FlorafareEvents.BUFF_APPLYING.invoker().allowBuff(player, stack, data);
+        // blocks a food can be worked around by eating it twice. Asked for hunger-only
+        // entries as well, since a veto is what hands the bite back to vanilla.
+        if (isServer && !FlorafareEvents.BUFF_APPLYING.invoker().allowBuff(player, stack, data)) {
+            return BiteOutcome.VETOED;
+        }
 
-        // Recorded for the two mixins that take something away from vanilla eating on
-        // the strength of Florafare replacing it. See #handlesCurrentBite.
-        vanillaSuperseded = !vetoed;
-        if (vetoed) return false;
+        if (data.isHungerOnly()) {
+            applyStatusEffects(data);
+            return BiteOutcome.HUNGER_ONLY;
+        }
 
-        String itemId = Registries.ITEM.getId(stack.getItem()).toString();
-        Optional<ActiveFoodBuff> existing = activeBuffs.stream()
-                .filter(b -> b.getConsumedItemId().equals(itemId))
-                .findFirst();
+        ActiveFoodBuff existing = null;
+        for (ActiveFoodBuff buff : activeBuffs) {
+            if (buff.getConsumedItemId().equals(consumedId)) { existing = buff; break; }
+        }
 
-        if (existing.isPresent()) {
-            ActiveFoodBuff buff = existing.get();
-            buff.resetDuration(data.duration());
-            applyBuffEffects(buff, data);
-            if (!player.getWorld().isClient) {
-                updateSynergies();
-                FlorafareEvents.BUFF_APPLIED.invoker().onBuffApplied(player, stack, buff);
+        if (existing != null) {
+            existing.resetDuration(data.duration());
+            // Strips whatever the buff was carrying before re-applying, so a refresh after
+            // a /reload or a /florafare edit converges on the entry as it now stands.
+            applyBuffEffects(existing, data, false);
+            if (isServer) {
+                updateSynergies(existing);
+                ActiveFoodBuff refreshed = existing;
+                queueEvent(() -> FlorafareEvents.BUFF_APPLIED.invoker()
+                        .onBuffApplied(player, stack, refreshed));
             }
             markBuffChanged();
-            return true;
+            return BiteOutcome.GRANTED;
         }
 
-        if (activeBuffs.size() >= maxBuffSlots) return false;
+        if (activeBuffs.size() >= maxBuffSlots) {
+            if (effectsWithoutSlot) applyStatusEffects(data);
+            return BiteOutcome.SLOTS_FULL;
+        }
 
         ActiveFoodBuff buff = new ActiveFoodBuff(
-                data.target(), itemId, data.duration(), data.duration());
-        applyBuffEffects(buff, data);
+                data.target(), consumedId, data.duration(), data.duration());
+        applyBuffEffects(buff, data, false);
         activeBuffs.add(buff);
-        if (!player.getWorld().isClient) {
-            updateSynergies();
-            FlorafareEvents.BUFF_APPLIED.invoker().onBuffApplied(player, stack, buff);
+        if (isServer) {
+            updateSynergies(buff);
+            queueEvent(() -> FlorafareEvents.BUFF_APPLIED.invoker()
+                    .onBuffApplied(player, stack, buff));
         }
         markBuffChanged();
-        return true;
+        return BiteOutcome.GRANTED;
     }
 
     /**
@@ -440,9 +583,10 @@ public class PlayerFoodComponent {
                 continue;
             }
             activeBuffs.remove(i);
-            removeBuffAttributes(buff);
-            updateSynergies();
+            endBuff(buff);
+            updateSynergies(null);
             markBuffChanged();
+            fireQueuedEvents();
             return true;
         }
         return false;
@@ -451,39 +595,70 @@ public class PlayerFoodComponent {
     public boolean removeLastBuff() {
         if (activeBuffs.isEmpty()) return false;
         ActiveFoodBuff buff = activeBuffs.remove(activeBuffs.size() - 1);
-        removeBuffAttributes(buff);
-        if (!player.getWorld().isClient) updateSynergies();
+        endBuff(buff);
+        if (!player.getWorld().isClient) updateSynergies(null);
         markBuffChanged();
+        fireQueuedEvents();
         return true;
     }
 
+    /**
+     * Drops every buff and synergy — {@code /florafare clear}, the API, and death.
+     *
+     * <p>The lists are emptied first and the entries ended from a copy, so a
+     * {@code BUFF_REMOVED} listener that calls back into the component finds it already
+     * in its final state rather than half-way through an index loop.
+     */
     public void clearAllBuffs() {
         if (player.getWorld().isClient) return;
-        boolean changed = false;
+        spentSynergies.clear();
+        if (activeBuffs.isEmpty() && activeSynergies.isEmpty()) return;
 
-        for (int i = activeBuffs.size() - 1; i >= 0; i--) {
-            removeBuffAttributes(activeBuffs.get(i));
-            activeBuffs.remove(i);
-            changed = true;
-        }
-
-        for (int i = activeSynergies.size() - 1; i >= 0; i--) {
-            removeBuffAttributes(activeSynergies.get(i));
-            activeSynergies.remove(i);
-            changed = true;
-        }
+        List<ActiveFoodBuff> buffs     = new ArrayList<>(activeBuffs);
+        List<ActiveFoodBuff> synergies = new ArrayList<>(activeSynergies);
+        activeBuffs.clear();
+        activeSynergies.clear();
         activeSynergyMap.clear();
 
-        if (changed) markBuffChanged();
+        for (ActiveFoodBuff buff : buffs)     endBuff(buff);
+        for (ActiveFoodBuff buff : synergies) endBuff(buff);
+
+        markBuffChanged();
+        fireQueuedEvents();
+    }
+
+    // -------------------------------------------------------------------------
+    // EVENT DELIVERY
+    // -------------------------------------------------------------------------
+
+    /** Queues a listener notification; dropped on the client, where no event fires. */
+    private void queueEvent(Runnable event) {
+        if (player.getWorld().isClient) return;
+        pendingEvents.add(event);
+    }
+
+    /**
+     * Delivers every queued notification. Called at the end of each public entry point,
+     * once the component is consistent again.
+     *
+     * <p>Re-entrant by design: a listener that changes the component queues its own
+     * events, and those are delivered by this same loop rather than by a nested one, so
+     * listeners still hear about changes in the order they happened.
+     */
+    private void fireQueuedEvents() {
+        if (firingEvents) return;
+        firingEvents = true;
+        try {
+            Runnable next;
+            while ((next = pendingEvents.poll()) != null) next.run();
+        } finally {
+            firingEvents = false;
+        }
     }
 
     // -------------------------------------------------------------------------
     // ATTRIBUTE / EFFECT APPLICATION
     // -------------------------------------------------------------------------
-
-    private void applyBuffEffects(ActiveFoodBuff buff, FoodBuffData data) {
-        applyBuffEffects(buff, data, false);
-    }
 
     /**
      * Builds the modifier-id scope for a buff. Modifier ids have to be unique per
@@ -515,10 +690,18 @@ public class PlayerFoodComponent {
         // of the middle of eating. Lowercasing with Locale.ROOT, not the default locale:
         // in a Turkish locale "I" lowercases to a dotless "ı", which is not a valid path
         // character either.
-        scoped = scoped.toLowerCase(Locale.ROOT);
-        StringBuilder safe = new StringBuilder(scoped.length());
-        for (int i = 0; i < scoped.length(); i++) {
-            char c = scoped.charAt(i);
+        return sanitizePath(scoped);
+    }
+
+    /**
+     * Reduces a string to characters an {@link Identifier} path accepts, lowercasing with
+     * {@link Locale#ROOT} and replacing anything else with an underscore.
+     */
+    static String sanitizePath(String raw) {
+        String lower = raw.toLowerCase(Locale.ROOT);
+        StringBuilder safe = new StringBuilder(lower.length());
+        for (int i = 0; i < lower.length(); i++) {
+            char c = lower.charAt(i);
             boolean valid = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
                     || c == '/' || c == '.' || c == '_' || c == '-';
             safe.append(valid ? c : '_');
@@ -526,8 +709,49 @@ public class PlayerFoodComponent {
         return safe.toString();
     }
 
+    /**
+     * The modifier id path for one attribute line of one active buff:
+     * {@code attr_<scope>_<namespace>_<path>_<index>}.
+     *
+     * <p>It used to be {@code attr_<scope>_<path>}, dropping the attribute's namespace
+     * and the line it came from, so two lines on one buff could share an id: two mods'
+     * attributes with the same path ({@code spell_power:haste} and
+     * {@code ranged_weapon:haste}), or one attribute listed twice with different
+     * operations. The second line silently replaced the first's modifier on the player
+     * while both were recorded on the buff under the one id — and only one of them could
+     * ever be taken off again. The line index alone makes every id on a buff unique; the
+     * namespace and path are there so the id still says what it is in a {@code /attribute}
+     * listing.
+     *
+     * <p>Modifiers written under the old scheme are still removed correctly: removal goes
+     * by the id recorded on the buff, whatever its format, and the load-time
+     * {@link #stripFlorafareModifiers()} takes off anything in the Florafare namespace.
+     */
+    static String attributeModifierPath(String scope, Identifier attributeId, int index) {
+        return "attr_" + scope
+                + "_" + sanitizePath(attributeId.getNamespace())
+                + "_" + sanitizePath(attributeId.getPath())
+                + "_" + index;
+    }
+
+    /**
+     * Applies an entry's health bonus, attributes and status effects to a buff.
+     *
+     * <p>Starts by taking off every modifier the buff already carries. A refresh — eating
+     * the same food again, or a synergy being re-evaluated — used to only add and
+     * overwrite, so a modifier the entry no longer lists (after a {@code /reload}, a
+     * {@code /florafare edit}, or with a {@code setbuff} stack now resolving differently)
+     * stayed on the player for as long as the buff kept being refreshed, and its record
+     * was overwritten so nothing would ever remove it.
+     */
     private void applyBuffEffects(ActiveFoodBuff buff, FoodBuffData data, boolean isSynergy) {
         if (player.getWorld().isClient) return;
+
+        // No health clamp between the strip and the re-apply: taking a max-health bonus
+        // off and putting it straight back must not cost the player the hearts above the
+        // un-buffed maximum. The clamp further down runs once, on the final state.
+        removeRecordedModifiers(buff);
+        buff.clearModifierRecords();
 
         String safeId = modifierScope(buff, isSynergy);
 
@@ -537,14 +761,28 @@ public class PlayerFoodComponent {
                     data.healthBonus(), EntityAttributeModifier.Operation.ADD_VALUE);
         }
 
-        for (FoodBuffData.AttributeData attr : data.attributes()) {
+        List<FoodBuffData.AttributeData> attributes = data.attributes();
+        for (int i = 0; i < attributes.size(); i++) {
+            FoodBuffData.AttributeData attr = attributes.get(i);
             Optional<RegistryEntry.Reference<net.minecraft.entity.attribute.EntityAttribute>> entry =
                     Registries.ATTRIBUTE.getEntry(attr.attributeId());
             if (entry.isEmpty()) continue;
 
+            // The loaders reject an unknown operation, so this only catches a config built
+            // in code. Skipped rather than guessed: add_value in place of a multiplier is
+            // a wildly different number, not a near miss.
+            Optional<EntityAttributeModifier.Operation> operation =
+                    AttributeOperations.parse(attr.operation());
+            if (operation.isEmpty()) {
+                Florafare.LOGGER.error(
+                        "Buff '{}' gives attribute {} the unknown operation '{}'; skipped.",
+                        data.target(), attr.attributeId(), attr.operation());
+                continue;
+            }
+
             Identifier id = Identifier.of(Florafare.MOD_ID,
-                    "attr_" + safeId + "_" + attr.attributeId().getPath());
-            applyAttribute(buff, entry.get(), id, attr.amount(), mapOperation(attr.operation()));
+                    attributeModifierPath(safeId, attr.attributeId(), i));
+            applyAttribute(buff, entry.get(), id, attr.amount(), operation.get());
         }
 
         // A negative max-health modifier can leave current health above the new maximum.
@@ -552,6 +790,16 @@ public class PlayerFoodComponent {
             player.setHealth(player.getMaxHealth());
         }
 
+        applyStatusEffects(data);
+    }
+
+    /**
+     * Grants an entry's {@code effects} list. Split out because it is also what a bite
+     * gets when no buff can be granted — every slot taken, or a hunger-only entry — since
+     * those bites still have their vanilla effects suppressed in favor of these.
+     */
+    private void applyStatusEffects(FoodBuffData data) {
+        if (player.getWorld().isClient) return;
         for (FoodBuffData.EffectData effect : data.effects()) {
             applyEffect(effect.id(), effect.duration(), effect.amplifier());
         }
@@ -602,7 +850,7 @@ public class PlayerFoodComponent {
             Identifier registryId = Registries.ATTRIBUTE.getId(attribute.value());
             if (registryId != null) {
                 buff.addModifierRecord(modifierId, registryId, amount,
-                        operationToString(operation));
+                        AttributeOperations.nameOf(operation));
             }
         } catch (Exception e) {
             Florafare.LOGGER.error("Failed to apply attribute modifier: {}", modifierId, e);
@@ -708,32 +956,22 @@ public class PlayerFoodComponent {
             EntityAttributeInstance instance = player.getAttributeInstance(entry.get());
             if (instance == null) continue;
 
+            // Records are written by applyAttribute with a canonical name, so an
+            // unparseable one means a hand-edited or corrupted save. Leave it off.
+            Optional<EntityAttributeModifier.Operation> operation =
+                    AttributeOperations.parse(modifier.operation());
+            if (operation.isEmpty()) continue;
+
             instance.removeModifier(modId);
             try {
                 instance.addTemporaryModifier(new EntityAttributeModifier(
-                        modId, modifier.amount(), mapOperation(modifier.operation())));
+                        modId, modifier.amount(), operation.get()));
                 reapplied++;
             } catch (Exception e) {
                 Florafare.LOGGER.error("Failed to reapply attribute modifier: {}", modId, e);
             }
         }
         return reapplied;
-    }
-
-    private EntityAttributeModifier.Operation mapOperation(String op) {
-        return switch (op.toLowerCase()) {
-            case "add_multiplied_base"  -> EntityAttributeModifier.Operation.ADD_MULTIPLIED_BASE;
-            case "add_multiplied_total" -> EntityAttributeModifier.Operation.ADD_MULTIPLIED_TOTAL;
-            default                     -> EntityAttributeModifier.Operation.ADD_VALUE;
-        };
-    }
-
-    private static String operationToString(EntityAttributeModifier.Operation operation) {
-        return switch (operation) {
-            case ADD_MULTIPLIED_BASE  -> "add_multiplied_base";
-            case ADD_MULTIPLIED_TOTAL -> "add_multiplied_total";
-            default                   -> "add_value";
-        };
     }
 
     // -------------------------------------------------------------------------
@@ -779,17 +1017,26 @@ public class PlayerFoodComponent {
         return true;
     }
 
-    private boolean updateSynergies() {
+    /**
+     * Re-evaluates every synergy against the buffs now active.
+     *
+     * @param fresh the buff that was just gained or refreshed, or null when this runs
+     *              because something ended. Only a fresh buff that feeds a synergy may
+     *              lengthen it or restart one that has already run out — see
+     *              {@link #spentSynergies} and {@link #refreshWindow}.
+     */
+    private boolean updateSynergies(ActiveFoodBuff fresh) {
         if (player.getWorld().isClient) return false;
 
         if (!FlorafareConfig.enableSynergies) {
+            spentSynergies.clear();
             boolean changed = !activeSynergies.isEmpty();
             if (changed) {
-                for (int i = activeSynergies.size() - 1; i >= 0; i--) {
-                    removeBuffAttributes(activeSynergies.get(i));
-                }
+                List<ActiveFoodBuff> ended = new ArrayList<>(activeSynergies);
                 activeSynergies.clear();
                 activeSynergyMap.clear();
+                for (ActiveFoodBuff synergyBuff : ended) endBuff(synergyBuff);
+                markDirty();
             }
             return changed;
         }
@@ -797,6 +1044,9 @@ public class PlayerFoodComponent {
         boolean changed = false;
 
         // Remove synergies whose requirements are no longer met or that have expired.
+        // Collected first and ended after the loop: ending one queues a listener event,
+        // and nothing should run while the list is mid-iteration.
+        List<ActiveFoodBuff> ended = null;
         for (int i = activeSynergies.size() - 1; i >= 0; i--) {
             ActiveFoodBuff synergyBuff = activeSynergies.get(i);
             FoodSynergyData synergyData = FoodSynergyManager.getSynergy(synergyBuff.getTarget());
@@ -804,12 +1054,23 @@ public class PlayerFoodComponent {
             if (synergyData == null
                     || !requirementsMet(synergyData.requirements())
                     || synergyBuff.isExpired()) {
-                removeBuffAttributes(synergyBuff);
                 activeSynergies.remove(i);
                 activeSynergyMap.remove(synergyBuff.getTarget()); // #11
+                if (ended == null) ended = new ArrayList<>();
+                ended.add(synergyBuff);
                 changed = true;
             }
         }
+        if (ended != null) {
+            for (ActiveFoodBuff synergyBuff : ended) endBuff(synergyBuff);
+        }
+
+        // A spent synergy whose requirements have lapsed is no longer spent: the next time
+        // they come together it is a new combination and starts normally.
+        spentSynergies.removeIf(id -> {
+            FoodSynergyData synergy = FoodSynergyManager.getSynergy(id);
+            return synergy == null || !requirementsMet(synergy.requirements());
+        });
 
         // Add or refresh synergies whose requirements are now met.
         for (FoodSynergyData synergy : FoodSynergyManager.getAllSynergies()) {
@@ -831,15 +1092,16 @@ public class PlayerFoodComponent {
             }
 
             SynergyWindow window = synergyWindow(minDuration, minInitial, synergy.duration());
-            minDuration = window.remaining();
-            minInitial  = window.initial();
+            boolean fed = fresh != null && feedsSynergy(fresh, synergy);
 
             // #11 — O(1) lookup via map instead of stream().filter()
             ActiveFoodBuff existing = activeSynergyMap.get(synergy.id());
 
             if (existing != null) {
-                if (Math.abs(existing.getDurationRemaining() - minDuration) > 10) {
-                    existing.resetDuration(minDuration, minInitial);
+                SynergyWindow next = refreshWindow(existing.getDurationRemaining(),
+                        existing.getInitialDuration(), window, fed);
+                if (next != null) {
+                    existing.resetDuration(next.remaining(), next.initial());
                     // Through the full apply path, not just the effects.
                     //
                     // This branch used to re-grant the status effects and stop there, so
@@ -847,13 +1109,20 @@ public class PlayerFoodComponent {
                     // first activated. A /reload that changed them left the running
                     // synergy applying the old numbers until it expired — and a modifier
                     // whose attribute had meanwhile been un-registered was never taken
-                    // off at all. applyBuffEffects removes each modifier before re-adding
-                    // it and re-records it on the buff, so this converges on whatever the
+                    // off at all. applyBuffEffects strips every recorded modifier before
+                    // re-adding the current ones, so this converges on whatever the
                     // synergy currently says rather than drifting away from it.
-                    applyBuffEffects(existing, synergyData(synergy, minDuration), true);
+                    applyBuffEffects(existing, synergyData(synergy, next.remaining()), true);
                     changed = true;
                 }
             } else {
+                // Ran its window out with its ingredients still going: it waits for one of
+                // them to be eaten again rather than restarting on any bite at all.
+                if (spentSynergies.contains(synergy.id())) {
+                    if (!fed) continue;
+                    spentSynergies.remove(synergy.id());
+                }
+
                 // Determine the HUD icon item from the first satisfied requirement.
                 String iconItem = "minecraft:apple";
                 if (!synergy.requirements().isEmpty()) {
@@ -867,14 +1136,15 @@ public class PlayerFoodComponent {
                 }
 
                 ActiveFoodBuff synergyBuff = ActiveFoodBuff.synergy(
-                        synergy.id(), iconItem, minDuration, minInitial);
+                        synergy.id(), iconItem, window.remaining(), window.initial());
 
-                applyBuffEffects(synergyBuff, synergyData(synergy, minDuration), true);
+                applyBuffEffects(synergyBuff, synergyData(synergy, window.remaining()), true);
                 activeSynergies.add(synergyBuff);
                 activeSynergyMap.put(synergy.id(), synergyBuff); // #11
 
-                logSynergyActivation(synergy, minDuration);
-                FlorafareEvents.SYNERGY_ACTIVATED.invoker().onSynergyActivated(player, synergy, synergyBuff);
+                logSynergyActivation(synergy, window.remaining());
+                queueEvent(() -> FlorafareEvents.SYNERGY_ACTIVATED.invoker()
+                        .onSynergyActivated(player, synergy, synergyBuff));
 
                 if (discoveredSynergies.add(synergy.id())) {
                     markDiscoveryPending();
@@ -887,6 +1157,51 @@ public class PlayerFoodComponent {
         }
         if (changed) markDirty();
         return changed;
+    }
+
+    /** Whether a buff satisfies at least one of a synergy's requirements. */
+    private static boolean feedsSynergy(ActiveFoodBuff buff, FoodSynergyData synergy) {
+        for (String req : synergy.requirements()) {
+            if (satisfiesRequirement(buff, req)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * How far a running synergy's duration may drift from its target before it is
+     * re-synced. Also the slack {@code removeSynergyEffects} has to allow for.
+     */
+    static final int SYNERGY_DRIFT_TOLERANCE = 10;
+
+    /**
+     * What a synergy that is already running should become, or null to leave it alone.
+     *
+     * <p>Only a requirement buff that was just gained or refreshed ({@code fed}) may move
+     * a synergy to a <em>later</em> end — restarting a capped one at its full cap, or
+     * following an uncapped one's ingredient forward. Any other re-evaluation (an
+     * unrelated bite, some other buff running out) can only bring it forward, to the end
+     * of its shortest ingredient. That second rule is the fix: those re-evaluations used
+     * to re-sync every running synergy to its full window, which reset a capped synergy to
+     * its whole cap on every bite of anything.
+     *
+     * <p>Package-private and static so the rule can be driven from a unit test.
+     */
+    static SynergyWindow refreshWindow(int remaining, int initial, SynergyWindow window,
+                                       boolean fed) {
+        int targetRemaining;
+        int targetInitial;
+        if (fed) {
+            targetRemaining = window.remaining();
+            targetInitial   = window.initial();
+        } else if (window.remaining() < remaining) {
+            targetRemaining = window.remaining();
+            // Brought forward, not restarted: the bar keeps counting from its own start.
+            targetInitial   = Math.max(initial, targetRemaining);
+        } else {
+            return null;
+        }
+        if (Math.abs(remaining - targetRemaining) <= SYNERGY_DRIFT_TOLERANCE) return null;
+        return new SynergyWindow(targetRemaining, targetInitial);
     }
 
     /**
@@ -927,6 +1242,10 @@ public class PlayerFoodComponent {
      *
      * <p>Zero or negative means "no ceiling", which is also what an older sync payload
      * (where the field was absent) decodes to.
+     *
+     * <p>This is the window a synergy is <em>entitled</em> to. Whether a running one is
+     * actually moved to it is {@link #refreshWindow}'s call, which only lets a bite that
+     * feeds the synergy push its end later.
      *
      * <p>Package-private and static so the rule can be driven from a unit test; it needs
      * no player and no world.
@@ -990,34 +1309,49 @@ public class PlayerFoodComponent {
      * away. The slot count the player sees is then the slot count the server is enforcing.
      */
     public void tick() {
-        boolean isServer       = !player.getWorld().isClient;
-        boolean buffsChanged   = false;
+        boolean isServer = !player.getWorld().isClient;
 
+        // Expired entries are taken out of the list inside the loop and ended after it,
+        // so the listener events that ending queues never run mid-iteration.
+        List<ActiveFoodBuff> expired = null;
         for (int i = activeBuffs.size() - 1; i >= 0; i--) {
             ActiveFoodBuff buff = activeBuffs.get(i);
             buff.tick();
             if (buff.isExpired() && isServer) {
-                removeBuffAttributes(buff);
-                buffsChanged = true;
-                markDirty();
                 activeBuffs.remove(i);
+                if (expired == null) expired = new ArrayList<>();
+                expired.add(buff);
             }
         }
 
-        if (isServer && buffsChanged) {
-            updateSynergies();
+        if (expired != null) {
+            for (ActiveFoodBuff buff : expired) endBuff(buff);
+            markDirty();
+            updateSynergies(null);
         }
 
+        List<ActiveFoodBuff> ranOut = null;
         for (int i = activeSynergies.size() - 1; i >= 0; i--) {
             ActiveFoodBuff synergyBuff = activeSynergies.get(i);
             synergyBuff.tick();
             if (synergyBuff.isExpired() && isServer) {
-                removeBuffAttributes(synergyBuff);
-                activeSynergyMap.remove(synergyBuff.getTarget()); // #11
-                markDirty();
                 activeSynergies.remove(i);
+                activeSynergyMap.remove(synergyBuff.getTarget()); // #11
+                // Its requirements are still met (a lapsed requirement would have ended it
+                // in updateSynergies above), so it ran its own window out: it stays off
+                // until one of its ingredients is eaten again.
+                spentSynergies.add(synergyBuff.getTarget());
+                if (ranOut == null) ranOut = new ArrayList<>();
+                ranOut.add(synergyBuff);
             }
         }
+
+        if (ranOut != null) {
+            for (ActiveFoodBuff synergyBuff : ranOut) endBuff(synergyBuff);
+            markDirty();
+        }
+
+        fireQueuedEvents();
 
         // One flush per tick, at the end, covering everything that changed during it.
         flushIfDirty();
@@ -1027,13 +1361,27 @@ public class PlayerFoodComponent {
     // ATTRIBUTE REMOVAL
     // -------------------------------------------------------------------------
 
-    private void removeBuffAttributes(ActiveFoodBuff buff) {
+    /**
+     * Takes the modifiers recorded on a buff off the player. No health clamp: the callers
+     * that end a buff clamp afterwards, and the refresh path must not clamp in between
+     * taking a max-health bonus off and putting it back.
+     */
+    private void removeRecordedModifiers(ActiveFoodBuff buff) {
         buff.getAppliedModifiers().forEach((modId, modifier) -> {
             Registries.ATTRIBUTE.getEntry(modifier.attributeId()).ifPresent(entry -> {
                 EntityAttributeInstance instance = player.getAttributeInstance(entry);
                 if (instance != null) instance.removeModifier(modId);
             });
         });
+    }
+
+    /**
+     * Ends a buff or synergy that has already been taken out of its list: strips what it
+     * applied and queues the matching listener event. The records stay on the entry, so a
+     * {@code BUFF_REMOVED} listener can still see what the buff had been granting.
+     */
+    private void endBuff(ActiveFoodBuff buff) {
+        removeRecordedModifiers(buff);
 
         if (player.getHealth() > player.getMaxHealth()) {
             player.setHealth(player.getMaxHealth());
@@ -1050,14 +1398,12 @@ public class PlayerFoodComponent {
         }
 
         // Single choke point for every removal path (expiry, Forgotten Mead, /florafare
-        // clear, requirement-no-longer-met), so listeners see a consistent signal
-        // regardless of why the buff/synergy ended.
-        if (!player.getWorld().isClient()) {
-            if (buff.isSynergy()) {
-                FlorafareEvents.SYNERGY_ENDED.invoker().onSynergyEnded(player, buff);
-            } else {
-                FlorafareEvents.BUFF_REMOVED.invoker().onBuffRemoved(player, buff);
-            }
+        // clear, death, requirement-no-longer-met), so listeners see a consistent signal
+        // regardless of why the buff/synergy ended. Queued, not fired: see pendingEvents.
+        if (buff.isSynergy()) {
+            queueEvent(() -> FlorafareEvents.SYNERGY_ENDED.invoker().onSynergyEnded(player, buff));
+        } else {
+            queueEvent(() -> FlorafareEvents.BUFF_REMOVED.invoker().onBuffRemoved(player, buff));
         }
     }
 
@@ -1077,9 +1423,10 @@ public class PlayerFoodComponent {
      * longer-lived is left to its real owner.
      */
     private void removeSynergyEffects(ActiveFoodBuff buff, FoodSynergyData synergy) {
-        // The refresh in updateSynergies() tolerates up to 10 ticks of drift before it
-        // re-applies, so our own instance can legitimately read slightly longer than the
-        // buff. A second of slack covers that without reaching a beacon's minutes.
+        // The refresh in updateSynergies() tolerates SYNERGY_DRIFT_TOLERANCE ticks of
+        // drift before it re-applies, so our own instance can legitimately read slightly
+        // longer than the buff. A second of slack covers that without reaching a beacon's
+        // minutes.
         final int slack = 20;
 
         for (FoodBuffData.EffectData eff : synergy.effects()) {
@@ -1191,6 +1538,12 @@ public class PlayerFoodComponent {
         nbt.put(NBT_DISCOVERED_SYNERGIES_KEY, discoveredSyn);
 
         nbt.putBoolean(NBT_JOURNAL_KEY, hasReceivedJournal);
+
+        // Saved so a relog does not hand every spent synergy a free restart. Server
+        // bookkeeping only; the client reads it back along with the rest and ignores it.
+        NbtList spent = new NbtList();
+        for (String synId : spentSynergies) spent.add(NbtString.of(synId));
+        nbt.put(NBT_SPENT_SYNERGIES_KEY, spent);
         return nbt;
     }
 
@@ -1231,6 +1584,12 @@ public class PlayerFoodComponent {
         if (nbt.contains(NBT_DISCOVERED_SYNERGIES_KEY, NbtElement.LIST_TYPE)) {
             NbtList list = nbt.getList(NBT_DISCOVERED_SYNERGIES_KEY, NbtElement.STRING_TYPE);
             for (int i = 0; i < list.size(); i++) discoveredSynergies.add(list.getString(i));
+        }
+
+        spentSynergies.clear();
+        if (nbt.contains(NBT_SPENT_SYNERGIES_KEY, NbtElement.LIST_TYPE)) {
+            NbtList list = nbt.getList(NBT_SPENT_SYNERGIES_KEY, NbtElement.STRING_TYPE);
+            for (int i = 0; i < list.size(); i++) spentSynergies.add(list.getString(i));
         }
 
         hasReceivedJournal = nbt.getBoolean(NBT_JOURNAL_KEY);
@@ -1275,6 +1634,9 @@ public class PlayerFoodComponent {
             this.activeSynergies.add(b);
             this.activeSynergyMap.put(b.getTarget(), b); // #11
         }
+
+        this.spentSynergies.clear();
+        this.spentSynergies.addAll(old.spentSynergies);
 
         this.hasReceivedJournal = old.hasReceivedJournal;
         this.dirty = false;

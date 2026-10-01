@@ -193,6 +193,20 @@ public class Florafare implements ModInitializer {
         });
 
         // 8. Player state events
+        //
+        // Dying ends every buff and synergy, and ends them properly: through the same
+        // clear as /florafare clear, so their modifiers come off and BUFF_REMOVED /
+        // SYNERGY_ENDED reach listeners. They used to be dropped by simply not being
+        // copied to the respawned entity, which no listener ever heard about — an addon
+        // tracking active buffs kept one alive forever after its owner died.
+        net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents.AFTER_DEATH
+                .register((entity, damageSource) -> {
+                    if (entity instanceof ServerPlayerEntity player) {
+                        ((IFoodComponentProvider) player).florafare$getFoodComponent()
+                                .clearAllBuffs();
+                    }
+                });
+
         ServerPlayerEvents.COPY_FROM.register((oldPlayer, newPlayer, alive) -> {
             PlayerFoodComponent oldComp =
                     ((IFoodComponentProvider) oldPlayer).florafare$getFoodComponent();
@@ -216,7 +230,10 @@ public class Florafare implements ModInitializer {
                 }
             } else {
                 // Journal progress and synergy discoveries persist through death; the
-                // active buffs deliberately do not.
+                // active buffs deliberately do not. AFTER_DEATH has normally ended them
+                // already; this catches a death that bypassed it, so their events still
+                // fire (and is a no-op otherwise).
+                oldComp.clearAllBuffs();
                 newComp.copyProgressFrom(oldComp);
             }
         });

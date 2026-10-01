@@ -55,12 +55,18 @@ public final class FlorafareAPI {
      *
      * <p>Server-side only; a call on the client is a no-op. Can fail for two reasons that
      * are not errors: every buff slot is taken, or a listener on
-     * {@link FlorafareEvents#BUFF_APPLYING} vetoed it.
+     * {@link FlorafareEvents#BUFF_APPLYING} vetoed it. Applies no hunger — that belongs to
+     * eating — and is safe to call from a Florafare event listener, including in the
+     * middle of a player's bite.
+     *
+     * <p>A hunger-only config ({@code duration <= 0}) grants no buff by design; its
+     * status effects are applied and the call reports success.
      *
      * @param player The player receiving the buff.
      * @param stack  The consumed item, used for the buff's identity and HUD icon.
      * @param data   The buff configuration data; null is accepted and does nothing.
-     * @return true if the buff is now active on the player
+     * @return true if the buff is now active on the player, or a hunger-only config's
+     *         effects were applied
      */
     public static boolean applyBuffToPlayer(@NotNull PlayerEntity player, @NotNull ItemStack stack,
                                             @Nullable FoodBuffData data) {

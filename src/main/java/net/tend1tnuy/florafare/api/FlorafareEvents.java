@@ -54,8 +54,13 @@ public final class FlorafareEvents {
      *
      * <p>This is the one respect in which a veto differs from Florafare simply having no
      * free buff slot. Slots being full is not a veto: the food is still Florafare's to
-     * manage, so its datapack nutrition still applies and its vanilla effects stay
-     * suppressed — the player just cannot carry another buff.
+     * manage, so its datapack nutrition still applies, its vanilla effects stay
+     * suppressed and the entry's own {@code effects} are granted in their place — the
+     * player just cannot carry another buff, so its attributes do not apply.
+     *
+     * <p>Also asked for a hunger-only entry ({@code duration <= 0}), which grants no buff
+     * but does take the bite over; vetoing it hands the bite back to vanilla the same way.
+     * No other buff event fires for such an entry.
      *
      * <p>Listeners run in registration order and the first veto wins; later listeners are
      * not consulted. Treat it as a filter, not as a notification — use
@@ -83,7 +88,13 @@ public final class FlorafareEvents {
             }
     );
 
-    /** Fired after an active buff is removed from a player (expiry, Forgotten Mead, or a clear command). */
+    /**
+     * Fired after an active buff is removed from a player (expiry, Forgotten Mead, a clear
+     * command, or death).
+     *
+     * <p>Fired once the removal is complete, never from inside it, so a listener may call
+     * back into {@link FlorafareAPI} — remove another buff, clear the lot — safely.
+     */
     public static final Event<BuffRemoved> BUFF_REMOVED = EventFactory.createArrayBacked(
             BuffRemoved.class,
             listeners -> (player, buff) -> {

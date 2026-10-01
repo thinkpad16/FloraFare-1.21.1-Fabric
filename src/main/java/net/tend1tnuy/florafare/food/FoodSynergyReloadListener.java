@@ -173,10 +173,22 @@ public class FoodSynergyReloadListener extends JsonDataLoader implements Identif
                                     + "exist! Attribute skipped.", fileId, id, rawId);
                     continue;
                 }
+                // Same parser, and the same rule, as a food buff's attribute lines: legacy
+                // names are understood, an unknown one costs this line and says so.
+                String rawOperation = JsonFields.getString(attrObj, "operation", "add_value");
+                String operation    = AttributeOperations.canonicalize(rawOperation);
+                if (operation == null) {
+                    Florafare.LOGGER.error(
+                            "Error in file {}: synergy '{}' gives attribute '{}' the unknown "
+                                    + "operation '{}' (expected one of {}). Attribute skipped.",
+                            fileId, id, rawId, rawOperation,
+                            String.join(", ", AttributeOperations.CANONICAL_NAMES));
+                    continue;
+                }
                 attributes.add(new FoodBuffData.AttributeData(
                         attrId,
                         JsonFields.getDouble(attrObj, "amount", 0.0),
-                        JsonFields.getString(attrObj, "operation", "add_value")
+                        operation
                 ));
             }
         }
