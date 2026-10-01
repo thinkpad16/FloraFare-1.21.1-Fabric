@@ -232,4 +232,64 @@ class ConfigPersistenceTest {
         assertEquals(0.5, FlorafareConfig.clampAutoGenHealth(Double.NaN));
         assertEquals(FlorafareConfig.MAX_AUTO_GEN_HEALTH_MULT, FlorafareConfig.clampAutoGenHealth(1e9));
     }
+
+    @Test
+    @DisplayName("the write permission level and setbuff retention survive a restart, clamped")
+    void writeLevelAndRetention() throws Exception {
+        FlorafareConfig.writeCommandPermissionLevel = 4;
+        FlorafareConfig.runtimeBuffRetentionDays = 30;
+        FlorafareConfig.save();
+        FlorafareConfig.writeCommandPermissionLevel = 3;
+        FlorafareConfig.runtimeBuffRetentionDays = 180;
+        restart();
+        assertEquals(4, FlorafareConfig.writeCommandPermissionLevel);
+        assertEquals(30, FlorafareConfig.runtimeBuffRetentionDays);
+
+        Files.writeString(configDir.resolve("florafare.json"),
+                "{ \"writeCommandPermissionLevel\": 9, \"runtimeBuffRetentionDays\": -3 }");
+        restart();
+        assertEquals(4, FlorafareConfig.writeCommandPermissionLevel, "clamped into 0-4");
+        assertEquals(0, FlorafareConfig.runtimeBuffRetentionDays, "negative means keep forever");
+
+        // A /reload re-reads it, like commandPermissionLevel.
+        Files.writeString(configDir.resolve("florafare.json"), "{ \"writeCommandPermissionLevel\": 2 }");
+        assertTrue(FlorafareConfig.reloadServerSettings());
+        assertEquals(2, FlorafareConfig.writeCommandPermissionLevel);
+
+        FlorafareConfig.writeCommandPermissionLevel = 3;
+        FlorafareConfig.runtimeBuffRetentionDays = 180;
+    }
+
+    @Test
+    @DisplayName("saves racing an exclusion edit on two threads leave one whole file and no temp files")
+    void concurrentSaves() throws Exception {
+        FlorafareConfig.ignoredFoodItems = new ArrayList<>();
+        int rounds = 200;
+        Thread hud = new Thread(() -> {
+            for (int i = 0; i < rounds; i++) FlorafareConfig.save();
+        });
+        Thread server = new Thread(() -> {
+            for (int i = 0; i < rounds; i++) {
+                int n = i;
+                FlorafareConfig.editExclusionLists(() -> FlorafareConfig.ignoredFoodItems.add("mod:item_" + n));
+                FlorafareConfig.save();
+            }
+        });
+        List<Throwable> failures = java.util.Collections.synchronizedList(new ArrayList<>());
+        hud.setUncaughtExceptionHandler((t, e) -> failures.add(e));
+        server.setUncaughtExceptionHandler((t, e) -> failures.add(e));
+        hud.start();
+        server.start();
+        hud.join();
+        server.join();
+
+        assertTrue(failures.isEmpty(), "no save may fail mid-edit: " + failures);
+        try (var files = Files.list(configDir)) {
+            assertTrue(files.noneMatch(path -> path.getFileName().toString().endsWith(".tmp")),
+                    "every temp file is moved or deleted");
+        }
+        restart();
+        assertEquals(rounds, FlorafareConfig.ignoredFoodItems.size(), "the last save holds every edit");
+        FlorafareConfig.ignoredFoodItems = new ArrayList<>();
+    }
 }

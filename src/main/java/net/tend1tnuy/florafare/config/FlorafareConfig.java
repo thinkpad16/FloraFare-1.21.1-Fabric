@@ -98,9 +98,74 @@ public class FlorafareConfig {
      */
     public static volatile boolean notifyOnFullBuffSlots = true;
 
-    // --- Server-only settings (not synced). commandPermissionLevel is read each time a
-    //     command checks its permission, so a /reload that re-reads it applies at once. ---
-    public static int commandPermissionLevel = 2;
+    // --- Server-only settings (not synced). Both permission levels are read each time a
+    //     command checks its permission, so a /reload that re-reads them applies at once
+    //     (vanilla re-sends every player's command tree at the end of a reload). ---
+
+    /**
+     * Permission level for the read-only {@code /florafare} subcommands — {@code help},
+     * {@code buffs}, {@code explain}, {@code validate}, {@code journal}, {@code buff},
+     * {@code clear}, and the listing halves of {@code edit} and {@code ignore}.
+     */
+    public static volatile int commandPermissionLevel = 2;
+
+    /**
+     * Permission level for the subcommands that change what the server does for everyone
+     * or write files: {@code setbuff}, {@code edit} (changes), {@code ignore add|remove},
+     * {@code repair}, {@code dumpfoods} and {@code validate file}.
+     *
+     * <p>A separate setting because the two used to be one, and the one gate was in fact
+     * whichever of two separately registered {@code /florafare} roots Brigadier happened to
+     * keep — level 2 for everything, which put "rewrite the server's config file" and
+     * "write megabytes into the game directory" in reach of every command block. Default
+     * 3, vanilla's level for server-management commands such as {@code /ban}.
+     */
+    public static volatile int writeCommandPermissionLevel = 3;
+
+    /**
+     * How many days a {@code /florafare setbuff} stack buff is kept after the last time
+     * the server saw a stack carrying it; 0 keeps them forever.
+     *
+     * <p>Nothing can tell when the last stack carrying one of those ids is gone — eaten,
+     * burnt, despawned — so without an age limit {@code florafare_runtime.dat} only ever
+     * grows. "Seen" means resolved on the server (eaten, used, hovered by a player whose
+     * client asked) or found in a player's inventory or ender chest when they join. A
+     * stack sitting untouched in a chest for longer than this loses its buff and becomes
+     * ordinary food, which is why the default is generous.
+     */
+    public static volatile int runtimeBuffRetentionDays = 180;
+
+    /** Upper bound for {@link #runtimeBuffRetentionDays}: a hundred years is "forever" enough. */
+    public static final int MAX_RUNTIME_RETENTION_DAYS = 36_500;
+
+    // -------------------------------------------------------------------------
+    // CONCURRENCY
+    //
+    // In single-player two threads write this file: the integrated server's (a
+    // /florafare ignore edits the exclusion lists and saves) and the render thread's (the
+    // HUD placement screen and ModMenu save). They used to share one fixed temp file name
+    // and read and wrote the same ArrayLists with no coordination, so a save could
+    // serialize a list mid-edit (a ConcurrentModificationException, or a list missing the
+    // entry just added), and two saves at once wrote into the same florafare.json.tmp and
+    // moved a mix of both over the config.
+    //
+    // Now every save and every edit of the three lists happens under LOCK, save() writes
+    // a snapshot taken under it, and each save gets a temp file of its own.
+    // -------------------------------------------------------------------------
+
+    /** Guards {@link #save()}, the file read in {@link #reloadServerSettings()} and every edit of the exclusion lists. */
+    private static final Object LOCK = new Object();
+
+    /**
+     * Runs an edit of the exclusion lists ({@link #ignoredFoodItems}, {@link
+     * #ignoredFoodMods}, {@link #managedFoodItems}) so that no {@link #save()} on another
+     * thread can serialize them half-way through it.
+     */
+    public static void editExclusionLists(Runnable edit) {
+        synchronized (LOCK) {
+            edit.run();
+        }
+    }
 
     // -------------------------------------------------------------------------
     // SERVER OVERRIDE
@@ -341,6 +406,8 @@ public class FlorafareConfig {
                     grantJournalOnFirstJoin = data.grantJournalOnFirstJoin;
                     notifyOnFullBuffSlots = data.notifyOnFullBuffSlots;
                     commandPermissionLevel = data.commandPermissionLevel;
+                    writeCommandPermissionLevel = data.writeCommandPermissionLevel;
+                    runtimeBuffRetentionDays = data.runtimeBuffRetentionDays;
                     if (data.ignoredFoodItems != null) ignoredFoodItems = data.ignoredFoodItems;
                     if (data.ignoredFoodMods  != null) ignoredFoodMods  = data.ignoredFoodMods;
                     if (data.managedFoodItems != null) managedFoodItems = data.managedFoodItems;
@@ -419,6 +486,18 @@ public class FlorafareConfig {
         }
         if (data == null) return false;
 
+        synchronized (LOCK) {
+            applyReloaded(data);
+        }
+        Florafare.LOGGER.info("Re-read server settings from florafare.json (maxBuffSlots={}, "
+                        + "commandPermissionLevel={}, writeCommandPermissionLevel={}, {} exclusion rule(s)).",
+                maxBuffSlots, commandPermissionLevel, writeCommandPermissionLevel,
+                ignoredFoodItems.size() + ignoredFoodMods.size());
+        return true;
+    }
+
+    /** The field assignments of {@link #reloadServerSettings()}, made under {@link #LOCK}. */
+    private static void applyReloaded(ConfigData data) {
         if (data.consumptionLogging != null) consumptionLogging = data.consumptionLogging;
         setLocalEnableSynergies(data.enableSynergies);
         setLocalMaxBuffSlots(data.maxBuffSlots);
@@ -431,17 +510,14 @@ public class FlorafareConfig {
         grantJournalOnFirstJoin = data.grantJournalOnFirstJoin;
         notifyOnFullBuffSlots   = data.notifyOnFullBuffSlots;
         commandPermissionLevel  = data.commandPermissionLevel;
+        writeCommandPermissionLevel = data.writeCommandPermissionLevel;
+        runtimeBuffRetentionDays = data.runtimeBuffRetentionDays;
         ignoredFoodItems = data.ignoredFoodItems != null ? data.ignoredFoodItems : new java.util.ArrayList<>();
         ignoredFoodMods  = data.ignoredFoodMods  != null ? data.ignoredFoodMods  : new java.util.ArrayList<>();
         managedFoodItems = data.managedFoodItems != null ? data.managedFoodItems : new java.util.ArrayList<>();
 
         clampToValidRanges();
         applyExclusions();
-        Florafare.LOGGER.info("Re-read server settings from florafare.json (maxBuffSlots={}, "
-                        + "commandPermissionLevel={}, {} exclusion rule(s)).",
-                maxBuffSlots, commandPermissionLevel,
-                ignoredFoodItems.size() + ignoredFoodMods.size());
-        return true;
     }
 
     /**
@@ -488,6 +564,9 @@ public class FlorafareConfig {
             autoGenDurationMultiplier = durationMult;
         }
         commandPermissionLevel    = clamp(commandPermissionLevel, 0, 4, "commandPermissionLevel");
+        writeCommandPermissionLevel = clamp(writeCommandPermissionLevel, 0, 4, "writeCommandPermissionLevel");
+        runtimeBuffRetentionDays  = clamp(runtimeBuffRetentionDays, 0, MAX_RUNTIME_RETENTION_DAYS,
+                "runtimeBuffRetentionDays");
         toastDisplayTimeMs        = clamp(toastDisplayTimeMs, MIN_TOAST_MS, MAX_TOAST_MS, "toastDisplayTimeMs");
 
         double healthMult = clampAutoGenHealth(autoGenHealthMultiplier);
@@ -567,10 +646,25 @@ public class FlorafareConfig {
      * is only ever the previous version or the complete new one.
      */
     public static void save() {
-        File file = configFile();
-        File temp = new File(file.getParentFile(), file.getName() + ".tmp");
+        // Held for the whole write, not just the snapshot: two saves racing would
+        // otherwise each move their own temp file over the config, and whichever moved
+        // last — not whichever snapshot is newer — would win.
+        synchronized (LOCK) {
+            saveLocked();
+        }
+    }
 
-        try (FileWriter writer = new FileWriter(temp)) {
+    private static void saveLocked() {
+        File file = configFile();
+        // A name of its own per save. The fixed "florafare.json.tmp" was shared by every
+        // writer, including a second game instance pointed at the same config directory,
+        // which is not something LOCK can see. Not Files.createTempFile: that creates the
+        // file owner-only on POSIX, and the move below would carry those permissions over
+        // to florafare.json, locking out a server panel running as another user.
+        File temp = new File(file.getParentFile(),
+                file.getName() + "." + java.util.UUID.randomUUID() + ".tmp");
+
+        try (FileWriter writer = new FileWriter(temp, java.nio.charset.StandardCharsets.UTF_8)) {
             ConfigData data = new ConfigData();
             // Through the local accessors, never the live fields: while a server is
             // connected the live ones hold ITS values, and writing those here is what
@@ -587,9 +681,13 @@ public class FlorafareConfig {
             data.grantJournalOnFirstJoin = grantJournalOnFirstJoin;
             data.notifyOnFullBuffSlots = notifyOnFullBuffSlots;
             data.commandPermissionLevel = commandPermissionLevel;
-            data.ignoredFoodItems = ignoredFoodItems;
-            data.ignoredFoodMods = ignoredFoodMods;
-            data.managedFoodItems = managedFoodItems;
+            data.writeCommandPermissionLevel = writeCommandPermissionLevel;
+            data.runtimeBuffRetentionDays = runtimeBuffRetentionDays;
+            // Copies, so what is serialized is one consistent snapshot even if a caller
+            // that skipped editExclusionLists() is changing a list right now.
+            data.ignoredFoodItems = new java.util.ArrayList<>(ignoredFoodItems);
+            data.ignoredFoodMods = new java.util.ArrayList<>(ignoredFoodMods);
+            data.managedFoodItems = new java.util.ArrayList<>(managedFoodItems);
             data.enableHud = enableHud;
             data.enableDiscoveryToasts = enableDiscoveryToasts;
             data.toastDisplayTimeMs = toastDisplayTimeMs;
@@ -656,6 +754,8 @@ public class FlorafareConfig {
         public boolean grantJournalOnFirstJoin = true;
         public boolean notifyOnFullBuffSlots = true;
         public int commandPermissionLevel = 2;
+        public int writeCommandPermissionLevel = 3;
+        public int runtimeBuffRetentionDays = 180;
         public java.util.List<String> ignoredFoodItems = new java.util.ArrayList<>();
         public java.util.List<String> ignoredFoodMods = new java.util.ArrayList<>();
         public java.util.List<String> managedFoodItems = new java.util.ArrayList<>();
