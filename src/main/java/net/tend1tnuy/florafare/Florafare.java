@@ -163,6 +163,7 @@ public class Florafare implements ModInitializer {
         PayloadTypeRegistry.playS2C().register(FoodSynergySyncPayload.ID, FoodSynergySyncPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(FlorafareServerConfigSyncPayload.ID, FlorafareServerConfigSyncPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(FoodExclusionSyncPayload.ID, FoodExclusionSyncPayload.CODEC);
+        PayloadTypeRegistry.playS2C().register(RuntimeStackSyncPayload.ID, RuntimeStackSyncPayload.CODEC);
 
         // 5b. The one C2S payload: a client asking for its own state back.
         //
@@ -272,6 +273,12 @@ public class Florafare implements ModInitializer {
                     ((IFoodComponentProvider) handler.player).florafare$getFoodComponent();
 
             // The journal grant is server-side only and must not wait on the client.
+            // Every setbuff stack this player is carrying counts as seen, so a prize stack
+            // kept in an inventory is not pruned for never having been eaten or hovered.
+            FoodBuffManager.touchRuntimeStacks(handler.player.getInventory().main);
+            FoodBuffManager.touchRuntimeStacks(handler.player.getInventory().offHand);
+            FoodBuffManager.touchRuntimeStacks(handler.player.getEnderChestInventory().getHeldStacks());
+
             if (!comp.hasReceivedJournal()
                     && net.tend1tnuy.florafare.config.FlorafareConfig.grantJournalOnFirstJoin) {
                 ItemStack journal = new ItemStack(ItemRegistry.FOOD_JOURNAL);
@@ -406,6 +413,7 @@ public class Florafare implements ModInitializer {
 
         ((IFoodComponentProvider) player).florafare$getFoodComponent().sync();
         sendDatapackSync(player);
+        sendRuntimeStackSync(player);
         sendTo(player, buildServerConfigSyncPayload());
         sendTo(player, buildExclusionSyncPayload());
         return true;
@@ -787,6 +795,42 @@ public class Florafare implements ModInitializer {
         invalidateSyncPayloads();
         for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
             sendDatapackSync(player);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // SETBUFF STACK BUFFS
+    //
+    // Not memoized like the datapack maps: every /florafare setbuff changes the map, and
+    // the full form is only sent on join and after a prune. A new stamp travels on its
+    // own as one small partial packet.
+    // -------------------------------------------------------------------------
+
+    /** The full map to one player, as a chunk sequence like the datapack sync. */
+    private static void sendRuntimeStackSync(ServerPlayerEntity player) {
+        List<NbtCompound> chunks =
+                chunk(FoodBuffManager.serializeRuntimeConfigs(), "setbuff", new ArrayList<>());
+        for (int i = 0; i < chunks.size(); i++) {
+            sendTo(player, new RuntimeStackSyncPayload(chunks.get(i), i, chunks.size(), true));
+        }
+    }
+
+    /** Tells everyone online about one stack buff just created by {@code /florafare setbuff}. */
+    public static void syncRuntimeStackConfig(MinecraftServer server, String uuid, FoodBuffData data) {
+        if (server == null) return;
+        NbtCompound entries = new NbtCompound();
+        entries.put(uuid, data.toNbt());
+        RuntimeStackSyncPayload payload = RuntimeStackSyncPayload.partial(entries);
+        for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
+            sendTo(player, payload);
+        }
+    }
+
+    /** Re-sends the whole stack buff map to everyone online, after entries were removed. */
+    public static void resyncRuntimeStackConfigs(MinecraftServer server) {
+        if (server == null) return;
+        for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
+            sendRuntimeStackSync(player);
         }
     }
 

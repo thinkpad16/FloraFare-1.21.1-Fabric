@@ -30,6 +30,7 @@ import net.tend1tnuy.florafare.network.FlorafareServerConfigSyncPayload;
 import net.tend1tnuy.florafare.network.FoodConfigEntrySyncPayload;
 import net.tend1tnuy.florafare.network.FoodBuffSyncPayload;
 import net.tend1tnuy.florafare.network.FoodConfigSyncPayload;
+import net.tend1tnuy.florafare.network.RuntimeStackSyncPayload;
 import net.tend1tnuy.florafare.network.FoodExclusionSyncPayload;
 import net.tend1tnuy.florafare.network.FoodSynergySyncPayload;
 import net.tend1tnuy.florafare.network.FoodUnlockedPayload;
@@ -47,6 +48,7 @@ public class FlorafareClient implements ClientModInitializer {
     /** Reassembly buffers for the two chunked datapack syncs; client-side, one connection at a time. */
     private final ChunkedNbtSync configSync  = new ChunkedNbtSync("food_buffs");
     private final ChunkedNbtSync synergySync = new ChunkedNbtSync("food_synergies");
+    private final ChunkedNbtSync runtimeStackSync = new ChunkedNbtSync("setbuff");
 
     // -------------------------------------------------------------------------
     // THE PLAYER-ENTITY WATCHDOG
@@ -117,6 +119,9 @@ public class FlorafareClient implements ClientModInitializer {
             lastSeenPlayer  = null;
             resyncCountdown = -1;
             resyncAttempts  = 0;
+            // A remote server's /florafare setbuff stacks mean nothing in the next world.
+            // Our own world's map is the integrated server's, which saves it on stop.
+            if (client.getServer() == null) FoodBuffManager.clearRemoteRuntimeConfigs();
         });
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
@@ -200,6 +205,22 @@ public class FlorafareClient implements ClientModInitializer {
                     }
                     FoodJournalScreen.invalidateCache();
                     EmiReloadBridge.requestReload();
+                }));
+
+        // The /florafare setbuff stack buffs: the whole map in chunks on join (and after a
+        // prune), single new stamps merged in as they are made. Without them a stamped
+        // stack's tooltip and hunger prediction showed the item's ordinary buff.
+        ClientPlayNetworking.registerGlobalReceiver(RuntimeStackSyncPayload.ID, (payload, context) ->
+                context.client().execute(() -> {
+                    // Our own integrated server already holds this very map.
+                    if (context.client().getServer() != null) return;
+                    if (!payload.full()) {
+                        FoodBuffManager.applyRuntimeConfigsFromNbt(payload.nbt(), false);
+                        return;
+                    }
+                    NbtCompound complete =
+                            runtimeStackSync.accept(payload.nbt(), payload.index(), payload.total());
+                    if (complete != null) FoodBuffManager.applyRuntimeConfigsFromNbt(complete, true);
                 }));
 
         ClientPlayNetworking.registerGlobalReceiver(FoodSynergySyncPayload.ID, (payload, context) ->

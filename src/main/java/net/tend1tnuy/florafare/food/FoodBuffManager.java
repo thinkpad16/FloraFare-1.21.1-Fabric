@@ -54,7 +54,8 @@ public class FoodBuffManager {
      * into lava, or lost with a chunk, and scanning every inventory in the world to find
      * out is not worth it. So the map keeps the {@value #MAX_RUNTIME_CONFIGS} most
      * recently created and discards older ones, instead of growing without limit for the
-     * lifetime of the world.
+     * lifetime of the world — and, below that cap, drops the ones no stack has been seen
+     * carrying for {@code runtimeBuffRetentionDays} (see {@link #RUNTIME_LAST_SEEN}).
      */
     private static final Map<String, FoodBuffData> RUNTIME_STACK_CONFIGS =
             Collections.synchronizedMap(new LinkedHashMap<>(16, 0.75f, false) {
@@ -96,6 +97,33 @@ public class FoodBuffManager {
 
     private static final String RUNTIME_FILE_NAME = "florafare_runtime.dat";
     private static final String BUFF_ID_KEY       = "FlorafareBuffId";
+
+    // -------------------------------------------------------------------------
+    // RUNTIME STACK BUFFS: LAST SEEN
+    //
+    // The 4096-entry cap above bounds the file, but only by throwing away the oldest
+    // *created* entries — a buff an operator stamped on a prize stack a year ago went
+    // before one stamped on a test apple yesterday and eaten an hour later. And below the
+    // cap nothing was ever removed, so on most servers the file simply grew for the life
+    // of the world. Each entry now carries the last time the server saw a stack carrying
+    // it, and entries unseen for runtimeBuffRetentionDays are pruned when the world loads.
+    // -------------------------------------------------------------------------
+
+    /** Epoch millis each runtime id was last seen at; see {@link #touchRuntime}. */
+    private static final Map<String, Long> RUNTIME_LAST_SEEN = new ConcurrentHashMap<>();
+
+    /**
+     * How stale a last-seen stamp may get before a sighting refreshes it. Retention is
+     * measured in days, so an hour of slack costs nothing, and it keeps the hot path —
+     * {@link #getConfig} runs every frame a stamped stack is hovered — to one map read.
+     */
+    static final long TOUCH_INTERVAL_MILLIS = 60L * 60L * 1000L;
+
+    /** One day, for turning {@code runtimeBuffRetentionDays} into a maximum age. */
+    public static final long DAY_MILLIS = 24L * 60L * 60L * 1000L;
+
+    /** Where the stamp is kept inside each entry's compound in {@code florafare_runtime.dat}. */
+    private static final String LAST_SEEN_KEY = "FlorafareLastSeen";
 
     /**
      * Where a server keeps its command-created per-stack buffs.
@@ -413,8 +441,132 @@ public class FoodBuffManager {
      */
     public static void setRuntimeStackConfig(String uuid, FoodBuffData data) {
         RUNTIME_STACK_CONFIGS.put(uuid, data);
+        RUNTIME_LAST_SEEN.put(uuid, System.currentTimeMillis());
+        // The one save per setbuff. The command used to call saveRuntimeConfigs() again
+        // right after this, so every stamp rewrote the whole file twice.
         MinecraftServer server = runtimeOwner;
         if (server != null) saveRuntimeConfigs(server);
+    }
+
+    /**
+     * Records that a stack carrying {@code uuid} was just seen, if the previous stamp is
+     * more than {@link #TOUCH_INTERVAL_MILLIS} old. Only on the side that owns the file:
+     * a remote client's copy of the map is never saved, so stamping it would be waste.
+     */
+    static void touchRuntime(String uuid, long now) {
+        if (runtimeOwner == null) return;
+        Long previous = RUNTIME_LAST_SEEN.get(uuid);
+        if (previous == null || now - previous >= TOUCH_INTERVAL_MILLIS) {
+            RUNTIME_LAST_SEEN.put(uuid, now);
+        }
+    }
+
+    /**
+     * Marks every stamped stack among these as seen. Called with a joining player's
+     * inventory and ender chest, so a prize stack that is carried around but never
+     * eaten or hovered is not pruned out from under its owner.
+     */
+    public static void touchRuntimeStacks(Iterable<ItemStack> stacks) {
+        if (RUNTIME_STACK_CONFIGS.isEmpty()) return;
+        long now = System.currentTimeMillis();
+        for (ItemStack stack : stacks) {
+            String uuid = runtimeIdOf(stack);
+            if (uuid != null && RUNTIME_STACK_CONFIGS.containsKey(uuid)) touchRuntime(uuid, now);
+        }
+    }
+
+    /** The {@code setbuff} id stamped on a stack, or null. */
+    public static String runtimeIdOf(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) return null;
+        NbtComponent customData = stack.get(DataComponentTypes.CUSTOM_DATA);
+        if (customData == null) return null;
+        NbtCompound nbt = customData.copyNbt();
+        return nbt.contains(BUFF_ID_KEY) ? nbt.getString(BUFF_ID_KEY) : null;
+    }
+
+    /**
+     * The runtime ids whose last sighting is more than {@code maxAgeMillis} before
+     * {@code now}, sorted. Nothing expires when {@code maxAgeMillis <= 0} ("keep
+     * forever"), and a stamp from the future — a clock that was moved back — never does.
+     */
+    public static List<String> expiredRuntimeIds(Map<String, Long> lastSeen, long now, long maxAgeMillis) {
+        if (maxAgeMillis <= 0) return List.of();
+        List<String> expired = new ArrayList<>();
+        for (Map.Entry<String, Long> entry : lastSeen.entrySet()) {
+            Long seen = entry.getValue();
+            if (seen != null && now - seen > maxAgeMillis) expired.add(entry.getKey());
+        }
+        Collections.sort(expired);
+        return expired;
+    }
+
+    /**
+     * Drops every runtime stack buff not seen within {@code maxAgeMillis}.
+     *
+     * @return how many were dropped; the caller saves and re-syncs if that is not 0
+     */
+    public static int pruneRuntimeConfigs(long maxAgeMillis, long now) {
+        List<String> expired;
+        synchronized (RUNTIME_STACK_CONFIGS) {
+            // Entries with no stamp at all (none should exist) count as seen now.
+            Map<String, Long> stamps = new HashMap<>();
+            for (String uuid : RUNTIME_STACK_CONFIGS.keySet()) {
+                stamps.put(uuid, RUNTIME_LAST_SEEN.getOrDefault(uuid, now));
+            }
+            expired = expiredRuntimeIds(stamps, now, maxAgeMillis);
+            for (String uuid : expired) RUNTIME_STACK_CONFIGS.remove(uuid);
+        }
+        for (String uuid : expired) RUNTIME_LAST_SEEN.remove(uuid);
+        return expired.size();
+    }
+
+    /** How many {@code setbuff} stack buffs this world holds. */
+    public static int getRuntimeConfigCount() {
+        return RUNTIME_STACK_CONFIGS.size();
+    }
+
+    // -------------------------------------------------------------------------
+    // RUNTIME STACK BUFFS: CLIENT SYNC
+    //
+    // These were never sent to clients at all. A remote client resolves a stamped stack
+    // through getConfig like any other, found no entry for its id, and fell back to the
+    // item's normal buff — so the tooltip, the journal and the client's hunger prediction
+    // all described the default buff for a stack that grants something else entirely.
+    // (Single-player never showed it: client and server share this map there.)
+    // -------------------------------------------------------------------------
+
+    /** Every runtime entry as {@code uuid -> FoodBuffData}, for the full sync on join. */
+    public static NbtCompound serializeRuntimeConfigs() {
+        NbtCompound root = new NbtCompound();
+        synchronized (RUNTIME_STACK_CONFIGS) {
+            for (Map.Entry<String, FoodBuffData> entry : RUNTIME_STACK_CONFIGS.entrySet()) {
+                root.put(entry.getKey(), entry.getValue().toNbt());
+            }
+        }
+        return root;
+    }
+
+    /**
+     * Client side: takes runtime entries from the server. {@code replace} swaps in the
+     * whole map (the join sync, a prune), otherwise the entries are merged in (one new
+     * setbuff). Never called for a client's own integrated server, which shares the map.
+     */
+    public static void applyRuntimeConfigsFromNbt(NbtCompound root, boolean replace) {
+        Map<String, FoodBuffData> incoming = new LinkedHashMap<>();
+        for (String key : root.getKeys()) {
+            incoming.put(key, FoodBuffData.fromNbt(root.getCompound(key)));
+        }
+        synchronized (RUNTIME_STACK_CONFIGS) {
+            if (replace) RUNTIME_STACK_CONFIGS.clear();
+            RUNTIME_STACK_CONFIGS.putAll(incoming);
+        }
+    }
+
+    /** Client side: forgets a remote server's runtime entries when the connection ends. */
+    public static void clearRemoteRuntimeConfigs() {
+        if (runtimeOwner != null) return;   // a world of our own: the map is the server's
+        RUNTIME_STACK_CONFIGS.clear();
+        RUNTIME_LAST_SEEN.clear();
     }
 
     /**
@@ -428,11 +580,18 @@ public class FoodBuffManager {
 
     public static void saveRuntimeConfigs(MinecraftServer server) {
         NbtCompound root = new NbtCompound();
+        long now = System.currentTimeMillis();
         // The map is synchronized, but iterating one still needs the lock held.
         synchronized (RUNTIME_STACK_CONFIGS) {
             for (Map.Entry<String, FoodBuffData> entry : RUNTIME_STACK_CONFIGS.entrySet()) {
-                root.put(entry.getKey(), entry.getValue().toNbt());
+                NbtCompound data = entry.getValue().toNbt();
+                // Beside the entry's own fields, which FoodBuffData#fromNbt ignores: an
+                // older Florafare reading this file loads the entries exactly as before.
+                data.putLong(LAST_SEEN_KEY, RUNTIME_LAST_SEEN.getOrDefault(entry.getKey(), now));
+                root.put(entry.getKey(), data);
             }
+            // Stamps for entries the size cap evicted are dropped along with them.
+            RUNTIME_LAST_SEEN.keySet().retainAll(RUNTIME_STACK_CONFIGS.keySet());
         }
         Path destination = runtimeFilePath(server);
         Path temp = destination.resolveSibling(RUNTIME_FILE_NAME + ".tmp");
@@ -467,6 +626,7 @@ public class FoodBuffManager {
         // Always starts from empty: these belong to the world being loaded, and anything
         // left in the map is the previous world's.
         RUNTIME_STACK_CONFIGS.clear();
+        RUNTIME_LAST_SEEN.clear();
         runtimeOwner = server;
 
         Path path = runtimeFilePath(server);
@@ -474,13 +634,28 @@ public class FoodBuffManager {
             migrateLegacyRuntimeConfigs(server, path);
             return;
         }
+        long now = System.currentTimeMillis();
         try {
             NbtCompound root = NbtIo.readCompressed(path, NbtSizeTracker.ofUnlimitedBytes());
             for (String key : root.getKeys()) {
-                RUNTIME_STACK_CONFIGS.put(key, FoodBuffData.fromNbt(root.getCompound(key)));
+                NbtCompound entry = root.getCompound(key);
+                RUNTIME_STACK_CONFIGS.put(key, FoodBuffData.fromNbt(entry));
+                // A file written before stamps existed starts every entry's clock now,
+                // so upgrading never prunes anything on the spot.
+                RUNTIME_LAST_SEEN.put(key, entry.contains(LAST_SEEN_KEY)
+                        ? entry.getLong(LAST_SEEN_KEY) : now);
             }
         } catch (Exception e) {
             Florafare.LOGGER.error("Failed to load Florafare runtime buffs!", e);
+            return;
+        }
+
+        int days = net.tend1tnuy.florafare.config.FlorafareConfig.runtimeBuffRetentionDays;
+        int pruned = pruneRuntimeConfigs(days * DAY_MILLIS, now);
+        if (pruned > 0) {
+            Florafare.LOGGER.info("Pruned {} /florafare setbuff stack buff(s) not seen for over {} day(s) "
+                    + "(runtimeBuffRetentionDays); {} remain.", pruned, days, RUNTIME_STACK_CONFIGS.size());
+            saveRuntimeConfigs(server);
         }
     }
 
@@ -494,8 +669,10 @@ public class FoodBuffManager {
         if (!Files.exists(legacy)) return;
         try {
             NbtCompound root = NbtIo.readCompressed(legacy, NbtSizeTracker.ofUnlimitedBytes());
+            long now = System.currentTimeMillis();
             for (String key : root.getKeys()) {
                 RUNTIME_STACK_CONFIGS.put(key, FoodBuffData.fromNbt(root.getCompound(key)));
+                RUNTIME_LAST_SEEN.put(key, now);
             }
             saveRuntimeConfigs(server);
             Florafare.LOGGER.info(
@@ -571,7 +748,10 @@ public class FoodBuffManager {
             if (nbt.contains(BUFF_ID_KEY)) {
                 String uuid = nbt.getString(BUFF_ID_KEY);
                 FoodBuffData runtime = RUNTIME_STACK_CONFIGS.get(uuid);
-                if (runtime != null) return runtime;
+                if (runtime != null) {
+                    touchRuntime(uuid, System.currentTimeMillis());
+                    return runtime;
+                }
             }
         }
 
