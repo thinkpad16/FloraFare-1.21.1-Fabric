@@ -82,6 +82,28 @@ class FoodValuesTooltipTest {
     }
 
     @Nested
+    @DisplayName("what gets icons")
+    class Eligibility {
+
+        @Test
+        @DisplayName("a food that drains hunger is spelled out, not drawn")
+        void drainIsNotDrawn() {
+            // An empty drumstick would read as "restores nothing"; the tooltip prints
+            // "Drains 2 hunger" in red instead.
+            assertFalse(FoodValuesTooltip.hasIconsFor(-2, 0f));
+            assertFalse(FoodValuesTooltip.hasIconsFor(-2, 3f));
+        }
+
+        @Test
+        @DisplayName("hunger, saturation or both get a row; neither gets none")
+        void positiveValues() {
+            assertTrue(FoodValuesTooltip.hasIconsFor(4, 0f));
+            assertTrue(FoodValuesTooltip.hasIconsFor(0, 1.2f));
+            assertFalse(FoodValuesTooltip.hasIconsFor(0, 0f));
+        }
+    }
+
+    @Nested
     @DisplayName("layout")
     class Layout {
 
@@ -100,6 +122,16 @@ class FoodValuesTooltipTest {
             int without        = FoodValuesTooltip.forValues(3, 0f).getHeight();
             assertTrue(withSaturation > without,
                     "the second row has to be paid for, or it draws over the line below");
+        }
+
+        @Test
+        @DisplayName("a saturation-only food gets a row without the empty drumstick line")
+        void saturationOnly() {
+            FoodValuesTooltip drink = FoodValuesTooltip.forValues(0, 2.4f);
+            assertEquals(0, drink.hungerIcons());
+            assertEquals(2, drink.saturationSegments());
+            assertTrue(drink.getHeight() < FoodValuesTooltip.forValues(2, 2.4f).getHeight(),
+                    "no nine-pixel gap where the drumsticks would be");
         }
 
         @Test

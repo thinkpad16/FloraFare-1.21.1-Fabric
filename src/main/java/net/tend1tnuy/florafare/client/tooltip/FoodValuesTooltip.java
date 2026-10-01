@@ -122,8 +122,23 @@ public final class FoodValuesTooltip implements TooltipComponent, TooltipData {
         // Effective values, resolved against this stack: an entry that leaves either half
         // to the item stores a sentinel in that field, never a number to draw.
         int nutrition = data.effectiveNutrition(stack);
-        if (nutrition <= 0) return null;
-        return new FoodValuesTooltip(nutrition, data.effectiveSaturationPoints(stack));
+        float saturation = data.effectiveSaturationPoints(stack);
+        return hasIconsFor(nutrition, saturation)
+                ? new FoodValuesTooltip(nutrition, saturation) : null;
+    }
+
+    /**
+     * Whether a food's values can be drawn as icons at all.
+     *
+     * <p>Not for a negative nutrition: a food that drains hunger has no drumstick to draw
+     * — an empty one would read as "restores nothing" — so {@code BuffDescription} spells
+     * the drain out in red instead. A food that restores saturation only (a modded drink
+     * with zero nutrition) does get a row: just the saturation segments. It used to get
+     * nothing, so the one thing such a drink does was missing from its tooltip.
+     */
+    public static boolean hasIconsFor(int nutrition, float saturationPoints) {
+        if (nutrition < 0) return false;
+        return nutrition > 0 || saturationPoints > 0;
     }
 
     /**
@@ -168,16 +183,29 @@ public final class FoodValuesTooltip implements TooltipComponent, TooltipData {
         return Math.max(hunger, sat);
     }
 
+    /**
+     * Whether the drumstick row is drawn. Not for a saturation-only food, whose row of no
+     * drumsticks would otherwise leave a nine-pixel hole above its saturation segments.
+     */
+    private boolean hasHungerRow() {
+        return hungerIcons > 0 || saturationSegments == 0;
+    }
+
     @Override
     public int getHeight() {
+        if (!hasHungerRow()) return SEGMENT_HEIGHT + ROW_GAP + 1;
         return saturationSegments > 0 ? ICON + ROW_GAP + SEGMENT_HEIGHT + 1 : ICON + 1;
     }
 
     @Override
     public void drawItems(TextRenderer textRenderer, int x, int y, DrawContext context) {
-        drawHungerRow(textRenderer, x, y, context);
+        int saturationY = y + 1;
+        if (hasHungerRow()) {
+            drawHungerRow(textRenderer, x, y, context);
+            saturationY = y + ICON + ROW_GAP;
+        }
         if (saturationSegments > 0) {
-            drawSaturationRow(textRenderer, x, y + ICON + ROW_GAP, context);
+            drawSaturationRow(textRenderer, x, saturationY, context);
         }
     }
 
