@@ -1,9 +1,7 @@
 package net.tend1tnuy.florafare.command;
 
-import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.context.CommandContext;
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.command.CommandRegistryAccess;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
@@ -42,17 +40,15 @@ public class DumpFoodsCommand {
      */
     private record RecipeInfo(Map<Item, Integer> ingredients, Identifier typeId, int outputCount) {}
 
-    public static void register(CommandDispatcher<ServerCommandSource> dispatcher,
-                                CommandRegistryAccess registryAccess,
-                                CommandManager.RegistrationEnvironment environment) {
-        dispatcher.register(
-                CommandManager.literal("florafare")
-                        .requires(source -> source.hasPermissionLevel(
-                                net.tend1tnuy.florafare.config.FlorafareConfig.commandPermissionLevel))
-                        .then(CommandManager.literal("dumpfoods")
-                                .executes(DumpFoodsCommand::executeDump)
-                        )
-        );
+    /**
+     * The {@code dumpfoods} branch, for {@link FlorafareCommands} to hang off the one
+     * {@code /florafare} root. It writes into the server's file system, so it is the
+     * write level.
+     */
+    public static com.mojang.brigadier.builder.ArgumentBuilder<ServerCommandSource, ?> branch() {
+        return CommandManager.literal("dumpfoods")
+                .requires(CommandPermissions::canWrite)
+                .executes(DumpFoodsCommand::executeDump);
     }
 
     private static int executeDump(CommandContext<ServerCommandSource> context) {

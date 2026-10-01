@@ -1,6 +1,6 @@
 package net.tend1tnuy.florafare.command;
 
-import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
@@ -20,9 +20,6 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.registry.Registries;
-import net.minecraft.registry.RegistryKeys;
-import net.minecraft.registry.entry.RegistryEntry;
-import net.minecraft.registry.tag.TagKey;
 import net.minecraft.server.command.CommandManager;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
@@ -53,21 +50,24 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 /**
- * Handles the registration and execution of all /florafare administration commands.
+ * Most of the {@code /florafare} subcommands: buffs, clear, setbuff, buff, journal, repair
+ * and explain, plus the hooks for the ignore, edit and help branches. The tree itself is
+ * built once, by {@link FlorafareCommands}; {@code validate} and {@code dumpfoods} live in
+ * classes of their own.
  */
 public class SetBuffCommand {
 
-    public static void register(CommandDispatcher<ServerCommandSource> dispatcher,
-                                CommandRegistryAccess registryAccess,
-                                CommandManager.RegistrationEnvironment environment) {
-
-        dispatcher.register(
-                CommandManager.literal("florafare")
-                        .requires(source -> source.hasPermissionLevel(
-                                net.tend1tnuy.florafare.config.FlorafareConfig.commandPermissionLevel))
-
+    /**
+     * Hangs this class's branches off the one {@code /florafare} root built by
+     * {@link FlorafareCommands}. Each branch carries its own permission requirement — see
+     * {@link CommandPermissions} for which level each one needs and why.
+     */
+    public static void attach(LiteralArgumentBuilder<ServerCommandSource> root,
+                              CommandRegistryAccess registryAccess) {
+        root
                         // Branch: /florafare buffs <player> (Lists what is active right now)
                         .then(CommandManager.literal("buffs")
+                                .requires(CommandPermissions::canRead)
                                 .then(CommandManager.argument("player", EntityArgumentType.player())
                                         .executes(SetBuffCommand::executeListBuffs)
                                 )
@@ -75,17 +75,33 @@ public class SetBuffCommand {
 
                         // Branch: /florafare clear <player> (Clears all active buffs and synergies)
                         .then(CommandManager.literal("clear")
+                                .requires(CommandPermissions::canRead)
                                 .then(CommandManager.argument("player", EntityArgumentType.player())
                                         .executes(SetBuffCommand::executeClearBuffs)
                                 )
                         )
 
                         // Branch: /florafare setbuff (Dynamic buff on item in hand)
+                        //
+                        // The write level: the buff is persisted into the world save and
+                        // synced to every client. Bounds are CommandBounds', shared with
+                        // /florafare edit, which used to accept different ranges.
                         .then(CommandManager.literal("setbuff")
-                                .then(CommandManager.argument("duration", IntegerArgumentType.integer(1))
-                                        .then(CommandManager.argument("nutrition", IntegerArgumentType.integer(0))
-                                                .then(CommandManager.argument("saturation", DoubleArgumentType.doubleArg(0.0))
-                                                        .then(CommandManager.argument("health", DoubleArgumentType.doubleArg(0.0))
+                                .requires(CommandPermissions::canWrite)
+                                // /florafare setbuff prune <days>: drop every stack buff not
+                                // seen for that long, now, rather than at the next world load.
+                                .then(CommandManager.literal("prune")
+                                        .then(CommandManager.argument("days", IntegerArgumentType.integer(
+                                                        1, net.tend1tnuy.florafare.config.FlorafareConfig.MAX_RUNTIME_RETENTION_DAYS))
+                                                .executes(SetBuffCommand::executePrune)))
+                                .then(CommandManager.argument("duration", IntegerArgumentType.integer(
+                                                CommandBounds.MIN_DURATION, CommandBounds.MAX_DURATION))
+                                        .then(CommandManager.argument("nutrition", IntegerArgumentType.integer(
+                                                        CommandBounds.MIN_NUTRITION, CommandBounds.MAX_NUTRITION))
+                                                .then(CommandManager.argument("saturation", DoubleArgumentType.doubleArg(
+                                                                CommandBounds.MIN_SATURATION, CommandBounds.MAX_SATURATION))
+                                                        .then(CommandManager.argument("health", DoubleArgumentType.doubleArg(
+                                                                        CommandBounds.MIN_HEALTH, CommandBounds.MAX_HEALTH))
                                                                 .executes(context -> executeSetBuff(context, null, 0.0, null))
                                                                 .then(CommandManager.argument("attr_id", IdentifierArgumentType.identifier())
                                                                         // Both arguments used to be free text, and a value neither
@@ -98,7 +114,7 @@ public class SetBuffCommand {
                                                                         .then(CommandManager.argument("attr_amount", DoubleArgumentType.doubleArg())
                                                                                 .then(CommandManager.argument("attr_op", StringArgumentType.word())
                                                                                         .suggests((ctx, builder) -> CommandSource.suggestMatching(
-                                                                                                VALID_OPERATIONS, builder))
+                                                                                                EditBuffCommand.SUGGESTED_OPERATIONS, builder))
                                                                                         .executes(context -> executeSetBuff(
                                                                                                 context,
                                                                                                 IdentifierArgumentType.getIdentifier(context, "attr_id"),
@@ -120,6 +136,7 @@ public class SetBuffCommand {
                         // when it adds them — but it reads as two separate commands and
                         // relied on that merge to not be two separate commands.
                         .then(CommandManager.literal("buff")
+                                .requires(CommandPermissions::canRead)
                                 // Grant a buff from a datapack config to a player.
                                 .then(CommandManager.literal("give")
                                         .then(CommandManager.argument("player", EntityArgumentType.player())
@@ -155,6 +172,7 @@ public class SetBuffCommand {
                         // that unlocks, a synergy hint — a matter of finding and eating
                         // the right item. These put the same list under direct control.
                         .then(CommandManager.literal("journal")
+                                .requires(CommandPermissions::canRead)
                                 .then(CommandManager.literal("give")
                                         .then(CommandManager.argument("player", EntityArgumentType.player())
                                                 .executes(SetBuffCommand::executeJournalGive)
@@ -239,6 +257,7 @@ public class SetBuffCommand {
 
                         // Branch: /florafare repair <player> (Strips orphaned Florafare attribute modifiers)
                         .then(CommandManager.literal("repair")
+                                .requires(CommandPermissions::canWrite)
                                 .then(CommandManager.argument("player", EntityArgumentType.player())
                                         .executes(SetBuffCommand::executeRepair)
                                 )
@@ -253,11 +272,6 @@ public class SetBuffCommand {
                         // Branch: /florafare help — the guide, also at /florafarehelp
                         .then(HelpCommand.branch())
 
-                        // Branch: /florafare validate (Diagnoses loaded food_buffs/food_synergies configs)
-                        .then(CommandManager.literal("validate")
-                                .executes(SetBuffCommand::executeValidate)
-                        )
-
                         // Branch: /florafare explain [item] (Why does THIS item have THIS buff?)
                         //
                         // /florafare validate answers "is anything wrong with the pack";
@@ -266,12 +280,12 @@ public class SetBuffCommand {
                         // no argument it reads the stack in hand, components and all, so a
                         // command-stamped or renamed stack can be interrogated directly.
                         .then(CommandManager.literal("explain")
+                                .requires(CommandPermissions::canRead)
                                 .executes(SetBuffCommand::executeExplainHeld)
                                 .then(CommandManager.argument("item", ItemStackArgumentType.itemStack(registryAccess))
                                         .executes(SetBuffCommand::executeExplain)
                                 )
-                        )
-        );
+                        );
     }
 
     /**
@@ -806,6 +820,20 @@ public class SetBuffCommand {
             return 0;
         }
 
+        // A stack buff is resolved by getConfig, which Florafare only ever asks of food —
+        // and only of food it has not been told to ignore. Stamped onto anything else, the
+        // buff was saved, synced and reported as a success, and then never fired.
+        String heldId = Registries.ITEM.getId(stack.getItem()).toString();
+        if (!stack.contains(DataComponentTypes.FOOD)
+                || stack.getItem() instanceof net.tend1tnuy.florafare.item.ForgottenMeadItem) {
+            source.sendError(Text.translatable("command.florafare.setbuff.not_food", heldId));
+            return 0;
+        }
+        if (FoodBuffManager.isExcluded(stack)) {
+            source.sendError(Text.translatable("command.florafare.setbuff.excluded", heldId));
+            return 0;
+        }
+
         // Checked before anything is written. An unregistered attribute is skipped
         // without a word by PlayerFoodComponent#applyBuffEffects, and an unrecognised
         // operation is skipped there too — so the command would have reported success and
@@ -816,8 +844,10 @@ public class SetBuffCommand {
                         "command.florafare.error.unknown_attribute", attrId.toString()));
                 return 0;
             }
-            String normalizedOp = op == null ? "" : op.toLowerCase(Locale.ROOT);
-            if (!VALID_OPERATIONS.contains(normalizedOp)) {
+            // The shared parser: the pre-1.21 spellings (multiply_total, addition, ...)
+            // a datapack accepts are accepted here too, and stored under the 1.21 name.
+            String normalizedOp = AttributeOperations.canonicalize(op);
+            if (normalizedOp == null) {
                 source.sendError(Text.translatable("command.florafare.error.unknown_operation",
                         String.valueOf(op), String.join(", ", VALID_OPERATIONS)));
                 return 0;
@@ -848,11 +878,31 @@ public class SetBuffCommand {
                 false
         );
 
+        // Saves the file itself — once. This used to be followed by a second full save.
         FoodBuffManager.setRuntimeStackConfig(uniqueId, data);
-        FoodBuffManager.saveRuntimeConfigs(source.getServer());
+        // ...and tells every client, whose tooltip, journal and hunger prediction for this
+        // stack otherwise showed the item's ordinary buff on a dedicated server.
+        Florafare.syncRuntimeStackConfig(source.getServer(), uniqueId, data);
 
-        source.sendFeedback(() -> Text.translatable("command.florafare.setbuff.success"), true);
+        source.sendFeedback(() -> Text.translatable(data.isHungerOnly()
+                ? "command.florafare.setbuff.success_hunger_only"
+                : "command.florafare.setbuff.success"), true);
         return 1;
+    }
+
+    /** {@code /florafare setbuff prune <days>}: drops stack buffs not seen for that long. */
+    private static int executePrune(CommandContext<ServerCommandSource> context) {
+        int days = IntegerArgumentType.getInteger(context, "days");
+        int before = FoodBuffManager.getRuntimeConfigCount();
+        int pruned = FoodBuffManager.pruneRuntimeConfigs(
+                days * FoodBuffManager.DAY_MILLIS, System.currentTimeMillis());
+        if (pruned > 0) {
+            FoodBuffManager.saveRuntimeConfigs(context.getSource().getServer());
+            Florafare.resyncRuntimeStackConfigs(context.getSource().getServer());
+        }
+        context.getSource().sendFeedback(() -> Text.translatable(
+                "command.florafare.setbuff.pruned", pruned, before, days), true);
+        return pruned;
     }
 
     private static int executeBuffGive(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
@@ -916,94 +966,6 @@ public class SetBuffCommand {
         context.getSource().sendFeedback(() -> Text.translatable(
                 "command.florafare.repair.success", removed, player.getName().getString()), true);
         return removed;
-    }
-
-    /**
-     * Diagnoses the currently loaded food_buffs/food_synergies configs for problems
-     * that don't surface as load-time errors: synergies that can never activate
-     * given {@code maxBuffSlots}, requirements that can never be satisfied (item not
-     * edible, excluded, or tag empty), and datapack targets left ambiguous by a
-     * same-priority tie.
-     */
-    private static int executeValidate(CommandContext<ServerCommandSource> context) {
-        ServerCommandSource source = context.getSource();
-        List<String> issues = new ArrayList<>();
-        int maxSlots = PlayerFoodComponent.getMaxBuffSlots();
-
-        for (FoodSynergyData synergy : FoodSynergyManager.getAllSynergies()) {
-            if (synergy.requirements().size() > maxSlots) {
-                issues.add(String.format(
-                        "synergy '%s' needs %d buffs at once, but maxBuffSlots is %d — it can never activate.",
-                        synergy.id(), synergy.requirements().size(), maxSlots));
-            }
-
-            for (String req : synergy.requirements()) {
-                if (req.startsWith("#")) {
-                    Identifier tagId = Identifier.tryParse(req.substring(1));
-                    if (tagId == null) {
-                        issues.add(String.format(
-                                "synergy '%s' requirement '%s' is not a valid tag id.", synergy.id(), req));
-                        continue;
-                    }
-                    boolean anyItems = false;
-                    boolean anyReachable = false;
-                    for (RegistryEntry<Item> entry
-                            : Registries.ITEM.iterateEntries(TagKey.of(RegistryKeys.ITEM, tagId))) {
-                        anyItems = true;
-                        if (FoodBuffManager.getConfig(entry.value().getDefaultStack()) != null) {
-                            anyReachable = true;
-                            break;
-                        }
-                    }
-                    if (!anyItems) {
-                        issues.add(String.format(
-                                "synergy '%s' requirement '%s' matches no loaded items — it can never be satisfied.",
-                                synergy.id(), req));
-                    } else if (!anyReachable) {
-                        issues.add(String.format(
-                                "synergy '%s' requirement '%s' matches items, but none of them can grant a buff "
-                                        + "(all excluded or non-edible) — it can never be satisfied.",
-                                synergy.id(), req));
-                    }
-                } else {
-                    Identifier itemId = Identifier.tryParse(req);
-                    if (itemId == null || !Registries.ITEM.containsId(itemId)) {
-                        issues.add(String.format(
-                                "synergy '%s' requirement '%s' is not a valid/registered item id.",
-                                synergy.id(), req));
-                    } else if (FoodBuffManager.getConfig(Registries.ITEM.get(itemId).getDefaultStack()) == null) {
-                        issues.add(String.format(
-                                "synergy '%s' requirement '%s' can never grant a buff (not edible, or excluded) "
-                                        + "— it can never be satisfied.",
-                                synergy.id(), req));
-                    }
-                }
-            }
-        }
-
-        // Sizing problems belong here too: they are invisible in-game until someone
-        // notices every tooltip is wrong.
-        issues.addAll(Florafare.syncPayloadIssues());
-
-        for (String target : FoodBuffManager.getAmbiguousTargets()) {
-            issues.add(String.format(
-                    "target '%s' is defined by multiple entries at the same priority — which one wins is not guaranteed.",
-                    target));
-        }
-
-        if (issues.isEmpty()) {
-            source.sendFeedback(() -> Text.literal(String.format(
-                    "§aFlorafare validate: no issues found across %d food configs and %d synergies.",
-                    FoodBuffManager.getConfigCount(), FoodSynergyManager.getAllSynergies().size())), false);
-        } else {
-            source.sendFeedback(() -> Text.literal(
-                    "§eFlorafare validate found " + issues.size() + " issue(s) — see server log for details:"), false);
-            for (String issue : issues) {
-                Florafare.LOGGER.warn("[Florafare Validate] {}", issue);
-                source.sendFeedback(() -> Text.literal(" - " + issue), false);
-            }
-        }
-        return issues.size();
     }
 
     // -------------------------------------------------------------------------

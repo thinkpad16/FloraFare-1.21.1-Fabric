@@ -34,10 +34,17 @@ import java.util.Locale;
  * one an ordinary player can actually run.
  *
  * <h2>What each side sees</h2>
- * The player-facing topics are listed for everybody. The three that only an operator can
- * act on — {@code edit}, {@code ignore}, {@code admin} — are listed, suggested and
- * printed only above {@code commandPermissionLevel}, so a player's topic list contains
- * nothing they cannot use.
+ * The player-facing topics are listed for everybody. The ones that only an operator can
+ * act on — {@code edit}, {@code ignore}, {@code admin}, {@code commands} — are listed,
+ * suggested and printed only above {@code commandPermissionLevel}, so a player's topic
+ * list contains nothing they cannot use.
+ *
+ * <h2>The command reference</h2>
+ * {@code commands} is generated rather than written out in the language file: one line
+ * per subcommand with its arguments and the permission level it needs, and only the lines
+ * the reader can actually run. Two levels now exist ({@code commandPermissionLevel} and
+ * {@code writeCommandPermissionLevel}), and a hand-written list would sooner or later
+ * promise a command to someone it then refuses.
  */
 public final class HelpCommand {
 
@@ -53,7 +60,37 @@ public final class HelpCommand {
             new Topic("troubleshoot", false, 6),
             new Topic("edit",         true,  7),
             new Topic("ignore",       true,  5),
-            new Topic("admin",        true,  6)
+            new Topic("admin",        true,  6),
+            new Topic("commands",     true,  0)
+    );
+
+    /**
+     * One line of the {@code commands} reference.
+     *
+     * @param usage the arguments after {@code /florafare}, as typed
+     * @param write whether it needs the write level rather than the read level
+     * @param key   the last part of its description's translation key
+     */
+    private record Usage(String usage, boolean write, String key) {}
+
+    private static final List<Usage> USAGES = List.of(
+            new Usage("help [<topic>]", false, "help"),
+            new Usage("buffs <player>", false, "buffs"),
+            new Usage("explain [<item>]", false, "explain"),
+            new Usage("validate [<section> [<page>]]", false, "validate"),
+            new Usage("validate file", true, "validate_file"),
+            new Usage("buff give|remove <player> <target>", false, "buff"),
+            new Usage("clear <player>", false, "clear"),
+            new Usage("journal give|list|unlock|lock <player> ...", false, "journal"),
+            new Usage("edit [list] · edit <target> [show]", false, "edit_show"),
+            new Usage("edit <target>|tag <tag>|potion <potion> <field> <value>", true, "edit"),
+            new Usage("ignore [list]", false, "ignore_list"),
+            new Usage("ignore add|remove <rule>|inventory [<player>]", true, "ignore"),
+            new Usage("setbuff <duration> <nutrition> <saturation> <health> [<attribute> <amount> <operation>]",
+                    true, "setbuff"),
+            new Usage("setbuff prune <days>", true, "setbuff_prune"),
+            new Usage("repair <player>", true, "repair"),
+            new Usage("dumpfoods [<mod>|*] [all|json|txt|csv] [<maxDepth>]", true, "dumpfoods")
     );
 
     public static void register(CommandDispatcher<ServerCommandSource> dispatcher,
@@ -69,6 +106,7 @@ public final class HelpCommand {
     /** The {@code help} subtree, for {@code SetBuffCommand} to hang off {@code /florafare}. */
     public static ArgumentBuilder<ServerCommandSource, ?> branch() {
         return CommandManager.literal("help")
+                .requires(CommandPermissions::canRead)
                 .executes(HelpCommand::executeOverview)
                 .then(topicArgument());
     }
@@ -155,6 +193,7 @@ public final class HelpCommand {
         Topic shown = topic;
         source.sendFeedback(() -> Text.translatable(
                 "command.florafare.help." + shown.name() + ".title").formatted(Formatting.GOLD), false);
+        if (shown.name().equals("commands")) return printCommands(source);
         for (int i = 1; i <= shown.lines(); i++) {
             final int line = i;
             source.sendFeedback(() -> Text.translatable(
@@ -162,5 +201,43 @@ public final class HelpCommand {
                     .formatted(Formatting.GRAY), false);
         }
         return 1;
+    }
+
+    /** The generated reference: every subcommand the reader may run, with its level. */
+    private static int printCommands(ServerCommandSource source) {
+        int read = CommandPermissions.readLevel();
+        int write = CommandPermissions.writeLevel();
+        source.sendFeedback(() -> Text.translatable("command.florafare.help.commands.levels", read, write)
+                .formatted(Formatting.GRAY), false);
+
+        int shown = 0;
+        for (Usage usage : USAGES) {
+            boolean allowed = usage.write()
+                    ? CommandPermissions.canWrite(source) : CommandPermissions.canRead(source);
+            if (!allowed) continue;
+            shown++;
+            String command = "/florafare " + usage.usage();
+            // Suggest rather than run: almost every line needs an argument filled in.
+            String typed = "/florafare " + usage.usage().split(" ")[0] + " ";
+            MutableText line = Text.literal(" • ").formatted(Formatting.DARK_GRAY)
+                    .append(Text.literal(command).formatted(Formatting.YELLOW)
+                            .styled(style -> style
+                                    .withClickEvent(new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, typed))
+                                    .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
+                                            Text.translatable("command.florafare.help.commands.click")))))
+                    .append(Text.literal(" (" + (usage.write() ? write : read) + ")").formatted(Formatting.DARK_GRAY))
+                    .append(Text.literal(" — ").formatted(Formatting.DARK_GRAY))
+                    .append(Text.translatable("command.florafare.help.commands." + usage.key())
+                            .formatted(Formatting.GRAY));
+            source.sendFeedback(() -> line, false);
+        }
+        return shown;
+    }
+
+    /** For tests: every description key the reference uses. */
+    static List<String> commandDescriptionKeys() {
+        List<String> keys = new java.util.ArrayList<>();
+        for (Usage usage : USAGES) keys.add("command.florafare.help.commands." + usage.key());
+        return keys;
     }
 }

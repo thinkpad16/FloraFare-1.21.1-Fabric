@@ -19,15 +19,14 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
 import net.tend1tnuy.florafare.Florafare;
-import net.tend1tnuy.florafare.component.ActiveFoodBuff;
 import net.tend1tnuy.florafare.food.AttributeOperations;
+import net.tend1tnuy.florafare.food.DatapackLookup;
 import net.tend1tnuy.florafare.food.FoodBuffData;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
 import net.tend1tnuy.florafare.food.FoodBuffOverrides;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
@@ -52,11 +51,17 @@ import java.util.concurrent.CompletableFuture;
  *   <li>{@code minecraft:bread} — one item;</li>
  *   <li>{@code tag #c:foods} — every item in an item tag;</li>
  *   <li>{@code namespace:croptopia} — every food a mod adds;</li>
- *   <li>{@code template:default} — every food with nothing more specific.</li>
+ *   <li>{@code template:default} — every food with nothing more specific;</li>
+ *   <li>{@code potion minecraft:strength} — a brewed potion ({@code potion:} target).</li>
  * </ul>
  *
  * <p>Tags need the {@code tag} keyword because a leading {@code #} is not a character an
- * identifier argument can read; the rest are ordinary identifiers and are typed directly.
+ * identifier argument can read, and potions the {@code potion} keyword because their
+ * target has two colons; the rest are ordinary identifiers and are typed directly.
+ *
+ * <p>A target with no definition yet must name something real — an edible item, an
+ * existing tag, a namespace in use, a registered potion — or the command refuses it
+ * (see {@link TargetValidation}); a typo used to be stored and re-applied forever.
  *
  * <h2>What an edit starts from</h2>
  * Never from zeros. Editing a target that already has an override continues it; a target
@@ -82,6 +87,15 @@ public final class EditBuffCommand {
     private static final List<String> VALID_OPERATIONS = AttributeOperations.CANONICAL_NAMES;
 
     /**
+     * What tab-completion offers for an operation: the 1.21 names first, then the older
+     * spellings {@link AttributeOperations#canonicalize} also accepts, so a pack author
+     * who thinks in {@code multiply_total} is not told it does not exist.
+     */
+    static final List<String> SUGGESTED_OPERATIONS = List.of(
+            "add_value", "add_multiplied_base", "add_multiplied_total",
+            "addition", "multiply_base", "multiply_total");
+
+    /**
      * Reads the target out of a parsed command. Two spellings reach the same subtree —
      * a bare identifier and the {@code tag} keyword — so the actions below are built
      * against this rather than against an argument name.
@@ -97,6 +111,14 @@ public final class EditBuffCommand {
     private static final TargetFn TAG_TARGET = context ->
             "#" + IdentifierArgumentType.getIdentifier(context, "tag");
 
+    /**
+     * {@code potion:<potion id>} cannot be typed as one identifier — it has two colons —
+     * so potion targets get a keyword of their own, like tags. Without it a datapack's
+     * {@code potion:} entries were the one kind of target {@code edit} could not reach.
+     */
+    private static final TargetFn POTION_TARGET = context ->
+            FoodBuffManager.POTION_PREFIX + IdentifierArgumentType.getIdentifier(context, "potion");
+
     // -------------------------------------------------------------------------
     // TREE
     // -------------------------------------------------------------------------
@@ -104,6 +126,10 @@ public final class EditBuffCommand {
     /** The {@code edit} subtree, for {@code SetBuffCommand} to hang off {@code /florafare}. */
     public static ArgumentBuilder<ServerCommandSource, ?> branch() {
         return CommandManager.literal("edit")
+                // Looking is the read level; every child that changes something asks for
+                // the write level itself (see write() below). The node admits either so a
+                // server whose write level is the lower of the two still reaches it.
+                .requires(CommandPermissions::canEnterRoot)
                 .executes(EditBuffCommand::executeList)
 
                 // Listed before the identifier argument so Brigadier tries them first. A
@@ -112,14 +138,20 @@ public final class EditBuffCommand {
                 .then(CommandManager.literal("list")
                         .executes(EditBuffCommand::executeList))
 
-                .then(CommandManager.literal("reset")
+                .then(write(CommandManager.literal("reset")
                         .then(CommandManager.literal("all")
-                                .executes(EditBuffCommand::executeResetAll)))
+                                .executes(EditBuffCommand::executeResetAll))))
 
                 .then(CommandManager.literal("tag")
                         .then(actions(CommandManager.argument("tag", IdentifierArgumentType.identifier())
                                         .suggests(EditBuffCommand::suggestTags),
                                 TAG_TARGET)))
+
+                .then(CommandManager.literal("potion")
+                        .then(actions(CommandManager.argument("potion", IdentifierArgumentType.identifier())
+                                        .suggests((context, builder) -> CommandSource.suggestIdentifiers(
+                                                Registries.POTION.getIds(), builder)),
+                                POTION_TARGET)))
 
                 .then(actions(CommandManager.argument("target", IdentifierArgumentType.identifier())
                                 .suggests(EditBuffCommand::suggestTargets),
@@ -142,47 +174,52 @@ public final class EditBuffCommand {
                 .then(CommandManager.literal("show")
                         .executes(context -> executeShow(context, target)))
 
-                .then(CommandManager.literal("duration")
-                        .then(CommandManager.argument("ticks",
-                                        IntegerArgumentType.integer(1, ActiveFoodBuff.MAX_DURATION_TICKS))
+                .then(write(CommandManager.literal("duration")
+                        // 0 is a hunger-only entry (no buff, no slot), the same meaning a
+                        // datapack's duration <= 0 has; see CommandBounds.
+                        .then(CommandManager.argument("ticks", IntegerArgumentType.integer(
+                                        CommandBounds.MIN_DURATION, CommandBounds.MAX_DURATION))
                                 .executes(context -> edit(context, target, current -> withDuration(
-                                        current, IntegerArgumentType.getInteger(context, "ticks"))))))
+                                        current, IntegerArgumentType.getInteger(context, "ticks")))))))
 
-                .then(CommandManager.literal("nutrition")
-                        .then(CommandManager.argument("points", IntegerArgumentType.integer(0, 20))
+                .then(write(CommandManager.literal("nutrition")
+                        .then(CommandManager.argument("points", IntegerArgumentType.integer(
+                                        CommandBounds.MIN_NUTRITION, CommandBounds.MAX_NUTRITION))
                                 .executes(context -> edit(context, target, current -> withNutrition(
-                                        current, IntegerArgumentType.getInteger(context, "points"))))))
+                                        current, IntegerArgumentType.getInteger(context, "points")))))))
 
-                .then(CommandManager.literal("saturation")
-                        .then(CommandManager.argument("modifier", DoubleArgumentType.doubleArg(0.0))
+                .then(write(CommandManager.literal("saturation")
+                        .then(CommandManager.argument("modifier", DoubleArgumentType.doubleArg(
+                                        CommandBounds.MIN_SATURATION, CommandBounds.MAX_SATURATION))
                                 .executes(context -> edit(context, target, current -> withSaturation(
                                         current,
-                                        (float) DoubleArgumentType.getDouble(context, "modifier"))))))
+                                        (float) DoubleArgumentType.getDouble(context, "modifier")))))))
 
-                .then(CommandManager.literal("health")
-                        .then(CommandManager.argument("hearts", DoubleArgumentType.doubleArg())
+                .then(write(CommandManager.literal("health")
+                        .then(CommandManager.argument("hearts", DoubleArgumentType.doubleArg(
+                                        CommandBounds.MIN_HEALTH, CommandBounds.MAX_HEALTH))
                                 .executes(context -> edit(context, target, current -> withHealth(
-                                        current, DoubleArgumentType.getDouble(context, "hearts"))))))
+                                        current, DoubleArgumentType.getDouble(context, "hearts")))))))
 
-                .then(CommandManager.literal("priority")
+                .then(write(CommandManager.literal("priority")
                         .then(CommandManager.argument("value", IntegerArgumentType.integer())
                                 .executes(context -> edit(context, target, current -> withPriority(
-                                        current, IntegerArgumentType.getInteger(context, "value"))))))
+                                        current, IntegerArgumentType.getInteger(context, "value")))))))
 
-                .then(CommandManager.literal("always_edible")
+                .then(write(CommandManager.literal("always_edible")
                         .then(CommandManager.argument("value", BoolArgumentType.bool())
                                 .executes(context -> edit(context, target, current -> withAlwaysEdible(
-                                        current, BoolArgumentType.getBool(context, "value"))))))
+                                        current, BoolArgumentType.getBool(context, "value")))))))
 
-                .then(CommandManager.literal("effect")
+                .then(write(CommandManager.literal("effect")
                         .then(CommandManager.literal("add")
                                 .then(CommandManager.argument("effect", IdentifierArgumentType.identifier())
                                         .suggests(EditBuffCommand::suggestEffects)
-                                        .then(CommandManager.argument("ticks",
-                                                        IntegerArgumentType.integer(1, ActiveFoodBuff.MAX_DURATION_TICKS))
+                                        .then(CommandManager.argument("ticks", IntegerArgumentType.integer(
+                                                        CommandBounds.MIN_EFFECT_TICKS, CommandBounds.MAX_DURATION))
                                                 .executes(context -> editEffectAdd(context, target, 0))
                                                 .then(CommandManager.argument("amplifier",
-                                                                IntegerArgumentType.integer(0, 255))
+                                                                IntegerArgumentType.integer(0, CommandBounds.MAX_AMPLIFIER))
                                                         .executes(context -> editEffectAdd(context, target,
                                                                 IntegerArgumentType.getInteger(context, "amplifier")))))))
                         .then(CommandManager.literal("remove")
@@ -192,9 +229,9 @@ public final class EditBuffCommand {
                                         .executes(context -> editEffectRemove(context, target))))
                         .then(CommandManager.literal("clear")
                                 .executes(context -> edit(context, target,
-                                        current -> withEffects(current, List.of())))))
+                                        current -> withEffects(current, List.of()))))))
 
-                .then(CommandManager.literal("attribute")
+                .then(write(CommandManager.literal("attribute")
                         .then(CommandManager.literal("add")
                                 .then(CommandManager.argument("attribute", IdentifierArgumentType.identifier())
                                         .suggests(EditBuffCommand::suggestAttributes)
@@ -202,7 +239,7 @@ public final class EditBuffCommand {
                                                 .executes(context -> editAttributeAdd(context, target, "add_value"))
                                                 .then(CommandManager.argument("operation", StringArgumentType.word())
                                                         .suggests((context, builder) ->
-                                                                CommandSource.suggestMatching(VALID_OPERATIONS, builder))
+                                                                CommandSource.suggestMatching(SUGGESTED_OPERATIONS, builder))
                                                         .executes(context -> editAttributeAdd(context, target,
                                                                 StringArgumentType.getString(context, "operation")))))))
                         .then(CommandManager.literal("remove")
@@ -212,15 +249,47 @@ public final class EditBuffCommand {
                                         .executes(context -> editAttributeRemove(context, target))))
                         .then(CommandManager.literal("clear")
                                 .executes(context -> edit(context, target,
-                                        current -> withAttributes(current, List.of())))))
+                                        current -> withAttributes(current, List.of()))))))
 
-                .then(CommandManager.literal("reset")
-                        .executes(context -> executeReset(context, target)));
+                .then(write(CommandManager.literal("reset")
+                        .executes(context -> executeReset(context, target))));
+    }
+
+    /** Gates one mutating child at {@code writeCommandPermissionLevel}. */
+    private static com.mojang.brigadier.builder.LiteralArgumentBuilder<ServerCommandSource> write(
+            com.mojang.brigadier.builder.LiteralArgumentBuilder<ServerCommandSource> node) {
+        return node.requires(CommandPermissions::canWrite);
     }
 
     // -------------------------------------------------------------------------
     // THE EDIT ITSELF
     // -------------------------------------------------------------------------
+
+    /**
+     * Refuses a target that names nothing, before anything is written.
+     *
+     * <p>Only asked of a target that has no definition yet. One that already has an
+     * override or a datapack entry stays editable whatever it names — that is how an
+     * operator retunes or resets an entry left behind by a mod that has since been
+     * removed, which is exactly the entry that would fail this check.
+     *
+     * @return true if the edit may go ahead
+     */
+    private static boolean checkTarget(CommandContext<ServerCommandSource> context, String target) {
+        if (FoodBuffOverrides.get(target) != null || FoodBuffManager.getConfigByTarget(target) != null) {
+            return true;
+        }
+        TargetValidation.Check check = TargetValidation.buffTarget(target, DatapackLookup.LIVE);
+        if (check.isError()) {
+            context.getSource().sendError(Text.translatable(check.key(), check.argument()));
+            return false;
+        }
+        if (check.isWarning()) {
+            context.getSource().sendFeedback(() -> Text.translatable(check.key(), check.argument())
+                    .formatted(Formatting.YELLOW), false);
+        }
+        return true;
+    }
 
     /**
      * What an edit of this target continues from.
@@ -281,6 +350,7 @@ public final class EditBuffCommand {
                             java.util.function.UnaryOperator<FoodBuffData> change)
             throws CommandSyntaxException {
         String target = FoodBuffManager.normalizeTarget(targetFn.get(context));
+        if (!checkTarget(context, target)) return 0;
         return apply(context, target, change.apply(current(target)));
     }
 
@@ -295,6 +365,7 @@ public final class EditBuffCommand {
         }
         int ticks = IntegerArgumentType.getInteger(context, "ticks");
         String target = FoodBuffManager.normalizeTarget(targetFn.get(context));
+        if (!checkTarget(context, target)) return 0;
         FoodBuffData base = current(target);
 
         // Replaces rather than appends: two instances of one effect on the same buff
@@ -335,8 +406,10 @@ public final class EditBuffCommand {
                     "command.florafare.edit.unknown_attribute", attributeId.toString()));
             return 0;
         }
-        String normalized = operation.toLowerCase(Locale.ROOT);
-        if (!VALID_OPERATIONS.contains(normalized)) {
+        // The shared parser, so the legacy spellings a datapack may use (multiply_total,
+        // addition, ...) work here too, and are stored under their 1.21 name.
+        String normalized = AttributeOperations.canonicalize(operation);
+        if (normalized == null) {
             context.getSource().sendError(Text.translatable(
                     "command.florafare.edit.unknown_operation",
                     operation, String.join(", ", VALID_OPERATIONS)));
@@ -345,6 +418,7 @@ public final class EditBuffCommand {
 
         double amount = DoubleArgumentType.getDouble(context, "amount");
         String target = FoodBuffManager.normalizeTarget(targetFn.get(context));
+        if (!checkTarget(context, target)) return 0;
         FoodBuffData base = current(target);
 
         // Keyed by attribute alone, not by attribute-and-operation: "add this attribute"

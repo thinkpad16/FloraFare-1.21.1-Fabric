@@ -22,8 +22,6 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.PlayerManager;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.util.Identifier;
-import net.tend1tnuy.florafare.command.DumpFoodsCommand;
-import net.tend1tnuy.florafare.command.SetBuffCommand;
 import net.tend1tnuy.florafare.component.IFoodComponentProvider;
 import net.tend1tnuy.florafare.component.PlayerFoodComponent;
 import net.tend1tnuy.florafare.food.FoodBuffData;
@@ -120,8 +118,8 @@ public class Florafare implements ModInitializer {
         // auto-generation multipliers from these settings, and the exclusions it applies
         // decide what every item resolves to. The END_DATA_PACK_RELOAD handler below then
         // sends the refreshed server settings and exclusion list to everyone online.
-        // commandPermissionLevel is read each time a command checks its permission, so it
-        // applies as soon as the field changes.
+        // Both permission levels are read each time a command checks its permission, so
+        // they apply as soon as the fields change.
         ServerLifecycleEvents.START_DATA_PACK_RELOAD.register((server, resourceManager) -> {
             if (net.tend1tnuy.florafare.config.FlorafareConfig.reloadServerSettings()) {
                 PlayerFoodComponent.setMaxBuffSlots(
@@ -176,9 +174,11 @@ public class Florafare implements ModInitializer {
                 (payload, context) -> resendState(context.player(),
                         context.server().getTicks(), RESYNC_COOLDOWN_TICKS));
 
-        // 6. Commands — registered together in one logical block (#22)
-        CommandRegistrationCallback.EVENT.register(DumpFoodsCommand::register);
-        CommandRegistrationCallback.EVENT.register(SetBuffCommand::register);
+        // 6. Commands. One /florafare tree, built in one place: two classes used to
+        // register a "florafare" root each, and Brigadier merged the second into the first
+        // while keeping only the first one's permission requirement. See CommandPermissions.
+        CommandRegistrationCallback.EVENT.register(
+                net.tend1tnuy.florafare.command.FlorafareCommands::register);
         // Registered separately from the /florafare tree, not as another branch of it:
         // that tree is gated behind commandPermissionLevel and a Brigadier child cannot
         // loosen its parent's requirement, so this is the spelling an ordinary player on

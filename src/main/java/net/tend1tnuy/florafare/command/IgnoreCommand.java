@@ -20,10 +20,10 @@ import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
 import net.tend1tnuy.florafare.Florafare;
 import net.tend1tnuy.florafare.config.FlorafareConfig;
+import net.tend1tnuy.florafare.food.DatapackLookup;
 import net.tend1tnuy.florafare.food.FoodExclusions;
 
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -63,15 +63,20 @@ public final class IgnoreCommand {
     /** The {@code ignore} subtree, for {@code SetBuffCommand} to hang off {@code /florafare}. */
     public static ArgumentBuilder<ServerCommandSource, ?> branch() {
         return CommandManager.literal("ignore")
+                // Listing is the read level; add and remove rewrite config/florafare.json
+                // and change what the server does for everyone, so they are the write level.
+                .requires(CommandPermissions::canEnterRoot)
                 .executes(IgnoreCommand::executeList)
                 .then(CommandManager.literal("list")
                         .executes(IgnoreCommand::executeList))
                 .then(CommandManager.literal("add")
+                        .requires(CommandPermissions::canWrite)
                         .then(inventoryBranch(true))
                         .then(CommandManager.argument("entry", StringArgumentType.greedyString())
                                 .suggests(IgnoreCommand::suggestAdditions)
                                 .executes(IgnoreCommand::executeAdd)))
                 .then(CommandManager.literal("remove")
+                        .requires(CommandPermissions::canWrite)
                         .then(inventoryBranch(false))
                         .then(CommandManager.argument("entry", StringArgumentType.greedyString())
                                 .suggests(IgnoreCommand::suggestRemovals)
@@ -185,20 +190,24 @@ public final class IgnoreCommand {
         // of one that beats it would report success and change nothing.
         boolean liftedOverride = FoodExclusions.remove(
                 FoodExclusions.Effect.MANAGE, FoodExclusions.Source.CONFIG, canonical) != null;
-        if (liftedOverride) removeAllSpellings(FlorafareConfig.managedFoodItems, parsed);
-
         boolean excluded = FoodExclusions.add(
                 FoodExclusions.Effect.EXCLUDE, FoodExclusions.Source.CONFIG, canonical) != null;
-        if (excluded) {
-            // The config lists are the file's view of the same rules, so they are edited
-            // to match rather than re-derived: a bare "modid" the user hand-wrote must not
-            // be rewritten into "modid:*" underneath them on an unrelated save.
-            if (parsed.kind() == FoodExclusions.Kind.MOD) {
-                FlorafareConfig.ignoredFoodMods.add(parsed.value());
-            } else {
-                FlorafareConfig.ignoredFoodItems.add(canonical);
+
+        // The config lists are the file's view of the same rules, so they are edited to
+        // match rather than re-derived: a bare "modid" the user hand-wrote must not be
+        // rewritten into "modid:*" underneath them on an unrelated save. Edited under the
+        // config's lock — in single-player the render thread may be saving the very same
+        // lists for a HUD change at this moment.
+        FlorafareConfig.editExclusionLists(() -> {
+            if (liftedOverride) removeAllSpellings(FlorafareConfig.managedFoodItems, parsed);
+            if (excluded) {
+                if (parsed.kind() == FoodExclusions.Kind.MOD) {
+                    FlorafareConfig.ignoredFoodMods.add(parsed.value());
+                } else {
+                    FlorafareConfig.ignoredFoodItems.add(canonical);
+                }
             }
-        }
+        });
 
         if (excluded) return AddOutcome.EXCLUDED;
         return liftedOverride ? AddOutcome.OVERRIDE_LIFTED : AddOutcome.ALREADY;
@@ -223,8 +232,10 @@ public final class IgnoreCommand {
             // file may say "loot_n_explore" where the command said "loot_n_explore:*",
             // and leaving the other one behind would resurrect the rule on the next
             // config load.
-            removeAllSpellings(FlorafareConfig.ignoredFoodItems, parsed);
-            removeAllSpellings(FlorafareConfig.ignoredFoodMods, parsed);
+            FlorafareConfig.editExclusionLists(() -> {
+                removeAllSpellings(FlorafareConfig.ignoredFoodItems, parsed);
+                removeAllSpellings(FlorafareConfig.ignoredFoodMods, parsed);
+            });
             return RemoveOutcome.DELETED;
         }
 
@@ -236,7 +247,7 @@ public final class IgnoreCommand {
                 FoodExclusions.Effect.MANAGE, FoodExclusions.Source.CONFIG, canonical) == null) {
             return RemoveOutcome.NOT_LISTED;
         }
-        FlorafareConfig.managedFoodItems.add(canonical);
+        FlorafareConfig.editExclusionLists(() -> FlorafareConfig.managedFoodItems.add(canonical));
         return RemoveOutcome.OVERRIDDEN;
     }
 
@@ -252,6 +263,20 @@ public final class IgnoreCommand {
         if (parsed == null) {
             source.sendError(Text.translatable("command.florafare.ignore.invalid", raw));
             return 0;
+        }
+
+        // Checked against the game before it is written: the rule goes into
+        // florafare.json and is re-applied on every start, so "farmersdelite:*" or
+        // "minecraft:braed" used to sit there for good, excluding nothing. Remove is
+        // deliberately not checked — clearing out exactly such a rule is what it is for.
+        TargetValidation.Check check = TargetValidation.exclusionRule(parsed, DatapackLookup.LIVE);
+        if (check.isError()) {
+            source.sendError(Text.translatable(check.key(), check.argument()));
+            return 0;
+        }
+        if (check.isWarning()) {
+            source.sendFeedback(() -> Text.translatable(check.key(), check.argument())
+                    .formatted(Formatting.YELLOW), false);
         }
 
         if (addOne(parsed) == AddOutcome.ALREADY) {
@@ -421,11 +446,9 @@ public final class IgnoreCommand {
         return new InventoryScan(List.copyOf(ordered), nonFood);
     }
 
+    /** Callers hold the config lock; see {@link FlorafareConfig#editExclusionLists}. */
     private static void removeAllSpellings(List<String> list, FoodExclusions.Entry target) {
-        for (Iterator<String> it = list.iterator(); it.hasNext(); ) {
-            FoodExclusions.Entry entry = FoodExclusions.parse(it.next());
-            if (entry != null && entry.equals(target)) it.remove();
-        }
+        list.removeIf(raw -> target.equals(FoodExclusions.parse(raw)));
     }
 
     /**

@@ -29,6 +29,16 @@ public interface DatapackLookup {
     /** Whether a mod with this id is loaded, so a target from an absent mod is not reported as a typo. */
     boolean modLoaded(String namespace);
 
+    /**
+     * Whether anything in the game uses this namespace: a loaded mod with that id, or at
+     * least one registered item under it. Both are asked because a mod's id and the
+     * namespace of its items do not have to match — and a rule naming "the items of mod
+     * X" is about the namespace, not the mod id.
+     */
+    default boolean namespaceInUse(String namespace) {
+        return modLoaded(namespace);
+    }
+
     /** What an item tag holds right now, as far as {@link #tagState} can tell. */
     enum TagState { MISSING, EMPTY, PRESENT }
 
@@ -69,6 +79,15 @@ public interface DatapackLookup {
         @Override
         public boolean modLoaded(String namespace) {
             return net.fabricmc.loader.api.FabricLoader.getInstance().isModLoaded(namespace);
+        }
+
+        @Override
+        public boolean namespaceInUse(String namespace) {
+            if (modLoaded(namespace)) return true;
+            for (Identifier id : net.minecraft.registry.Registries.ITEM.getIds()) {
+                if (id.getNamespace().equals(namespace)) return true;
+            }
+            return false;
         }
 
         @Override
