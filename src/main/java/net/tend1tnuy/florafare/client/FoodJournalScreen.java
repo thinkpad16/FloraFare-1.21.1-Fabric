@@ -6,6 +6,7 @@ import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.PageTurnWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.client.sound.PositionedSoundInstance;
+import net.minecraft.entity.effect.StatusEffectCategory;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.component.DataComponentTypes;
@@ -14,6 +15,8 @@ import net.minecraft.potion.Potion;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.sound.SoundEvents;
+import net.minecraft.text.StringVisitable;
+import net.minecraft.text.Style;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
@@ -26,6 +29,7 @@ import net.tend1tnuy.florafare.food.FoodSynergyData;
 import net.tend1tnuy.florafare.food.FoodSynergyManager;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -54,10 +58,10 @@ public class FoodJournalScreen extends Screen {
     private static final int GRID_START_X_OFFSET   = 37;
     private static final int GRID_START_Y_OFFSET   = 60;
 
-    // Search bar — a single parchment "card" spanning the *same* left/right edges as
-    // the item grid below it (GRID_START_X_OFFSET - 2, out to the last column's right
-    // edge), so the two visually line up instead of the card floating narrower/offset
-    // from the grid. TextFieldWidget with drawsBackground(false) applies NONE of
+    // Search bar — a parchment "card" that, together with the sort button at its right
+    // end, spans the *same* left/right edges as the item grid below it
+    // (GRID_START_X_OFFSET - 2, out to the last column's right edge), so the two visually
+    // line up instead of the card floating narrower/offset from the grid. TextFieldWidget with drawsBackground(false) applies NONE of
     // vanilla's usual padding (no 4px left inset, no vertical centering of the text
     // row within its height), so both are computed by hand below via the search*()
     // helpers — that omission is what previously left the placeholder text flush
@@ -65,7 +69,13 @@ public class FoodJournalScreen extends Screen {
     private static final int SEARCH_BAR_Y_OFFSET    = 42;
     private static final int SEARCH_BAR_HEIGHT      = 13;
     private static final int SEARCH_BAR_LEFT_OFFSET = GRID_START_X_OFFSET - 2;
-    private static final int SEARCH_BAR_WIDTH       = (ITEMS_PER_ROW - 1) * ITEM_SPACING + 20;
+    /** The grid's full width; the search card and the sort button share it. */
+    private static final int GRID_WIDTH             = (ITEMS_PER_ROW - 1) * ITEM_SPACING + 20;
+    // Sort button: a small parchment card at the right-hand end of the search bar, which
+    // gives up exactly that much of its width.
+    private static final int SORT_BUTTON_SIZE       = 13;
+    private static final int SORT_BUTTON_GAP        = 2;
+    private static final int SEARCH_BAR_WIDTH       = GRID_WIDTH - SORT_BUTTON_SIZE - SORT_BUTTON_GAP;
     private static final int SEARCH_BAR_PAD_X       = 4;
     private static final int SEARCH_ICON_SIZE       = 7;
     private static final int SEARCH_ICON_TEXT_GAP   = 4;
@@ -94,6 +104,29 @@ public class FoodJournalScreen extends Screen {
     private static final int SYNERGY_LINES_Y_PAGE0     = 64;
     private static final int PAPER_LEFT_OFFSET         = 36;
     private static final int PAPER_WIDTH               = 114;
+
+    // Where paginated detail rows may go: the first page starts below the icon and name
+    // (lower for a food, whose icon is bigger), later pages near the top, and every page
+    // stops above the page counter.
+    private static final int DETAIL_FIRST_TOP_FOOD    = 76;
+    private static final int DETAIL_FIRST_TOP_SYNERGY = 66;
+    private static final int DETAIL_LATER_TOP         = 24;
+    private static final int DETAIL_BOTTOM            = 150;
+    /** Room a row's icon takes, text included: a 9-pixel icon and a 2-pixel gap. */
+    private static final int DETAIL_ICON_INDENT       = 11;
+    /** Kept clear at the page's right edge, so wrapped text never touches the gutter. */
+    private static final int DETAIL_RIGHT_MARGIN      = 2;
+
+    // Detail-row icons. Drawn rather than typed: the lines used to lead with emoji —
+    // a drumstick (U+1F356, outside the Basic Multilingual Plane), a stopwatch and
+    // sparkles — which the vanilla font has no bitmap glyphs for, so depending on the
+    // font pack they came out as boxes. Vanilla's own HUD sprites and item icons always
+    // exist.
+    private static final Identifier ICON_HUNGER = Identifier.ofVanilla("hud/food_full");
+    private static final Identifier ICON_HEALTH = Identifier.ofVanilla("hud/heart/full");
+
+    /** Pages a Shift+scroll turns at once in a grid. */
+    private static final int SHIFT_SCROLL_PAGES = 5;
 
     // -------------------------------------------------------------------------
     // COLOUR PALETTE
@@ -151,6 +184,7 @@ public class FoodJournalScreen extends Screen {
     private SynergyEntry hoveredSynergy  = null;
     private boolean hoverFoodsIndex     = false;
     private boolean hoverSynergiesIndex = false;
+    private boolean hoverSortButton     = false;
 
     private PageTurnWidget nextPageButton;
     private PageTurnWidget previousPageButton;
@@ -180,6 +214,38 @@ public class FoodJournalScreen extends Screen {
     }
 
     private static final JournalDataCache CACHE = new JournalDataCache();
+
+    /**
+     * Records a discovery in the cached journal without rebuilding it.
+     *
+     * <p>Every discovery used to call {@link #invalidateCache()}, and the next open then
+     * walked the whole item registry, resolving a config for each item — on a pack with
+     * a few hundred foods, a visible hitch for the sake of flipping one entry from locked
+     * to unlocked. The entries are matched the way {@code rebuildCache} unlocks them: by
+     * item id, or by the entry's target (a {@code potion:} target, a
+     * {@code /florafare buff give} unlock). Nothing to do while the cache is not built.
+     */
+    public static void markFoodDiscovered(String id) {
+        if (!CACHE.valid || id == null) return;
+        for (FoodEntry entry : CACHE.foods) {
+            if (entry.isUnlocked) continue;
+            if (id.equals(entry.itemId) || id.equals(entry.data.target())) {
+                entry.isUnlocked = true;
+                CACHE.unlockedFoods++;
+            }
+        }
+    }
+
+    /** {@link #markFoodDiscovered} for a synergy. */
+    public static void markSynergyDiscovered(String synergyId) {
+        if (!CACHE.valid || synergyId == null) return;
+        for (SynergyEntry entry : CACHE.synergies) {
+            if (!entry.isUnlocked && synergyId.equals(entry.data.id())) {
+                entry.isUnlocked = true;
+                CACHE.unlockedSynergies++;
+            }
+        }
+    }
 
     /**
      * Call this whenever food configs or synergy configs are re-synced from the server,
@@ -343,7 +409,8 @@ public class FoodJournalScreen extends Screen {
                     new PotionContentsComponent(potionEntry));
             boolean isUnlocked = discoveredFoods.contains(target);
             if (isUnlocked) CACHE.unlockedFoods++;
-            CACHE.foods.add(new FoodEntry(displayStack, data, isUnlocked));
+            CACHE.foods.add(new FoodEntry(displayStack, data, isUnlocked,
+                    target, id.getNamespace()));
         }
 
         // Item-target entries — single registry walk
@@ -363,11 +430,13 @@ public class FoodJournalScreen extends Screen {
                 continue;
             }
 
-            String itemId = Registries.ITEM.getId(item).toString();
+            Identifier registryId = Registries.ITEM.getId(item);
+            String itemId = registryId.toString();
             boolean isUnlocked =
                     discoveredFoods.contains(itemId) || discoveredFoods.contains(data.target());
             if (isUnlocked) CACHE.unlockedFoods++;
-            CACHE.foods.add(new FoodEntry(stack, data, isUnlocked));
+            CACHE.foods.add(new FoodEntry(stack, data, isUnlocked,
+                    itemId, registryId.getNamespace()));
         }
 
         // Synergy entries
@@ -402,11 +471,14 @@ public class FoodJournalScreen extends Screen {
         updatePageButtons();
     }
 
-    /** Recomputes {@link #filteredFoods}/{@link #filteredSynergies} from the current query. */
+    /**
+     * Recomputes {@link #filteredFoods}/{@link #filteredSynergies} from the current query
+     * and sort order.
+     */
     private void rebuildFilteredLists() {
         String query = searchQuery.trim().toLowerCase(Locale.ROOT);
 
-        if (query.isEmpty()) {
+        if (query.isEmpty() && sortMode == SortMode.REGISTRY) {
             // Aliases, not copies: these two lists are only ever replaced, never mutated
             // through the filtered view, and the unfiltered case is the common one.
             filteredFoods     = CACHE.foods;
@@ -416,7 +488,7 @@ public class FoodJournalScreen extends Screen {
 
         filteredFoods = new ArrayList<>();
         for (FoodEntry entry : CACHE.foods) {
-            if (matchesQuery(entry.stack.getName().getString(), entry.data.effects(),
+            if (query.isEmpty() || matchesQuery(entry.displayName(), entry.data.effects(),
                     entry.data.attributes(), query)) {
                 filteredFoods.add(entry);
             }
@@ -424,12 +496,74 @@ public class FoodJournalScreen extends Screen {
 
         filteredSynergies = new ArrayList<>();
         for (SynergyEntry entry : CACHE.synergies) {
-            String name = Text.translatable(
-                    "synergy.florafare." + entry.data.id().replace(":", ".")).getString();
-            if (matchesQuery(name, entry.data.effects(), entry.data.attributes(), query)) {
+            if (query.isEmpty() || matchesQuery(entry.displayName(), entry.data.effects(),
+                    entry.data.attributes(), query)) {
                 filteredSynergies.add(entry);
             }
         }
+
+        // Sorted copies — never the cache's own lists, which the registry order lives in.
+        Comparator<FoodEntry> foodOrder = foodComparator(sortMode);
+        if (foodOrder != null) filteredFoods.sort(foodOrder);
+        Comparator<SynergyEntry> synergyOrder = synergyComparator(sortMode);
+        if (synergyOrder != null) filteredSynergies.sort(synergyOrder);
+    }
+
+    // -------------------------------------------------------------------------
+    // SORTING
+    // -------------------------------------------------------------------------
+
+    /**
+     * Grid orders. {@code REGISTRY} is the order the game registers items in, which keeps
+     * each mod's foods together in the order the mod listed them — what the journal has
+     * always shown, and still the default. The rest exist because a pack with hundreds of
+     * foods is unbrowsable in that order alone.
+     */
+    private enum SortMode {
+        REGISTRY("default"), NAME("name"), DISCOVERED("discovered"), MOD("mod");
+
+        final String key;
+
+        SortMode(String key) { this.key = key; }
+
+        SortMode next() { return values()[(ordinal() + 1) % values().length]; }
+
+        Text label() { return Text.translatable("gui.florafare.journal.sort." + key); }
+    }
+
+    /** Kept across opens for the session, like a recipe book remembers its filter. */
+    private static SortMode sortMode = SortMode.REGISTRY;
+
+    /** Case-insensitive, so "apple pie" and "Apple Pie" from two mods sort together. */
+    private static final Comparator<String> NAME_ORDER = String.CASE_INSENSITIVE_ORDER;
+
+    private static Comparator<FoodEntry> foodComparator(SortMode mode) {
+        Comparator<FoodEntry> byName = Comparator.comparing(FoodEntry::displayName, NAME_ORDER);
+        return switch (mode) {
+            case NAME       -> byName;
+            // Discovered first, and A-Z inside each half: "what have I found" at a glance.
+            case DISCOVERED -> Comparator.comparing((FoodEntry e) -> !e.isUnlocked).thenComparing(byName);
+            case MOD        -> Comparator.comparing((FoodEntry e) -> e.namespace).thenComparing(byName);
+            default         -> null;
+        };
+    }
+
+    private static Comparator<SynergyEntry> synergyComparator(SortMode mode) {
+        Comparator<SynergyEntry> byName = Comparator.comparing(SynergyEntry::displayName, NAME_ORDER);
+        return switch (mode) {
+            case NAME       -> byName;
+            case DISCOVERED -> Comparator.comparing((SynergyEntry e) -> !e.isUnlocked).thenComparing(byName);
+            case MOD        -> Comparator.comparing((SynergyEntry e) -> e.namespace()).thenComparing(byName);
+            default         -> null;
+        };
+    }
+
+    private void cycleSortMode() {
+        sortMode = sortMode.next();
+        rebuildFilteredLists();
+        this.currentPage = 0;
+        updatePageButtons();
+        playPageTurnSound();
     }
 
     /**
@@ -443,15 +577,17 @@ public class FoodJournalScreen extends Screen {
                                  List<FoodBuffData.AttributeData> attributes, String query) {
         if (displayName.toLowerCase(Locale.ROOT).contains(query)) return true;
 
+        // The names exactly as the detail page prints them. The attribute half used to
+        // build a path-only key of its own, so a modded attribute could only be found by
+        // the raw key string ("florafare.attribute.chance") and never by the name on the
+        // page; effects missed every effect whose mod names its key differently.
         for (FoodBuffData.EffectData effect : effects) {
-            String effectName = Text.translatable(
-                    "effect." + effect.id().getNamespace() + "." + effect.id().getPath()).getString();
+            String effectName = BuffDescription.effectName(effect.id()).getString();
             if (effectName.toLowerCase(Locale.ROOT).contains(query)) return true;
         }
 
         for (FoodBuffData.AttributeData attr : attributes) {
-            String attrKey = "florafare.attribute." + attr.attributeId().getPath().replace("generic.", "");
-            String attrName = Text.translatable(attrKey).getString();
+            String attrName = BuffDescription.attributeName(attr.attributeId()).getString();
             if (attrName.toLowerCase(Locale.ROOT).contains(query)) return true;
         }
 
@@ -502,44 +638,65 @@ public class FoodJournalScreen extends Screen {
     // -------------------------------------------------------------------------
 
     private void buildDetailPages(ItemStack stack, FoodBuffData data) {
-        detailPages.clear();
-        detailCurrentPage = 0;
         List<RenderLine> allLines = new ArrayList<>();
 
-        // A hunger-only entry grants no buff, so it has no buff length to list.
-        if (!data.isHungerOnly()) {
+        // A hunger-only entry grants no buff, so it has no buff length to list — and says
+        // so, rather than leaving the reader to wonder where the duration went.
+        if (data.isHungerOnly()) {
+            allLines.add(new RenderLine(
+                    Text.translatable("gui.florafare.journal.hunger_only").getString(),
+                    COLOR_INK_FAINT, 12, 0));
+        } else {
             allLines.add(new RenderLine(
                     Text.translatable("gui.florafare.journal.duration",
-                            BuffDescription.mmss(data.duration())).getString(),
-                    COLOR_INK_MID, 12, 0));
+                            BuffDescription.formatDuration(data.duration())).getString(),
+                    COLOR_INK_MID, 12, 0).withIcon(new ItemStack(Items.CLOCK)));
         }
-        // Resolved against this entry's own item: an entry that leaves nutrition or
-        // saturation to the food stores a sentinel in that field, not a number.
-        allLines.add(new RenderLine(
-                Text.translatable("gui.florafare.journal.nutrition",
-                        data.effectiveNutrition(stack)).getString(),
-                COLOR_INK_MID, 12, 0));
-        // The datapack field is a saturation *modifier*; the page shows what it actually
-        // restores, the same number the item tooltip and the EMI panel print.
-        allLines.add(new RenderLine(
-                Text.translatable("gui.florafare.journal.saturation",
-                        BuffDescription.trimFloat(data.effectiveSaturationPoints(stack))).getString(),
-                COLOR_INK_MID, 12, 0));
+
+        // A potion: target moves no hunger, whatever the entry says — drinking a potion is
+        // not eating — so it gets no nutrition or saturation rows at all.
+        if (!BuffDescription.isPotionTarget(data)) {
+            // Resolved against this entry's own item: an entry that leaves nutrition or
+            // saturation to the food stores a sentinel in that field, not a number.
+            int nutrition = data.effectiveNutrition(stack);
+            if (nutrition < 0) {
+                allLines.add(new RenderLine(
+                        Text.translatable("gui.florafare.journal.nutrition_drain", -nutrition).getString(),
+                        COLOR_RED_DARK, 12, 0).withSprite(ICON_HUNGER));
+            } else {
+                allLines.add(new RenderLine(
+                        Text.translatable("gui.florafare.journal.nutrition", nutrition).getString(),
+                        COLOR_INK_MID, 12, 0).withSprite(ICON_HUNGER));
+            }
+            // The datapack field is a saturation *modifier*; the page shows what it
+            // actually restores, the same number the item tooltip and the EMI panel print.
+            float saturation = data.effectiveSaturationPoints(stack);
+            allLines.add(new RenderLine(
+                    Text.translatable("gui.florafare.journal.saturation",
+                            saturation < 0 ? BuffDescription.signed(saturation)
+                                    : BuffDescription.trimFloat(saturation)).getString(),
+                    saturation < 0 ? COLOR_RED_DARK : COLOR_INK_MID, 12, 0)
+                    .withIcon(new ItemStack(Items.GOLDEN_CARROT)));
+        }
+
+        if (data.alwaysEdible()) {
+            allLines.add(new RenderLine(
+                    Text.translatable("tooltip.florafare.buff.always_edible").getString(),
+                    COLOR_INK_FAINT, 12, 0));
+        }
 
         buildCommonDetailLines(allLines, data.healthBonus(), data.attributes(), data.effects());
         paginateLines(allLines, false);
     }
 
     private void buildDetailPages(FoodSynergyData data) {
-        detailPages.clear();
-        detailCurrentPage = 0;
         List<RenderLine> allLines = new ArrayList<>();
 
         allLines.add(new RenderLine(
                 Text.translatable("gui.florafare.journal.duration",
                                 Text.translatable("gui.florafare.journal.duration_dynamic").getString())
                         .getString(),
-                COLOR_INK_MID, 12, 0));
+                COLOR_INK_MID, 12, 0).withIcon(new ItemStack(Items.CLOCK)));
 
         buildCommonDetailLines(allLines, data.healthBonus(), data.attributes(), data.effects());
         paginateLines(allLines, true);
@@ -562,54 +719,130 @@ public class FoodJournalScreen extends Screen {
 
             if (healthBonus != 0) {
                 allLines.add(new RenderLine(
-                        "• " + Text.translatable("gui.florafare.journal.health",
+                        Text.translatable("gui.florafare.journal.health",
                                 BuffDescription.signed(healthBonus)).getString(),
-                        COLOR_INK_LIGHT, 11, 4));
+                        healthBonus < 0 ? COLOR_RED_DARK : COLOR_INK_LIGHT, 11, 4)
+                        .withSprite(ICON_HEALTH));
             }
 
             if (hasAttributes) {
                 for (FoodBuffData.AttributeData attr : attributes) {
+                    // Red ink for a modifier that works against the player, by the same
+                    // rule the tooltip colours it with (the attribute's own category).
+                    boolean harmful = BuffDescription.attributeFormatting(
+                            attr.attributeId(), attr.amount()) == Formatting.RED;
                     allLines.add(new RenderLine(
                             "• " + BuffDescription.attributeName(attr.attributeId()).getString()
                                     + ": " + BuffDescription.formatAmount(attr.amount(), attr.operation()),
-                            COLOR_INK_LIGHT, 11, 4));
+                            harmful ? COLOR_RED_DARK : COLOR_INK_LIGHT, 11, 4));
                 }
             }
         }
 
         if (effects != null && !effects.isEmpty()) {
-            allLines.add(new RenderLine("", COLOR_INK_DARK, 6, 0));
-            allLines.add(new RenderLine(
-                    Text.translatable("gui.florafare.journal.effects_title").getString(),
-                    COLOR_INK_DARK, 14, 0, true));
-            for (var effect : effects) {
-                allLines.add(new RenderLine(
-                        "• " + BuffDescription.effectName(effect.id()).getString()
-                                + BuffDescription.amplifierNumeral(effect.amplifier())
-                                + " (" + BuffDescription.mmss(effect.duration()) + ")",
-                        COLOR_INK_LIGHT, 11, 4));
+            // Harmful effects under a heading of their own, in red ink — the same split the
+            // tooltip makes. They used to be listed as "Effects" like any other, so a dish
+            // that poisons you read as one that grants Poison.
+            List<FoodBuffData.EffectData> granted = new ArrayList<>();
+            List<FoodBuffData.EffectData> inflicted = new ArrayList<>();
+            for (FoodBuffData.EffectData effect : effects) {
+                (BuffDescription.effectCategory(effect.id()) == StatusEffectCategory.HARMFUL
+                        ? inflicted : granted).add(effect);
             }
+            appendEffectLines(allLines, "gui.florafare.journal.effects_title", granted);
+            appendEffectLines(allLines, "gui.florafare.journal.inflicts_title", inflicted);
         }
     }
 
+    private void appendEffectLines(List<RenderLine> allLines, String headingKey,
+                                   List<FoodBuffData.EffectData> effects) {
+        if (effects.isEmpty()) return;
+        allLines.add(new RenderLine("", COLOR_INK_DARK, 6, 0));
+        allLines.add(new RenderLine(Text.translatable(headingKey).getString(),
+                COLOR_INK_DARK, 14, 0, true));
+        for (FoodBuffData.EffectData effect : effects) {
+            int color = switch (BuffDescription.effectCategory(effect.id())) {
+                case HARMFUL -> COLOR_RED_DARK;
+                case NEUTRAL -> COLOR_GOLD;
+                default      -> COLOR_INK_LIGHT;
+            };
+            allLines.add(new RenderLine(
+                    "• " + BuffDescription.effectLabel(effect).getString()
+                            + " (" + BuffDescription.formatDuration(effect.duration()) + ")",
+                    color, 11, 4));
+        }
+    }
+
+    /**
+     * Wraps every line to the page, then splits the rows into pages.
+     *
+     * <p>Neither used to happen: a line was drawn as one string however long it was, so
+     * a modded attribute name, a long effect or most of the Ukrainian translation ran past
+     * the right-hand edge of the page and over the book's binding — and since pagination
+     * counted logical lines, not rows, wrapping alone would have pushed the last rows
+     * through the page counter. Rows are measured here and paginated by height in
+     * {@link JournalLayout}.
+     */
     private void paginateLines(List<RenderLine> allLines, boolean isSynergy) {
-        List<RenderLine> currentPageLines = new ArrayList<>();
-        int currentY = isSynergy ? 66 : 76;
-        int maxY     = 150;
+        detailPages.clear();
+        detailCurrentPage = 0;
 
-        for (RenderLine line : allLines) {
-            if (currentY + line.height > maxY) {
-                detailPages.add(currentPageLines);
-                currentPageLines = new ArrayList<>();
-                currentY = 24;
-            }
-            currentPageLines.add(line);
-            currentY += line.height;
-        }
+        List<RenderLine> rows = new ArrayList<>();
+        for (RenderLine line : allLines) rows.addAll(wrapLine(line));
 
-        if (!currentPageLines.isEmpty() || detailPages.isEmpty()) {
-            detailPages.add(currentPageLines);
+        List<JournalLayout.Row> layout = new ArrayList<>(rows.size());
+        for (RenderLine row : rows) {
+            layout.add(new JournalLayout.Row(row.height, row.text.isEmpty(), row.isHeader));
         }
+        for (List<Integer> page : JournalLayout.paginate(layout,
+                isSynergy ? DETAIL_FIRST_TOP_SYNERGY : DETAIL_FIRST_TOP_FOOD,
+                DETAIL_LATER_TOP, DETAIL_BOTTOM)) {
+            List<RenderLine> pageLines = new ArrayList<>(page.size());
+            for (int index : page) pageLines.add(rows.get(index));
+            detailPages.add(pageLines);
+        }
+    }
+
+    /** Height of a wrapped heading's leading rows; its last row keeps the rule and full height. */
+    private static final int WRAPPED_ROW_HEIGHT = 10;
+
+    /**
+     * One logical line as the rows it takes on the page. Continuation rows drop the icon
+     * and are indented to start under the text rather than under the bullet or icon, so
+     * a wrapped entry still reads as one entry.
+     */
+    private List<RenderLine> wrapLine(RenderLine line) {
+        if (line.text.isEmpty() || this.textRenderer == null) return List.of(line);
+
+        int iconRoom = line.hasIcon() ? DETAIL_ICON_INDENT : 0;
+        int width = PAPER_WIDTH - line.offsetX - iconRoom - DETAIL_RIGHT_MARGIN;
+        if (this.textRenderer.getWidth(line.text) <= width) return List.of(line);
+
+        // Continuations line up under the text after "• ", not under the bullet.
+        int hanging = line.text.startsWith("• ") ? this.textRenderer.getWidth("• ") : 0;
+        List<StringVisitable> first = this.textRenderer.getTextHandler()
+                .wrapLines(line.text, width, Style.EMPTY);
+        if (first.size() <= 1) return List.of(line);
+
+        // The first row keeps the full width; the rest are wrapped again at the narrower
+        // hanging width so they cannot overrun once they have been indented.
+        String rest = line.text.substring(Math.min(line.text.length(), first.get(0).getString().length()))
+                .stripLeading();
+        List<StringVisitable> continuation = this.textRenderer.getTextHandler()
+                .wrapLines(rest, Math.max(10, width + iconRoom - hanging), Style.EMPTY);
+
+        List<RenderLine> rows = new ArrayList<>(1 + continuation.size());
+        boolean header = line.isHeader;
+        rows.add(line.derive(first.get(0).getString(), line.offsetX,
+                header && continuation.isEmpty() ? line.height : (header ? WRAPPED_ROW_HEIGHT : line.height),
+                header && continuation.isEmpty(), true));
+        for (int i = 0; i < continuation.size(); i++) {
+            boolean last = i == continuation.size() - 1;
+            rows.add(line.derive(continuation.get(i).getString(), line.offsetX + hanging,
+                    header && !last ? WRAPPED_ROW_HEIGHT : line.height,
+                    header && last, false));
+        }
+        return rows;
     }
 
     // -------------------------------------------------------------------------
@@ -652,6 +885,7 @@ public class FoodJournalScreen extends Screen {
         hoveredSynergy      = null;
         hoverFoodsIndex     = false;
         hoverSynergiesIndex = false;
+        hoverSortButton     = false;
 
         // Content slide: each time the state changes (index -> grid -> detail, and
         // back), the new content eases up into place instead of snapping in instantly.
@@ -692,8 +926,7 @@ public class FoodJournalScreen extends Screen {
                             BuffDescription.lockedLines(), mouseX, mouseY);
                 } else {
                     context.drawTooltip(this.textRenderer,
-                            Text.translatable("synergy.florafare."
-                                    + hoveredSynergy.data.id().replace(":", ".")),
+                            BuffDescription.synergyName(hoveredSynergy.data.id()),
                             mouseX, mouseY);
                 }
             } else if (hoveredEntry != null) {
@@ -704,6 +937,11 @@ public class FoodJournalScreen extends Screen {
                     context.drawTooltip(this.textRenderer,
                             hoveredEntry.stack.getName(), mouseX, mouseY);
                 }
+            } else if (hoverSortButton) {
+                context.drawTooltip(this.textRenderer, List.of(
+                        Text.translatable("gui.florafare.journal.sort", sortMode.label()),
+                        Text.translatable("gui.florafare.journal.sort.hint")
+                                .formatted(Formatting.GRAY)), mouseX, mouseY);
             }
         }
     }
@@ -810,6 +1048,39 @@ public class FoodJournalScreen extends Screen {
         context.drawText(this.textRenderer, gem, centerX - gemW / 2, y, COLOR_INK_FAINT, false);
     }
 
+    /**
+     * Hand-drawn sort glyph: three bars whose shape shows the current order — equal
+     * (registry), shortening (A-Z), a gold top bar (discovered first), two groups (by
+     * mod). The tooltip names the mode; the glyph only has to change when it does.
+     */
+    private void drawSortIcon(DrawContext context, int x, int y) {
+        int ink  = 0xFF5C4A2A;
+        int gold = 0xFFAA8800;
+        switch (sortMode) {
+            case NAME -> {
+                context.fill(x, y,     x + 7, y + 1, ink);
+                context.fill(x, y + 3, x + 5, y + 4, ink);
+                context.fill(x, y + 6, x + 3, y + 7, ink);
+            }
+            case DISCOVERED -> {
+                context.fill(x, y,     x + 7, y + 1, gold);
+                context.fill(x, y + 3, x + 7, y + 4, ink);
+                context.fill(x, y + 6, x + 7, y + 7, ink);
+            }
+            case MOD -> {
+                context.fill(x, y,     x + 3, y + 1, ink);
+                context.fill(x, y + 2, x + 3, y + 3, ink);
+                context.fill(x + 4, y + 4, x + 7, y + 5, ink);
+                context.fill(x + 4, y + 6, x + 7, y + 7, ink);
+            }
+            default -> {
+                context.fill(x, y,     x + 7, y + 1, ink);
+                context.fill(x, y + 3, x + 7, y + 4, ink);
+                context.fill(x, y + 6, x + 7, y + 7, ink);
+            }
+        }
+    }
+
     /** Small hand-drawn magnifying glass (lens ring + diagonal handle) — no texture asset needed. */
     private void drawMagnifyingGlass(DrawContext context, int x, int y) {
         int color = 0xFF5C4A2A; // COLOR_INK_LIGHT, made opaque for fill/drawBorder use
@@ -873,6 +1144,15 @@ public class FoodJournalScreen extends Screen {
         context.drawBorder(barLeft, barTop,
                 SEARCH_BAR_WIDTH, SEARCH_BAR_HEIGHT, COLOR_SEARCH_BOX_BORDER);
         drawMagnifyingGlass(context, searchIconX(bookX), searchIconY(bookY));
+
+        // Sort button, the same parchment card as the search bar beside it.
+        int sortX = sortButtonX(bookX);
+        hoverSortButton = isOverSortButton(mouseX, mouseY, bookX, bookY);
+        context.fill(sortX, barTop, sortX + SORT_BUTTON_SIZE, barTop + SORT_BUTTON_SIZE,
+                COLOR_SEARCH_BOX_BG);
+        context.drawBorder(sortX, barTop, SORT_BUTTON_SIZE, SORT_BUTTON_SIZE,
+                hoverSortButton ? 0x88AA8800 : COLOR_SEARCH_BOX_BORDER);
+        drawSortIcon(context, sortX + 3, barTop + 3);
 
         // Rendered manually (not by Screen's automatic drawable pass — see the
         // addSelectableChild comment in init()) so the field's own text/caret/
@@ -1047,8 +1327,7 @@ public class FoodJournalScreen extends Screen {
 
             py += 24;
 
-            String name      = Text.translatable("synergy.florafare."
-                    + selectedSynergy.data.id().replace(":", ".")).getString();
+            String name      = BuffDescription.synergyName(selectedSynergy.data.id()).getString();
             int    nameWidth = this.textRenderer.getWidth(name);
             if (nameWidth > PAPER_WIDTH - 4) {
                 name      = this.textRenderer.trimToWidth(name, PAPER_WIDTH - 14) + "…";
@@ -1079,7 +1358,11 @@ public class FoodJournalScreen extends Screen {
                 continue;
             }
 
-            if (line.isHeader) {
+            if (line.hasIcon()) {
+                drawLineIcon(context, line, px + line.offsetX, py - 1);
+                context.drawText(this.textRenderer, line.text,
+                        px + line.offsetX + DETAIL_ICON_INDENT, py, line.color, false);
+            } else if (line.isHeader) {
                 // Headers are set apart by ink tone and a rule only. They used to be
                 // faux-bolded by drawing the same string again 1 px to the right, but
                 // Minecraft's font leaves just 1 px between glyphs, so the second pass
@@ -1096,6 +1379,19 @@ public class FoodJournalScreen extends Screen {
             }
             py += line.height;
         }
+    }
+
+    /** A row's 9-pixel icon: a GUI sprite at its size, or an item at half size. */
+    private void drawLineIcon(DrawContext context, RenderLine line, int x, int y) {
+        if (line.sprite != null) {
+            context.drawGuiTexture(line.sprite, x, y, 9, 9);
+            return;
+        }
+        context.getMatrices().push();
+        context.getMatrices().translate(x, y, 0);
+        context.getMatrices().scale(0.5f, 0.5f, 1.0f);
+        context.drawItem(line.icon, 0, 1);
+        context.getMatrices().pop();
     }
 
     private void drawDetailPageCounter(DrawContext context, int bookX, int bookY) {
@@ -1141,6 +1437,17 @@ public class FoodJournalScreen extends Screen {
         return searchBarLeft(bookX) + SEARCH_BAR_WIDTH - SEARCH_BAR_PAD_X - searchTextX(bookX);
     }
 
+    private int sortButtonX(int bookX) {
+        return searchBarLeft(bookX) + SEARCH_BAR_WIDTH + SORT_BUTTON_GAP;
+    }
+
+    private boolean isOverSortButton(double mouseX, double mouseY, int bookX, int bookY) {
+        int x = sortButtonX(bookX);
+        int y = searchBarTop(bookY);
+        return mouseX >= x && mouseX < x + SORT_BUTTON_SIZE
+                && mouseY >= y && mouseY < y + SORT_BUTTON_SIZE;
+    }
+
     /**
      * Cycles through a list of ItemStacks once per ~1.2 seconds.
      */
@@ -1176,6 +1483,10 @@ public class FoodJournalScreen extends Screen {
                     || currentState == ScreenState.SYNERGY_GRID) {
                 int bookX  = bookX();
                 int bookY  = bookY();
+                if (isOverSortButton(mouseX, mouseY, bookX, bookY)) {
+                    cycleSortMode();
+                    return true;
+                }
                 int startX = bookX + GRID_START_X_OFFSET;
                 int startY = bookY + GRID_START_Y_OFFSET;
 
@@ -1232,6 +1543,12 @@ public class FoodJournalScreen extends Screen {
      * and no scroll support reads as broken to anyone who has used one of the big
      * recipe-book mods, and the gesture is free here because the journal never has a
      * scrollable region of its own competing for it.
+     *
+     * <p>With Shift held a grid turns {@value #SHIFT_SCROLL_PAGES} pages at a time and a
+     * detail view goes straight to its first or last page: a pack with several hundred
+     * foods is thirty-odd grid pages, and one notch per page made the far end of the
+     * book a chore to reach. A jump that would overshoot stops on the last page rather
+     * than doing nothing.
      */
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontal, double vertical) {
@@ -1239,14 +1556,18 @@ public class FoodJournalScreen extends Screen {
             return super.mouseScrolled(mouseX, mouseY, horizontal, vertical);
         }
         boolean forward = vertical < 0;
+        boolean jump    = Screen.hasShiftDown();
 
         if (currentState == ScreenState.FOOD_DETAIL || currentState == ScreenState.SYNERGY_DETAIL) {
-            int target = detailCurrentPage + (forward ? 1 : -1);
-            if (target < 0 || target >= detailPages.size()) return true;
+            int last   = detailPages.size() - 1;
+            int target = jump ? (forward ? last : 0) : detailCurrentPage + (forward ? 1 : -1);
+            target = MathHelper.clamp(target, 0, Math.max(0, last));
+            if (target == detailCurrentPage) return true;
             detailCurrentPage = target;
         } else if (currentState == ScreenState.FOOD_GRID || currentState == ScreenState.SYNERGY_GRID) {
-            int target = currentPage + (forward ? 1 : -1);
-            if (target < 0 || target >= maxPages) return true;
+            int step   = jump ? SHIFT_SCROLL_PAGES : 1;
+            int target = MathHelper.clamp(currentPage + (forward ? step : -step), 0, Math.max(0, maxPages - 1));
+            if (target == currentPage) return true;
             currentPage = target;
         } else {
             return super.mouseScrolled(mouseX, mouseY, horizontal, vertical);
@@ -1354,6 +1675,10 @@ public class FoodJournalScreen extends Screen {
         final int     offsetX;
         /** Section headers get the rule underneath; body lines are drawn plain. */
         final boolean isHeader;
+        /** A GUI sprite drawn in front of the text, or null. */
+        Identifier sprite = null;
+        /** An item drawn at half size in front of the text, or null. */
+        ItemStack  icon   = null;
 
         RenderLine(String text, int color, int height, int offsetX) {
             this(text, color, height, offsetX, false);
@@ -1366,31 +1691,73 @@ public class FoodJournalScreen extends Screen {
             this.offsetX  = offsetX;
             this.isHeader = isHeader;
         }
+
+        RenderLine withSprite(Identifier sprite) { this.sprite = sprite; return this; }
+        RenderLine withIcon(ItemStack icon)      { this.icon = icon;     return this; }
+
+        boolean hasIcon() { return sprite != null || icon != null; }
+
+        /** A wrapped row of this line; only the first row keeps the icon. */
+        RenderLine derive(String text, int offsetX, int height, boolean isHeader, boolean keepIcon) {
+            RenderLine row = new RenderLine(text, color, height, offsetX, isHeader);
+            if (keepIcon) {
+                row.sprite = sprite;
+                row.icon   = icon;
+            }
+            return row;
+        }
     }
 
     private static class FoodEntry {
         final ItemStack    stack;
         final FoodBuffData data;
-        final boolean      isUnlocked;
+        /** The item id, or the {@code potion:} target for a potion; matched on discovery. */
+        final String       itemId;
+        /** The owning mod's namespace, for sorting by mod. */
+        final String       namespace;
+        /** Flipped in place by {@link #markFoodDiscovered}, which is why it is not final. */
+        boolean            isUnlocked;
         float hoverScale = 1.0f;
+        /** The display name, resolved once — search and sorting both ask for it a lot. */
+        private String     displayName = null;
 
-        FoodEntry(ItemStack stack, FoodBuffData data, boolean isUnlocked) {
+        FoodEntry(ItemStack stack, FoodBuffData data, boolean isUnlocked,
+                  String itemId, String namespace) {
             this.stack      = stack;
             this.data       = data;
             this.isUnlocked = isUnlocked;
+            this.itemId     = itemId;
+            this.namespace  = namespace;
+        }
+
+        String displayName() {
+            if (displayName == null) displayName = stack.getName().getString();
+            return displayName;
         }
     }
 
     private static class SynergyEntry {
         final FoodSynergyData       data;
         final List<List<ItemStack>> reqStacks;
-        final boolean               isUnlocked;
+        /** Flipped in place by {@link #markSynergyDiscovered}. */
+        boolean                     isUnlocked;
         float hoverScale = 1.0f;
+        private String displayName = null;
 
         SynergyEntry(FoodSynergyData data, List<List<ItemStack>> reqStacks, boolean isUnlocked) {
             this.data       = data;
             this.reqStacks  = reqStacks;
             this.isUnlocked = isUnlocked;
+        }
+
+        String displayName() {
+            if (displayName == null) displayName = BuffDescription.synergyName(data.id()).getString();
+            return displayName;
+        }
+
+        String namespace() {
+            int colon = data.id().indexOf(':');
+            return colon < 0 ? "" : data.id().substring(0, colon);
         }
     }
 

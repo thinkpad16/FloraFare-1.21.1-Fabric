@@ -317,9 +317,10 @@ public class FlorafareClient implements ClientModInitializer {
                         ((IFoodComponentProvider) player).florafare$getFoodComponent()
                                 .getDiscoveredFoods().add(payload.itemId());
                     }
-                    // A new food was discovered — invalidate the cache so the journal
-                    // shows the updated unlock state on next open (#7).
-                    FoodJournalScreen.invalidateCache();
+                    // A new food was discovered — flip its journal entry in place. This
+                    // used to drop the whole cache, and the next open re-resolved every
+                    // item in the registry to unlock one row.
+                    FoodJournalScreen.markFoodDiscovered(payload.itemId());
                     if (FlorafareConfig.enableDiscoveryToasts) {
                         // Through the same resolver the overlay uses, so a discovered
                         // potion: target shows its bottle rather than an apple.
@@ -339,7 +340,7 @@ public class FlorafareClient implements ClientModInitializer {
                         ((IFoodComponentProvider) player).florafare$getFoodComponent()
                                 .getDiscoveredSynergies().add(payload.synergyId());
                     }
-                    FoodJournalScreen.invalidateCache();
+                    FoodJournalScreen.markSynergyDiscovered(payload.synergyId());
                     if (FlorafareConfig.enableDiscoveryToasts) {
                         // Through BuffDescription, which falls back to the raw id when the
                         // key is untranslated. Building the key inline here meant a synergy

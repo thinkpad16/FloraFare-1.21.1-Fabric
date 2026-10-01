@@ -564,12 +564,6 @@ public final class BuffDescription {
         return DurationFormat.format(ticks);
     }
 
-    /** @deprecated callers move to {@link #formatDuration}; kept until they have. */
-    @Deprecated
-    public static String mmss(int ticks) {
-        return formatDuration(ticks);
-    }
-
     /**
      * The minus sign every signed number uses. A real minus (U+2212) rather than the
      * hyphen: it is as wide as the plus it stands opposite, so a column of "+2" and "−2"
