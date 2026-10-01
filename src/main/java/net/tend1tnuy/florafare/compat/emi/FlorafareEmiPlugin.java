@@ -8,8 +8,11 @@ import net.minecraft.component.DataComponentTypes;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.registry.Registries;
+import net.minecraft.util.Identifier;
 import net.tend1tnuy.florafare.Florafare;
+import net.tend1tnuy.florafare.component.ActiveFoodBuff;
 import net.tend1tnuy.florafare.config.FlorafareConfig;
+import net.tend1tnuy.florafare.food.FoodBuffData;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
 import net.tend1tnuy.florafare.food.FoodSynergyData;
 import net.tend1tnuy.florafare.food.FoodSynergyManager;
@@ -71,6 +74,27 @@ public class FlorafareEmiPlugin implements EmiPlugin {
 
             registry.addRecipe(new FoodBuffEmiRecipe(stack));
             foods++;
+        }
+
+        // potion: targets. A brewed potion is not food, so the registry walk above never
+        // reaches one, and every potion is the same item — the panels are made from the
+        // synced entries instead, one per target, each with its own bottle. Configs land
+        // after EMI's first build, so these appear on the rebuild the config sync asks
+        // for (EmiReloadBridge), exactly like the synergies below.
+        if (!FoodBuffManager.isExcluded(net.minecraft.item.Items.POTION)) {
+            for (FoodBuffData data : FoodBuffManager.getAllConfigs()) {
+                String target = data.target();
+                if (!target.startsWith(FoodBuffManager.POTION_PREFIX)) continue;
+                ItemStack bottle = ActiveFoodBuff.iconStackFor(target);
+                // iconStackFor answers an apple for a potion this game does not have.
+                if (!bottle.isOf(net.minecraft.item.Items.POTION)) continue;
+                Identifier potionId = Identifier.tryParse(
+                        target.substring(FoodBuffManager.POTION_PREFIX.length()));
+                if (potionId == null) continue;
+                registry.addRecipe(new FoodBuffEmiRecipe(bottle,
+                        "potion/" + potionId.getNamespace() + "/" + potionId.getPath()));
+                foods++;
+            }
         }
 
         int synergies = 0;

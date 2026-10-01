@@ -16,6 +16,7 @@ import net.minecraft.util.Language;
 import net.tend1tnuy.florafare.Florafare;
 import net.tend1tnuy.florafare.client.BuffDescription;
 import net.tend1tnuy.florafare.food.FoodSynergyData;
+import net.tend1tnuy.florafare.food.FoodSynergyManager;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -51,9 +52,10 @@ public class SynergyEmiRecipe implements EmiRecipe {
     private final Identifier id;
     private final List<EmiIngredient> requirements;
 
-    /** Measured on first use and cached; see {@link #measure}. */
+    /** Measured on use and cached until the stamp moves; see {@link #ensureMeasured}. */
     private int width = -1;
     private int height = -1;
+    private String sizeStamp = null;
 
     public SynergyEmiRecipe(FoodSynergyData synergy) {
         this.synergy = synergy;
@@ -108,14 +110,39 @@ public class SynergyEmiRecipe implements EmiRecipe {
 
     @Override
     public int getDisplayWidth() {
-        if (width < 0) measure();
+        ensureMeasured();
         return width;
     }
 
     @Override
     public int getDisplayHeight() {
-        if (height < 0) measure();
+        ensureMeasured();
         return height;
+    }
+
+    /**
+     * The synergy as it is defined now. A synergy sync replaces the definitions, and when
+     * EMI's reload cannot be triggered this recipe outlives the object it was built from;
+     * the text follows the live one. The requirement slots stay as built — they only
+     * change with a reload, which does rebuild the recipe whenever EMI allows it.
+     */
+    private FoodSynergyData current() {
+        FoodSynergyData live = FoodSynergyManager.getSynergy(synergy.id());
+        return live != null ? live : synergy;
+    }
+
+    /**
+     * Re-measures when the language, the config generation or the synergy object itself
+     * changed — the same rule as {@link FoodBuffEmiRecipe}, whose panels used to be
+     * measured once and then cut off lines a live edit added.
+     */
+    private void ensureMeasured() {
+        String stamp = FoodBuffEmiRecipe.currentSizeStamp()
+                + "|" + System.identityHashCode(current());
+        if (width < 0 || !stamp.equals(sizeStamp)) {
+            measure();
+            sizeStamp = stamp;
+        }
     }
 
     @Override
@@ -150,7 +177,7 @@ public class SynergyEmiRecipe implements EmiRecipe {
         addName(widgets, name, nameX, panelWidth, discovered ? 0xFFAA00 : 0x555555);
 
         List<Text> body = discovered
-                ? BuffDescription.synergyLines(synergy)
+                ? BuffDescription.synergyLines(current())
                 : BuffDescription.lockedLines();
 
         int y = textTop();
@@ -182,8 +209,8 @@ public class SynergyEmiRecipe implements EmiRecipe {
 
     /**
      * Sizes the panel for both states at once — locked and discovered — since
-     * {@link #addWidgets} swaps between them the moment the player triggers the synergy
-     * and EMI does not re-measure in between.
+     * {@link #addWidgets} swaps between them the moment the player triggers the synergy,
+     * and a discovery bumps nothing {@link #ensureMeasured} watches.
      */
     private void measure() {
         TextRenderer textRenderer = textRenderer();
@@ -201,7 +228,7 @@ public class SynergyEmiRecipe implements EmiRecipe {
                 slotsWide + 4 + textRenderer.getWidth(BuffDescription.synergyName(synergy.id())));
 
         List<List<Text>> states = List.of(
-                BuffDescription.lockedLines(), BuffDescription.synergyLines(synergy));
+                BuffDescription.lockedLines(), BuffDescription.synergyLines(current()));
         for (List<Text> state : states) {
             for (Text line : state) {
                 widest = Math.max(widest, textRenderer.getWidth(line));

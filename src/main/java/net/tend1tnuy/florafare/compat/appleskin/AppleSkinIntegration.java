@@ -158,9 +158,16 @@ public class AppleSkinIntegration implements AppleSkinApi {
      * cursor passes over, and the component it wants is a pure function of two numbers on
      * an immutable, shared config object — so building a fresh one (plus the builder and
      * the empty effects list behind it) every time was pure garbage. Keyed by identity on
-     * purpose: configs are shared instances handed out by the resolution cache, and the
-     * map is dropped whole whenever that cache is, so a reloaded datapack cannot be
-     * served a stale entry.
+     * purpose: configs are shared instances handed out by the resolution cache.
+     *
+     * <p><b>Dropped whenever that cache is.</b> The class comment above used to promise
+     * this and nothing did it: the map was only ever reset once it passed 4096 entries, so
+     * every config replaced by a reload, a config sync or a {@code /florafare edit} stayed
+     * reachable from here for the rest of the session. The map now remembers
+     * {@link FoodBuffManager#configGeneration()} — bumped by every invalidation, on the
+     * client's sync path and the integrated server's alike — and starts over when it moves.
+     * Checked here rather than called from the manager, which is common code that must
+     * never load an AppleSkin class on a dedicated server.
      *
      * <p>Only an entry that sets both halves itself is cached. One that inherits either
      * half from the eaten item is shared by every item its target covers — a #tag entry,
@@ -169,27 +176,51 @@ public class AppleSkinIntegration implements AppleSkinApi {
      */
     private static Map<FoodBuffData, FoodComponent> viewCache = new IdentityHashMap<>();
 
+    /** The {@link FoodBuffManager#configGeneration()} {@link #viewCache} was filled under. */
+    private static int viewCacheGeneration = Integer.MIN_VALUE;
+
     private static synchronized FoodComponent viewOf(FoodBuffData data, ItemStack stack) {
         if (!data.hasNutrition() || !data.hasSaturation()) {
-            return new FoodComponent.Builder()
-                    .nutrition(data.effectiveNutrition(stack))
-                    .saturationModifier(data.effectiveSaturation(stack))
-                    .build();
+            return viewFor(data.effectiveNutrition(stack), data.effectiveSaturation(stack));
+        }
+
+        int generation = FoodBuffManager.configGeneration();
+        if (generation != viewCacheGeneration) {
+            viewCache = new IdentityHashMap<>();
+            viewCacheGeneration = generation;
         }
 
         FoodComponent cached = viewCache.get(data);
         if (cached != null) return cached;
 
-        // Bounded by a plain reset rather than an eviction policy: the only thing that
-        // grows this map is the number of distinct food configs in the pack, and a reload
-        // replaces every one of them at once.
+        // Still bounded: within one generation the map only grows with the number of
+        // distinct configs in the pack, but a pathological pack should not be able to
+        // grow it without limit.
         if (viewCache.size() > 4096) viewCache = new IdentityHashMap<>();
 
-        FoodComponent view = new FoodComponent.Builder()
-                .nutrition(data.nutrition())
-                .saturationModifier(data.saturation())
-                .build();
+        // Through the effective helpers like every other surface — for an entry that sets
+        // both halves they are the raw fields, but nothing outside FoodBuffData should
+        // have to know that.
+        FoodComponent view = viewFor(data.effectiveNutrition(stack), data.effectiveSaturation(stack));
         viewCache.put(data, view);
         return view;
+    }
+
+    /**
+     * A FoodComponent AppleSkin can draw, for a nutrition and a saturation modifier.
+     *
+     * <p>Negative values are clamped to zero. Florafare allows a food that drains hunger,
+     * but AppleSkin's row and its hunger-bar preview count drumsticks up from the current
+     * level and have no way to draw a loss — handed a negative they draw nonsense at best.
+     * A zero draws nothing, which is honest: Florafare's own tooltip spells the drain out
+     * in red, and it does so even with AppleSkin installed.
+     */
+    private static FoodComponent viewFor(int nutrition, float saturationModifier) {
+        int shownNutrition = Math.max(0, nutrition);
+        float shownModifier = shownNutrition == 0 || !(saturationModifier > 0) ? 0.0f : saturationModifier;
+        return new FoodComponent.Builder()
+                .nutrition(shownNutrition)
+                .saturationModifier(shownModifier)
+                .build();
     }
 }

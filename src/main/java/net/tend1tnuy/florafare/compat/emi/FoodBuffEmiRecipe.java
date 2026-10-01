@@ -56,20 +56,35 @@ public class FoodBuffEmiRecipe implements EmiRecipe {
     private final EmiStack input;
     private final Identifier id;
 
-    /** Measured on first use and cached; see {@link #measure}. */
+    /** Measured on use and cached until {@link #sizeStamp} changes; see {@link #measure}. */
     private int width = -1;
     private int height = -1;
+    /** What the cached size was measured against; see {@link #currentSizeStamp}. */
+    private String sizeStamp = null;
 
     public FoodBuffEmiRecipe(ItemStack stack) {
+        this(stack, idPathOf(stack));
+    }
+
+    /**
+     * A panel under an explicit id path, for stacks the item id cannot tell apart: every
+     * brewed potion is the one item {@code minecraft:potion}, so each {@code potion:}
+     * target gets {@code potion/<namespace>/<path>} instead.
+     */
+    public FoodBuffEmiRecipe(ItemStack stack, String idPath) {
         this.input = EmiStack.of(stack);
-        Identifier itemId = Registries.ITEM.getId(stack.getItem());
         // Leading "/" marks this a SYNTHETIC id: EMI looks every recipe id up in the
         // recipe manager, and one that is missing there and does not start with a slash
         // is reported as a mod bug — a red error panel in the category and a warning per
         // entry in the log, which for this category meant one line per edible item in the
         // game. These recipes are generated from the item registry and have no JSON
         // behind them by design, which is exactly what the convention is for.
-        this.id = Florafare.id("/food_buff/" + itemId.getNamespace() + "/" + itemId.getPath());
+        this.id = Florafare.id("/food_buff/" + idPath);
+    }
+
+    private static String idPathOf(ItemStack stack) {
+        Identifier itemId = Registries.ITEM.getId(stack.getItem());
+        return itemId.getNamespace() + "/" + itemId.getPath();
     }
 
     @Override
@@ -96,14 +111,41 @@ public class FoodBuffEmiRecipe implements EmiRecipe {
 
     @Override
     public int getDisplayWidth() {
-        if (width < 0) measure();
+        ensureMeasured();
         return width;
     }
 
     @Override
     public int getDisplayHeight() {
-        if (height < 0) measure();
+        ensureMeasured();
         return height;
+    }
+
+    /**
+     * Re-measures whenever what the panel shows may have changed.
+     *
+     * <p>The size used to be measured once for the life of the recipe object. That was
+     * fine while the buff could only change with a reload EMI also rebuilt for — but a
+     * {@code /florafare edit}, a config sync or a {@code setbuff} change the entry live,
+     * and when EMI's reload could not be triggered (its internal entry point moved, see
+     * {@link EmiReloadBridge}) the next panel was drawn with the old height and the
+     * {@code y > bottom} guard in {@link #addWidgets} cut the new lines off. The stamp is
+     * the config generation (bumped by every invalidation) plus the game language, which
+     * changes every line's width; measuring is a few dozen string widths, done only when
+     * one of them moved.
+     */
+    private void ensureMeasured() {
+        String stamp = currentSizeStamp();
+        if (width < 0 || !stamp.equals(sizeStamp)) {
+            measure();
+            sizeStamp = stamp;
+        }
+    }
+
+    static String currentSizeStamp() {
+        MinecraftClient client = MinecraftClient.getInstance();
+        String language = client == null || client.options == null ? "" : client.options.language;
+        return FoodBuffManager.configGeneration() + "|" + language;
     }
 
     /** A buff panel is not a crafting step, so it must not appear in recipe trees. */
@@ -120,7 +162,7 @@ public class FoodBuffEmiRecipe implements EmiRecipe {
         widgets.addSlot(input, 0, 0).drawBack(true);
         addName(widgets, stack, panelWidth);
 
-        FoodBuffData data = FoodBuffManager.getConfig(stack);
+        FoodBuffData data = BuffDescription.configFor(stack);
         // Either the item is on the exclusion list or another mod owns it.
         boolean managed = data != null;
         List<Text> body = managed
@@ -156,8 +198,8 @@ public class FoodBuffEmiRecipe implements EmiRecipe {
 
     /**
      * Sizes the panel to the widest line and the tallest block it could ever draw,
-     * wrapping included — measured once, since EMI asks for the size ahead of the
-     * widgets and keeps it for the life of the display.
+     * wrapping included. EMI asks for the size ahead of the widgets; see
+     * {@link #ensureMeasured} for when it is asked again.
      */
     private void measure() {
         ItemStack stack = input.getItemStack();
@@ -191,15 +233,15 @@ public class FoodBuffEmiRecipe implements EmiRecipe {
      * player eats the dish and nothing re-measures in between.
      */
     private static List<List<Text>> states(ItemStack stack) {
-        FoodBuffData data = FoodBuffManager.getConfig(stack);
+        FoodBuffData data = BuffDescription.configFor(stack);
         if (data == null) return List.of(List.of(notManagedLine()));
 
         List<Text> locked = new ArrayList<>();
-        locked.add(BuffDescription.header());
+        locked.add(BuffDescription.header(data));
         locked.addAll(BuffDescription.lockedLines());
 
         List<Text> unlocked = new ArrayList<>();
-        unlocked.add(BuffDescription.header());
+        unlocked.add(BuffDescription.header(data));
         unlocked.addAll(BuffDescription.foodBuffLines(stack, data));
 
         return List.of(locked, unlocked);
