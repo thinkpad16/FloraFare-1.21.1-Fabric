@@ -520,6 +520,14 @@ public class FoodBuffManager {
         return expired.size();
     }
 
+    /**
+     * The {@code setbuff} entry stamped under this id, or null. For the HUD, which knows a
+     * running buff only by its {@code "stack:<id>"} target and has no stack to resolve.
+     */
+    public static FoodBuffData getRuntimeStackConfig(String uuid) {
+        return uuid == null ? null : RUNTIME_STACK_CONFIGS.get(uuid);
+    }
+
     /** How many {@code setbuff} stack buffs this world holds. */
     public static int getRuntimeConfigCount() {
         return RUNTIME_STACK_CONFIGS.size();

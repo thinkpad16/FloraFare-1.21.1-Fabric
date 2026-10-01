@@ -1,12 +1,14 @@
 package net.tend1tnuy.florafare.client;
 
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
+import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.render.RenderTickCounter;
 import net.minecraft.item.ItemStack;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.math.MathHelper;
 import net.tend1tnuy.florafare.component.ActiveFoodBuff;
 import net.tend1tnuy.florafare.component.IFoodComponentProvider;
@@ -18,9 +20,46 @@ import net.tend1tnuy.florafare.food.FoodSynergyData;
 import net.tend1tnuy.florafare.food.FoodSynergyManager;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 
 public class FlorafareHud implements HudRenderCallback {
+
+    /**
+     * Registers the overlay, and the hook that draws its hover tooltip on top of whatever
+     * screen is open.
+     *
+     * <p>The tooltip used to be drawn from the HUD callback itself. The HUD renders
+     * <em>before</em> the open screen in the same frame, so the very screen that makes the
+     * cursor visible — the inventory, chat, the journal — was drawn over the tooltip, and
+     * a player hovering a slot through a translucent screen saw it half buried. Now the
+     * HUD only works out what is hovered and leaves the lines here, and each screen's
+     * after-render event (the last thing drawn in the frame) puts them up.
+     */
+    public static void register() {
+        FlorafareHud hud = new FlorafareHud();
+        HudRenderCallback.EVENT.register(hud);
+        // Per-screen events are rebuilt on every init, so registering on each one is the
+        // supported way to be called after every screen's render.
+        ScreenEvents.AFTER_INIT.register((client, screen, scaledWidth, scaledHeight) ->
+                ScreenEvents.afterRender(screen).register((current, context, mouseX, mouseY, delta) ->
+                        hud.drawDeferredTooltip(context, mouseX, mouseY)));
+    }
+
+    /** Lines the HUD found hovered this frame, waiting for the screen to finish drawing. */
+    private List<Text> deferredTooltip = null;
+
+    /**
+     * Draws and drops the deferred tooltip. Dropped even when nothing draws it, so a
+     * frame where the HUD did not run (F1, the overlay off) never shows a stale one.
+     */
+    private void drawDeferredTooltip(DrawContext context, int mouseX, int mouseY) {
+        List<Text> lines = deferredTooltip;
+        deferredTooltip = null;
+        if (lines == null || lines.isEmpty()) return;
+        context.drawTooltip(MinecraftClient.getInstance().textRenderer, lines, mouseX, mouseY);
+    }
 
     private static class SlotState {
         String         currentId       = "";
@@ -68,8 +107,20 @@ public class FlorafareHud implements HudRenderCallback {
     /** ...rising to ~0.57 Hz at expiry. Both a slow breath, well under a strobe. */
     private static final float BLINK_RATE_MAX           = 0.18f;
 
+    /** Where the remaining time starts, right of the icon. */
+    private static final int    TIME_OFFSET_X       = 24;
+    /** The narrowest time column, so names line up across slots whose times are all mm:ss. */
+    private static final String TIME_COLUMN_SAMPLE  = "00:00";
+    /** Space between the time and the name. */
+    private static final int    NAME_GAP            = 5;
+    /** Space kept between the name and the slot's right-hand border. */
+    private static final int    NAME_RIGHT_PADDING  = 3;
+
     @Override
     public void onHudRender(DrawContext context, RenderTickCounter tickCounter) {
+        // Whatever was left from the previous frame is stale now, drawn or not.
+        deferredTooltip = null;
+
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player == null) return;
 
@@ -194,18 +245,36 @@ public class FlorafareHud implements HudRenderCallback {
 
         context.getMatrices().pop();
 
-        // Drawn outside the HUD-scale transform above, in real screen coordinates —
-        // same space mouseX/mouseY were computed in — so the tooltip isn't itself
-        // scaled or offset by the HUD's own zoom.
+        // Handed to the screen's after-render hook (see register()), which draws it in
+        // real screen coordinates — outside the HUD-scale transform above, so the
+        // tooltip isn't itself scaled by the HUD's own zoom — and on top of the screen.
         if (hoveredBuff != null) {
-            FoodBuffData data = FoodBuffManager.getConfig(hoveredBuff.peekConsumedItemStack());
-            if (data != null) {
-                context.drawTooltip(client.textRenderer,
-                        buildTooltipLines(hoveredBuff, data, hoveredSynergized),
-                        mouseX, mouseY);
-            }
+            deferredTooltip = buildTooltipLines(hoveredBuff, configFor(hoveredBuff), hoveredSynergized);
         }
     }
+
+    /**
+     * The config a running buff came from.
+     *
+     * <p>Looked up by the buff's own target first. The HUD used to resolve the icon stack
+     * instead, which is the item's default stack: a {@code /florafare setbuff} buff showed
+     * the item's ordinary entry, and a potion buff — whose icon is a bottle, not food —
+     * resolved to nothing and showed no tooltip at all.
+     */
+    @org.jetbrains.annotations.Nullable
+    private static FoodBuffData configFor(ActiveFoodBuff buff) {
+        String target = buff.getTarget();
+        if (target.startsWith(STACK_TARGET_PREFIX)) {
+            FoodBuffData stamped = FoodBuffManager.getRuntimeStackConfig(
+                    target.substring(STACK_TARGET_PREFIX.length()));
+            if (stamped != null) return stamped;
+        }
+        FoodBuffData exact = FoodBuffManager.getConfigByTarget(target);
+        if (exact != null) return exact;
+        return BuffDescription.configFor(buff.peekConsumedItemStack());
+    }
+
+    private static final String STACK_TARGET_PREFIX = "stack:";
 
     /**
      * Hover-tooltip lines for a HUD buff slot: the dish, how long it has left, and the
@@ -215,20 +284,85 @@ public class FlorafareHud implements HudRenderCallback {
      * <p>No discovery gate here — you cannot be holding a buff from a food you have
      * never eaten.
      */
-    private static List<Text> buildTooltipLines(ActiveFoodBuff buff, FoodBuffData data,
+    private static List<Text> buildTooltipLines(ActiveFoodBuff buff,
+                                                 @org.jetbrains.annotations.Nullable FoodBuffData data,
                                                  boolean isSynergized) {
         List<Text> lines = new ArrayList<>();
         lines.add(buff.peekConsumedItemStack().getName());
         lines.add(Text.translatable("tooltip.florafare.hud.remaining",
-                BuffDescription.mmss(buff.getDurationRemaining())).formatted(Formatting.GRAY));
+                BuffDescription.formatDuration(buff.getDurationRemaining())).formatted(Formatting.GRAY));
 
-        lines.addAll(BuffDescription.effectBlock(
-                data.healthBonus(), data.attributes(), data.effects()));
+        // The modifiers the server actually put on the player, as recorded on the buff
+        // and synced with it — not the entry as it reads now. The two differ whenever a
+        // /reload or a /florafare edit changed the entry after the bite: the buff keeps
+        // what it was granted until it is refreshed, and this is the one place a player
+        // can see that. The entry is the fallback for a buff that recorded nothing.
+        Map<Identifier, ActiveFoodBuff.AppliedModifier> applied = buff.getAppliedModifiers();
+        List<FoodBuffData.EffectData> effects = data == null ? List.of() : data.effects();
+        if (!applied.isEmpty()) {
+            lines.addAll(BuffDescription.effectBlock(
+                    appliedHealth(applied), appliedAttributes(applied), effects));
+        } else if (data != null) {
+            lines.addAll(BuffDescription.effectBlock(
+                    data.healthBonus(), data.attributes(), effects));
+        }
 
         if (isSynergized) {
             lines.add(Text.translatable("tooltip.florafare.hud.synergized").formatted(Formatting.GOLD));
         }
         return lines;
+    }
+
+    /**
+     * The health bonus among a buff's recorded modifiers. PlayerFoodComponent names that
+     * one {@code health_<scope>}; every other record is an attribute line.
+     */
+    private static double appliedHealth(Map<Identifier, ActiveFoodBuff.AppliedModifier> applied) {
+        double health = 0;
+        for (Map.Entry<Identifier, ActiveFoodBuff.AppliedModifier> entry : applied.entrySet()) {
+            if (isHealthRecord(entry.getKey())) health += entry.getValue().amount();
+        }
+        return health;
+    }
+
+    /**
+     * The attribute lines among a buff's recorded modifiers, back in the entry's order.
+     * The records live in a hash map, but each id ends in the line's index in the entry
+     * ({@code attr_<scope>_<namespace>_<path>_<index>}), so the order can be recovered.
+     */
+    private static List<FoodBuffData.AttributeData> appliedAttributes(
+            Map<Identifier, ActiveFoodBuff.AppliedModifier> applied) {
+        List<Map.Entry<Identifier, ActiveFoodBuff.AppliedModifier>> records = new ArrayList<>();
+        for (Map.Entry<Identifier, ActiveFoodBuff.AppliedModifier> entry : applied.entrySet()) {
+            if (!isHealthRecord(entry.getKey())) records.add(entry);
+        }
+        records.sort(Comparator
+                .comparingInt((Map.Entry<Identifier, ActiveFoodBuff.AppliedModifier> e) ->
+                        lineIndex(e.getKey().getPath()))
+                .thenComparing(e -> e.getKey().getPath()));
+
+        List<FoodBuffData.AttributeData> attributes = new ArrayList<>(records.size());
+        for (Map.Entry<Identifier, ActiveFoodBuff.AppliedModifier> record : records) {
+            ActiveFoodBuff.AppliedModifier modifier = record.getValue();
+            attributes.add(new FoodBuffData.AttributeData(
+                    modifier.attributeId(), modifier.amount(), modifier.operation()));
+        }
+        return attributes;
+    }
+
+    private static boolean isHealthRecord(Identifier modifierId) {
+        return modifierId.getPath().startsWith("health_");
+    }
+
+    /** The trailing {@code _<n>} of a modifier path, or {@link Integer#MAX_VALUE} without one. */
+    private static int lineIndex(String path) {
+        int underscore = path.lastIndexOf('_');
+        if (underscore < 0 || underscore == path.length() - 1) return Integer.MAX_VALUE;
+        try {
+            return Integer.parseInt(path.substring(underscore + 1));
+        } catch (NumberFormatException notIndexed) {
+            return Integer.MAX_VALUE;
+        }
     }
 
     /**
@@ -353,18 +487,31 @@ public class FlorafareHud implements HudRenderCallback {
         context.getMatrices().pop();
 
         if (!isCompact) {
-            int    seconds = remainingTicks / 20;
-            String timeStr = String.format("%02d:%02d", seconds / 60, seconds % 60);
+            String timeStr = BuffDescription.formatDuration(remainingTicks);
             int    textY   = y + 8;
+            int    timeX   = x + TIME_OFFSET_X;
             context.drawTextWithShadow(client.textRenderer, timeStr,
-                    x + 24, textY, (alphaInt << 24) | 0xFFFFFF);
+                    timeX, textY, (alphaInt << 24) | 0xFFFFFF);
 
+            // The name starts after the time as it is actually drawn, never before the
+            // column a "05:00" ends at. It used to sit at a fixed x + 58, sized for mm:ss:
+            // a buff of an hour or more ("1:30:00") ran its time straight into the name.
+            int timeWidth = Math.max(client.textRenderer.getWidth(timeStr),
+                    client.textRenderer.getWidth(TIME_COLUMN_SAMPLE));
+            int nameX     = timeX + timeWidth + NAME_GAP;
+            int nameRoom  = x + slotWidth - NAME_RIGHT_PADDING - nameX;
             String name = stack.getName().getString();
-            if (client.textRenderer.getWidth(name) > 60) {
-                name = client.textRenderer.trimToWidth(name, 55) + "...";
+            if (nameRoom <= 0) {
+                name = "";
+            } else if (client.textRenderer.getWidth(name) > nameRoom) {
+                String ellipsis = "...";
+                name = client.textRenderer.trimToWidth(name,
+                        Math.max(0, nameRoom - client.textRenderer.getWidth(ellipsis))) + ellipsis;
             }
-            context.drawTextWithShadow(client.textRenderer, name,
-                    x + 58, textY, (alphaInt << 24) | 0xAAAAAA);
+            if (!name.isEmpty()) {
+                context.drawTextWithShadow(client.textRenderer, name,
+                        nameX, textY, (alphaInt << 24) | 0xAAAAAA);
+            }
         }
     }
 
