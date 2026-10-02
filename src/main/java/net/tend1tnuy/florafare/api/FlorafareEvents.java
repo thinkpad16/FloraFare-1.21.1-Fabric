@@ -129,6 +129,44 @@ public final class FlorafareEvents {
             }
     );
 
+    /**
+     * Fired when a buff's or synergy's aftermath starts on a player — or is refreshed,
+     * because the same source ended again while its aftermath was still running.
+     *
+     * <p>{@code source} is the buff or synergy that just ended (already off the player);
+     * {@code aftermath} is the entry now in the player's aftermath list, whose
+     * {@link ActiveFoodBuff#getTarget()} is that source's target or synergy id and whose
+     * recorded modifiers are what it is holding. Only an aftermath with a duration is
+     * tracked and fires this; one with effects alone grants them and fires nothing.
+     *
+     * <p>An aftermath follows any single buff or synergy ending — running out, a synergy
+     * losing a requirement, Forgotten Mead, {@link FlorafareAPI#removeBuff} — but not
+     * {@link FlorafareAPI#clearBuffs} / {@code /florafare clear} or death, which wipe the
+     * slate, aftermaths included.
+     */
+    public static final Event<AftermathStarted> AFTERMATH_STARTED = EventFactory.createArrayBacked(
+            AftermathStarted.class,
+            listeners -> (player, source, aftermath) -> {
+                for (AftermathStarted listener : listeners) {
+                    listener.onAftermathStarted(player, source, aftermath);
+                }
+            }
+    );
+
+    /**
+     * Fired when an aftermath is over: it ran out, or it was cleared along with everything
+     * else ({@code /florafare clear}, {@link FlorafareAPI#clearBuffs},
+     * {@link FlorafareAPI#clearAftermaths}, death). Its modifiers are already off the player.
+     */
+    public static final Event<AftermathEnded> AFTERMATH_ENDED = EventFactory.createArrayBacked(
+            AftermathEnded.class,
+            listeners -> (player, aftermath) -> {
+                for (AftermathEnded listener : listeners) {
+                    listener.onAftermathEnded(player, aftermath);
+                }
+            }
+    );
+
     /** Fired the first time a player discovers (eats) a given food item. */
     public static final Event<FoodDiscovered> FOOD_DISCOVERED = EventFactory.createArrayBacked(
             FoodDiscovered.class,
@@ -210,6 +248,16 @@ public final class FlorafareEvents {
     @FunctionalInterface
     public interface SynergyEnded {
         void onSynergyEnded(PlayerEntity player, ActiveFoodBuff buff);
+    }
+
+    @FunctionalInterface
+    public interface AftermathStarted {
+        void onAftermathStarted(PlayerEntity player, ActiveFoodBuff source, ActiveFoodBuff aftermath);
+    }
+
+    @FunctionalInterface
+    public interface AftermathEnded {
+        void onAftermathEnded(PlayerEntity player, ActiveFoodBuff aftermath);
     }
 
     @FunctionalInterface

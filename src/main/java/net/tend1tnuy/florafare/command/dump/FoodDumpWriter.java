@@ -149,6 +149,9 @@ public final class FoodDumpWriter {
             out.append("    attribute: ").append(attribute.id()).append(' ').append(num(attribute.amount()))
                .append(' ').append(attribute.operation()).append('\n');
         }
+        if (flora.aftermath() != null) {
+            out.append("    aftermath: ").append(aftermath(flora.aftermath())).append('\n');
+        }
         for (FoodDump.Loss loss : flora.losingDefinitions()) {
             out.append("    lost: ").append(loss.file()).append(" (priority ").append(loss.priority())
                .append(") to ").append(loss.winnerFile()).append(" (priority ").append(loss.winnerPriority())
@@ -161,6 +164,20 @@ public final class FoodDumpWriter {
             if (candidate.reason() != null) out.append(" — ").append(candidate.reason());
             out.append('\n');
         }
+    }
+
+    /** {@code 6000 ticks · health -4 · minecraft:generic.max_health -0.25 add_multiplied_total · effects: ...} */
+    private static String aftermath(FoodDump.Aftermath aftermath) {
+        List<String> parts = new ArrayList<>();
+        parts.add(aftermath.duration() > 0 ? aftermath.duration() + " ticks" : "effects only");
+        if (aftermath.healthBonus() != 0) {
+            parts.add("health " + (aftermath.healthBonus() > 0 ? "+" : "") + num(aftermath.healthBonus()));
+        }
+        for (FoodDump.Attribute attribute : aftermath.attributes()) {
+            parts.add(attribute.id() + " " + num(attribute.amount()) + " " + attribute.operation());
+        }
+        if (!aftermath.effects().isEmpty()) parts.add("effects: " + effects(aftermath.effects()));
+        return String.join(" · ", parts);
     }
 
     private static String effects(List<FoodDump.Effect> effects) {
@@ -217,7 +234,8 @@ public final class FoodDumpWriter {
             "florafare_source", "florafare_target", "florafare_file", "priority", "override",
             "hunger_only", "buff_duration_ticks", "buff_nutrition", "buff_saturation_points",
             "health_bonus", "buff_effects", "attributes", "synergies", "recipe_count",
-            "primary_recipe", "primary_type", "primary_yield", "primary_ingredients", "feast");
+            "primary_recipe", "primary_type", "primary_yield", "primary_ingredients", "feast",
+            "aftermath");
 
     /** One row per food, RFC 4180 quoting, a header row first. */
     public static String csv(FoodDump dump) {
@@ -247,7 +265,8 @@ public final class FoodDumpWriter {
                     primary == null ? "" : primary.type(),
                     primary == null ? "" : String.valueOf(primary.count()),
                     primary == null ? "" : ingredients(primary.ingredients()),
-                    food.feast() == null ? "" : feast(food.feast())));
+                    food.feast() == null ? "" : feast(food.feast()),
+                    flora.aftermath() == null ? "" : aftermath(flora.aftermath())));
         }
         return out.toString();
     }

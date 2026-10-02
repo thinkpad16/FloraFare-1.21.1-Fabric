@@ -91,7 +91,14 @@ public final class DatapackDiagnostics {
         /** A {@code #tag} target or requirement whose tag exists but holds no items. */
         EMPTY_TAG,
         /** A problem with {@code config_generation.json}: out-of-range values, several files. */
-        CONFIG_GENERATION
+        CONFIG_GENERATION,
+        /**
+         * An {@code aftermath} object that is not an object, holds nothing, or has modifiers
+         * but no duration to hold them for. Its own effect and attribute lines report under
+         * {@link #INVALID_EFFECT}, {@link #INVALID_ATTRIBUTE} and {@link #UNKNOWN_OPERATION}
+         * like everyone else's.
+         */
+        INVALID_AFTERMATH
     }
 
     /**

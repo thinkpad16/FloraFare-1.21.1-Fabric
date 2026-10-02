@@ -525,7 +525,7 @@ public final class FoodDumpCollector {
         }
         if (data == null) {
             return new FoodDump.Flora(source, target, null, null, false, false, null, null, null, null,
-                    null, List.of(), List.of(), losses, candidates);
+                    null, List.of(), List.of(), null, losses, candidates);
         }
 
         List<FoodDump.Effect> effects = new ArrayList<>();
@@ -545,7 +545,24 @@ public final class FoodDumpCollector {
                 data.isHungerOnly(), data.duration(), data.healthBonus(),
                 food == null && !data.hasNutrition() ? null : data.effectiveNutrition(food),
                 food == null && !data.hasSaturation() ? null : data.effectiveSaturationPoints(food),
-                data.alwaysEdible(), effects, attributes, losses, candidates);
+                data.alwaysEdible(), effects, attributes, aftermathOf(data.aftermath()),
+                losses, candidates);
+    }
+
+    /** The dump's form of an aftermath; null (left out of the JSON) when there is none. */
+    @Nullable
+    private static FoodDump.Aftermath aftermathOf(net.tend1tnuy.florafare.food.FoodAftermath aftermath) {
+        if (aftermath.isEmpty()) return null;
+        List<FoodDump.Effect> effects = new ArrayList<>();
+        for (FoodBuffData.EffectData effect : aftermath.effects()) {
+            effects.add(new FoodDump.Effect(effect.id().toString(), effect.duration(), effect.amplifier(), 1f));
+        }
+        List<FoodDump.Attribute> attributes = new ArrayList<>();
+        for (FoodBuffData.AttributeData attribute : aftermath.attributes()) {
+            attributes.add(new FoodDump.Attribute(attribute.attributeId().toString(),
+                    attribute.amount(), attribute.operation()));
+        }
+        return new FoodDump.Aftermath(aftermath.duration(), aftermath.healthBonus(), effects, attributes);
     }
 
     // -------------------------------------------------------------------------

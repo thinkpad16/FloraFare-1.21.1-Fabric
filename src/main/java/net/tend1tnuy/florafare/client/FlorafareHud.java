@@ -243,6 +243,27 @@ public class FlorafareHud implements HudRenderCallback {
             }
         }
 
+        // Aftermaths, in rows of their own past the open end of the slot column — they
+        // take no slot, so they are not drawn in one. See HudLayout#aftermathY.
+        List<ActiveFoodBuff> aftermaths = foodComponent.getActiveAftermaths();
+        ActiveFoodBuff hoveredAftermath = null;
+        int aftermathRows = Math.min(aftermaths.size(), HudLayout.MAX_AFTERMATH_ROWS);
+        for (int i = 0; i < aftermathRows; i++) {
+            ActiveFoodBuff entry = aftermaths.get(i);
+            int y = HudLayout.aftermathY(HudConfig.position, baseY, maxSlots, i, screenHeight);
+            if (y == Integer.MIN_VALUE) break;
+            renderAftermath(context, client, entry, baseX, y, slotWidth, slotHeight, isCompact);
+
+            if (cursorVisible) {
+                int realX = (int) (baseX * hudScale);
+                int realY = (int) (y * hudScale);
+                if (mouseX >= realX && mouseX < realX + (int) (slotWidth * hudScale)
+                        && mouseY >= realY && mouseY < realY + (int) (slotHeight * hudScale)) {
+                    hoveredAftermath = entry;
+                }
+            }
+        }
+
         context.getMatrices().pop();
 
         // Handed to the screen's after-render hook (see register()), which draws it in
@@ -250,6 +271,8 @@ public class FlorafareHud implements HudRenderCallback {
         // tooltip isn't itself scaled by the HUD's own zoom — and on top of the screen.
         if (hoveredBuff != null) {
             deferredTooltip = buildTooltipLines(hoveredBuff, configFor(hoveredBuff), hoveredSynergized);
+        } else if (hoveredAftermath != null) {
+            deferredTooltip = buildAftermathTooltipLines(hoveredAftermath);
         }
     }
 
@@ -310,7 +333,37 @@ public class FlorafareHud implements HudRenderCallback {
         if (isSynergized) {
             lines.add(Text.translatable("tooltip.florafare.hud.synergized").formatted(Formatting.GOLD));
         }
+
+        // What it will leave behind, so the bill is visible while the meal is still on.
+        if (data != null) lines.addAll(BuffDescription.aftermathBlock(data.aftermath()));
         return lines;
+    }
+
+    /**
+     * Hover lines for an aftermath row: whose aftermath it is, how long it has left, and
+     * the modifiers it is holding — read off the entry, as for a buff, because that is
+     * what is actually on the player. Its effects were granted once when it started and
+     * show in the vanilla effect list from then on.
+     */
+    private static List<Text> buildAftermathTooltipLines(ActiveFoodBuff entry) {
+        List<Text> lines = new ArrayList<>();
+        lines.add(Text.translatable("tooltip.florafare.hud.aftermath", sourceName(entry))
+                .formatted(Formatting.RED));
+        lines.add(Text.translatable("tooltip.florafare.hud.remaining",
+                BuffDescription.formatDuration(entry.getDurationRemaining())).formatted(Formatting.GRAY));
+        Map<Identifier, ActiveFoodBuff.AppliedModifier> applied = entry.getAppliedModifiers();
+        if (!applied.isEmpty()) {
+            lines.addAll(BuffDescription.effectBlock(
+                    appliedHealth(applied), appliedAttributes(applied), List.of()));
+        }
+        return lines;
+    }
+
+    /** What an aftermath is named after: its synergy, or the food whose buff it followed. */
+    private static Text sourceName(ActiveFoodBuff entry) {
+        return entry.isSynergy()
+                ? BuffDescription.synergyName(entry.getTarget())
+                : entry.peekConsumedItemStack().getName();
     }
 
     /**
@@ -351,7 +404,12 @@ public class FlorafareHud implements HudRenderCallback {
     }
 
     private static boolean isHealthRecord(Identifier modifierId) {
-        return modifierId.getPath().startsWith("health_");
+        String path = modifierId.getPath();
+        // An aftermath's ids carry a prefix of their own; see PlayerFoodComponent#aftermathScope.
+        if (path.startsWith(PlayerFoodComponent.AFTERMATH_MODIFIER_PREFIX)) {
+            path = path.substring(PlayerFoodComponent.AFTERMATH_MODIFIER_PREFIX.length());
+        }
+        return path.startsWith("health_");
     }
 
     /** The trailing {@code _<n>} of a modifier path, or {@link Integer#MAX_VALUE} without one. */
@@ -511,6 +569,78 @@ public class FlorafareHud implements HudRenderCallback {
             if (!name.isEmpty()) {
                 context.drawTextWithShadow(client.textRenderer, name,
                         nameX, textY, (alphaInt << 24) | 0xAAAAAA);
+            }
+        }
+    }
+
+    /** Frame and fill of an aftermath row: a red tint, so it never reads as a buff. */
+    private static final int AFTERMATH_FILL    = 0x96280808;
+    private static final int AFTERMATH_BORDER  = 0xFFAA2A2A;
+    /** The corner marker, and the remaining-time bar. */
+    private static final int AFTERMATH_ACCENT  = 0xFFFF5555;
+    private static final int AFTERMATH_BAR     = 0xFFAA3333;
+    private static final int AFTERMATH_TIME    = 0xFFFF9A9A;
+    private static final int AFTERMATH_NAME    = 0xFFB08080;
+
+    /**
+     * One aftermath row. Same footprint as a buff slot, so it lines up with the column,
+     * but deliberately unlike one: a red-tinted frame, a red bar, and a small red notch in
+     * the corner, so a glance tells "the cost of a buff" from "a buff". No slide-in and no
+     * expiry pulse either — those say "this is about to stop helping you", and an
+     * aftermath running out is good news.
+     */
+    private void renderAftermath(DrawContext context, MinecraftClient client, ActiveFoodBuff entry,
+                                 int x, int y, int slotWidth, int slotHeight, boolean isCompact) {
+        float initialDuration = Math.max(1.0f, (float) entry.getInitialDuration());
+        int   remainingTicks  = entry.getDurationRemaining();
+        float progress        = MathHelper.clamp(remainingTicks / initialDuration, 0.0f, 1.0f);
+
+        context.fill(x + 1, y + 1, x + slotWidth - 1, y + slotHeight - 1, AFTERMATH_FILL);
+        context.drawBorder(x, y, slotWidth, slotHeight, AFTERMATH_BORDER);
+        // The marker: a stepped notch in the top-right corner, three pixels deep.
+        context.fill(x + slotWidth - 4, y + 1, x + slotWidth - 1, y + 2, AFTERMATH_ACCENT);
+        context.fill(x + slotWidth - 3, y + 2, x + slotWidth - 1, y + 3, AFTERMATH_ACCENT);
+        context.fill(x + slotWidth - 2, y + 3, x + slotWidth - 1, y + 4, AFTERMATH_ACCENT);
+
+        int barWidth = (int) ((slotWidth - 2) * progress);
+        if (barWidth > 0) {
+            context.fill(x + 1, y + slotHeight - 3, x + 1 + barWidth, y + slotHeight - 1, AFTERMATH_BAR);
+        }
+
+        ItemStack stack = entry.peekConsumedItemStack();
+        context.getMatrices().push();
+        if (HudConfig.iconSize == HudConfig.IconSize.SMALL) {
+            float scale    = 0.75f;
+            int   offsetXY = (int) ((slotHeight - (16 * scale)) / 2);
+            context.getMatrices().translate(x + offsetXY, y + offsetXY - 1, 0);
+            context.getMatrices().scale(scale, scale, 1.0f);
+            context.drawItem(stack, 0, 0);
+        } else {
+            context.drawItem(stack, x + 4, y + 2);
+        }
+        context.getMatrices().pop();
+
+        if (!isCompact) {
+            String timeStr = BuffDescription.formatDuration(remainingTicks);
+            int    textY   = y + 8;
+            int    timeX   = x + TIME_OFFSET_X;
+            context.drawTextWithShadow(client.textRenderer, timeStr, timeX, textY, AFTERMATH_TIME);
+
+            int timeWidth = Math.max(client.textRenderer.getWidth(timeStr),
+                    client.textRenderer.getWidth(TIME_COLUMN_SAMPLE));
+            int nameX     = timeX + timeWidth + NAME_GAP;
+            // Clear of the corner marker as well as the border.
+            int nameRoom  = x + slotWidth - NAME_RIGHT_PADDING - 3 - nameX;
+            String name = sourceName(entry).getString();
+            if (nameRoom <= 0) {
+                name = "";
+            } else if (client.textRenderer.getWidth(name) > nameRoom) {
+                String ellipsis = "...";
+                name = client.textRenderer.trimToWidth(name,
+                        Math.max(0, nameRoom - client.textRenderer.getWidth(ellipsis))) + ellipsis;
+            }
+            if (!name.isEmpty()) {
+                context.drawTextWithShadow(client.textRenderer, name, nameX, textY, AFTERMATH_NAME);
             }
         }
     }

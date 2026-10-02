@@ -19,7 +19,8 @@ public record FoodBuffData(
         List<EffectData> effects,
         List<AttributeData> attributes,
         int priority,
-        boolean alwaysEdible
+        boolean alwaysEdible,
+        FoodAftermath aftermath
 ) {
     /**
      * Defensive copies of the two lists, so a config handed out by
@@ -35,6 +36,20 @@ public record FoodBuffData(
     public FoodBuffData {
         effects    = effects    == null ? List.of() : List.copyOf(effects);
         attributes = attributes == null ? List.of() : List.copyOf(attributes);
+        // Never null, so no reader has to ask: "no aftermath" is FoodAftermath.NONE.
+        aftermath  = aftermath  == null ? FoodAftermath.NONE : aftermath;
+    }
+
+    /**
+     * The constructor as it stood before {@code aftermath} existed, for addons built
+     * against it — the record is public API and its canonical constructor gained a
+     * component. Equivalent to passing {@link FoodAftermath#NONE}.
+     */
+    public FoodBuffData(String target, int duration, int nutrition, float saturation,
+                        double healthBonus, List<EffectData> effects,
+                        List<AttributeData> attributes, int priority, boolean alwaysEdible) {
+        this(target, duration, nutrition, saturation, healthBonus, effects, attributes,
+                priority, alwaysEdible, FoodAftermath.NONE);
     }
 
     // -------------------------------------------------------------------------
@@ -201,6 +216,8 @@ public record FoodBuffData(
         // Delegate list serialization to the shared helper (#23)
         nbt.put(KEY_EFFECTS,    FoodNbtHelper.effectsToNbt(effects));
         nbt.put(KEY_ATTRIBUTES, FoodNbtHelper.attributesToNbt(attributes));
+        // Only when present: see FoodAftermath's NBT notes on the join payload.
+        FoodAftermath.writeTo(nbt, aftermath);
         return nbt;
     }
 
@@ -210,7 +227,7 @@ public record FoodBuffData(
     }
 
     /**
-     * Ergonomic alternative to the 9-argument record constructor for mods constructing
+     * Ergonomic alternative to the 10-argument record constructor for mods constructing
      * a {@link FoodBuffData} in code (e.g. to pass into {@code FlorafareAPI.registerFoodBuff}
      * or {@code FlorafareAPI.applyBuffToPlayer}). Every field defaults to the same value
      * the datapack loader uses when a JSON entry omits it — which for nutrition and
@@ -226,6 +243,7 @@ public record FoodBuffData(
         private final List<AttributeData> attributes = new ArrayList<>();
         private int priority = 0;
         private boolean alwaysEdible = false;
+        private FoodAftermath aftermath = FoodAftermath.NONE;
 
         private Builder(String target) {
             this.target = target;
@@ -237,6 +255,8 @@ public record FoodBuffData(
         public Builder healthBonus(double healthBonus) { this.healthBonus = healthBonus; return this; }
         public Builder priority(int priority) { this.priority = priority; return this; }
         public Builder alwaysEdible(boolean alwaysEdible) { this.alwaysEdible = alwaysEdible; return this; }
+        /** What the buff leaves behind once it ends; see {@link FoodAftermath}. */
+        public Builder aftermath(FoodAftermath aftermath) { this.aftermath = aftermath; return this; }
 
         public Builder addEffect(Identifier effectId, int duration, int amplifier) {
             this.effects.add(new EffectData(effectId, duration, amplifier));
@@ -251,7 +271,7 @@ public record FoodBuffData(
         public FoodBuffData build() {
             // No copies needed here any more: the canonical constructor makes its own.
             return new FoodBuffData(target, duration, nutrition, saturation, healthBonus,
-                    effects, attributes, priority, alwaysEdible);
+                    effects, attributes, priority, alwaysEdible, aftermath);
         }
     }
 
@@ -273,7 +293,8 @@ public record FoodBuffData(
                 FoodNbtHelper.effectsFromNbt(nbt, KEY_EFFECTS),
                 FoodNbtHelper.attributesFromNbt(nbt, KEY_ATTRIBUTES),
                 priority,
-                alwaysEdible
+                alwaysEdible,
+                FoodAftermath.readFrom(nbt)
         );
     }
 }

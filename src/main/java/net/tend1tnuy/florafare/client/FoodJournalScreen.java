@@ -23,6 +23,7 @@ import net.minecraft.util.Identifier;
 import net.minecraft.util.math.MathHelper;
 import net.tend1tnuy.florafare.component.IFoodComponentProvider;
 import net.tend1tnuy.florafare.config.FlorafareConfig;
+import net.tend1tnuy.florafare.food.FoodAftermath;
 import net.tend1tnuy.florafare.food.FoodBuffData;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
 import net.tend1tnuy.florafare.food.FoodSynergyData;
@@ -686,6 +687,8 @@ public class FoodJournalScreen extends Screen {
         }
 
         buildCommonDetailLines(allLines, data.healthBonus(), data.attributes(), data.effects());
+        // A hunger-only entry grants no buff, so nothing ever ends to start one.
+        if (!data.isHungerOnly()) appendAftermathLines(allLines, data.aftermath());
         paginateLines(allLines, false);
     }
 
@@ -699,6 +702,7 @@ public class FoodJournalScreen extends Screen {
                 COLOR_INK_MID, 12, 0).withIcon(new ItemStack(Items.CLOCK)));
 
         buildCommonDetailLines(allLines, data.healthBonus(), data.attributes(), data.effects());
+        appendAftermathLines(allLines, data.aftermath());
         paginateLines(allLines, true);
     }
 
@@ -754,6 +758,54 @@ public class FoodJournalScreen extends Screen {
         }
     }
 
+    /**
+     * The "After it ends" section: what the buff or synergy leaves behind, under a heading
+     * in red ink, every line coloured by the same rules as the rest of the page — so the
+     * health it costs and the effects it inflicts read as costs. One flat list, like the
+     * tooltip's, since the point is to be read as a single bill.
+     */
+    private void appendAftermathLines(List<RenderLine> allLines, FoodAftermath aftermath) {
+        if (aftermath == null || aftermath.isEmpty()) return;
+
+        allLines.add(new RenderLine("", COLOR_INK_DARK, 6, 0));
+        String heading = aftermath.isTracked()
+                ? Text.translatable("gui.florafare.journal.aftermath_title",
+                        BuffDescription.formatDuration(aftermath.duration())).getString()
+                : Text.translatable("gui.florafare.journal.aftermath_title_instant").getString();
+        allLines.add(new RenderLine(heading, COLOR_RED_DARK, 14, 0, true));
+
+        if (aftermath.healthBonus() != 0) {
+            allLines.add(new RenderLine(
+                    Text.translatable("gui.florafare.journal.health",
+                            BuffDescription.signed(aftermath.healthBonus())).getString(),
+                    aftermath.healthBonus() < 0 ? COLOR_RED_DARK : COLOR_INK_LIGHT, 11, 4)
+                    .withSprite(ICON_HEALTH));
+        }
+        for (FoodBuffData.AttributeData attr : aftermath.attributes()) {
+            boolean harmful = BuffDescription.attributeFormatting(
+                    attr.attributeId(), attr.amount()) == Formatting.RED;
+            allLines.add(new RenderLine(
+                    "• " + BuffDescription.attributeName(attr.attributeId()).getString()
+                            + ": " + BuffDescription.formatAmount(attr.amount(), attr.operation()),
+                    harmful ? COLOR_RED_DARK : COLOR_INK_LIGHT, 11, 4));
+        }
+        for (FoodBuffData.EffectData effect : aftermath.effects()) {
+            allLines.add(new RenderLine(
+                    "• " + BuffDescription.effectLabel(effect).getString()
+                            + " (" + BuffDescription.formatDuration(effect.duration()) + ")",
+                    effectColor(effect), 11, 4));
+        }
+    }
+
+    /** Ink for an effect line: red for harm, gold for neutral, the page's own for a benefit. */
+    private static int effectColor(FoodBuffData.EffectData effect) {
+        return switch (BuffDescription.effectCategory(effect.id())) {
+            case HARMFUL -> COLOR_RED_DARK;
+            case NEUTRAL -> COLOR_GOLD;
+            default      -> COLOR_INK_LIGHT;
+        };
+    }
+
     private void appendEffectLines(List<RenderLine> allLines, String headingKey,
                                    List<FoodBuffData.EffectData> effects) {
         if (effects.isEmpty()) return;
@@ -761,15 +813,10 @@ public class FoodJournalScreen extends Screen {
         allLines.add(new RenderLine(Text.translatable(headingKey).getString(),
                 COLOR_INK_DARK, 14, 0, true));
         for (FoodBuffData.EffectData effect : effects) {
-            int color = switch (BuffDescription.effectCategory(effect.id())) {
-                case HARMFUL -> COLOR_RED_DARK;
-                case NEUTRAL -> COLOR_GOLD;
-                default      -> COLOR_INK_LIGHT;
-            };
             allLines.add(new RenderLine(
                     "• " + BuffDescription.effectLabel(effect).getString()
                             + " (" + BuffDescription.formatDuration(effect.duration()) + ")",
-                    color, 11, 4));
+                    effectColor(effect), 11, 4));
         }
     }
 

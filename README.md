@@ -82,6 +82,11 @@ The overlay respects **F1** like every vanilla HUD element. Settings persist in 
 config file, and `hudOffsetX` / `hudOffsetY` hold the free offset for anyone setting it
 by hand.
 
+Running [aftermaths](#aftermath) get rows of their own past the open end of the slot
+column (below it when the overlay is anchored to a top corner, above it at a bottom corner),
+up to four: a red-tinted frame with a small red notch in the corner, a red bar and the
+time left, so the cost of a buff never reads as a buff. They take no slot.
+
 Hovering a buff slot while a screen is open (inventory, chat, the journal itself, and so on) shows a tooltip with the full breakdown — remaining time, health bonus, attributes, and every status effect it grants — plus a note if it's contributing to an active synergy. This only works while the cursor is actually unlocked, since during normal play the mouse just steers the camera and has no on-screen position to hover with.
 
 ---
@@ -178,6 +183,7 @@ missing or empty once tags have loaded. The log prints the first few of each kin
 | `priority` | int | file's `priority` | Per-entry override of the file-wide priority. See [priority rules](#priority-rules). |
 | `effects` | array | `[]` | Status effects applied when the food is eaten (see below). |
 | `attributes` | array | `[]` | Attribute modifiers active while the buff lasts (see below). |
+| `aftermath` | object | none | What the buff leaves behind **after it ends** — see [`aftermath`](#aftermath). |
 
 **Hunger-only entries.** An entry with `duration` of `0` or less grants no buff at all: it
 takes no slot, shows nothing on the HUD, and fires no buff events, advancement triggers or
@@ -216,6 +222,65 @@ its `health_bonus` and `attributes` — is withheld.
 | `operation` | string | `add_value` (default), `add_multiplied_base`, or `add_multiplied_total`. The pre-1.20.5 spellings are accepted as aliases: `addition`/`add` → `add_value`, `multiply_base` → `add_multiplied_base`, `multiply_total` → `add_multiplied_total`. Case does not matter. Anything else is an **error**: it is logged with the file and entry, and that attribute line is skipped. The same rule applies to synergy attributes. |
 
 Attribute modifiers are applied for the buff's duration and removed on expiry; they survive relogging and returning from the End.
+
+#### `aftermath`
+
+A buff — or a [synergy](#food_synergies-syntax) — can leave something behind once it is
+over: a hangover after a strong drink, the drained feeling after an arcane surge.
+
+```json
+{
+  "id": "minecraft:honey_bottle",
+  "duration": 2400,
+  "attributes": [
+    { "attribute": "minecraft:generic.attack_damage", "amount": 0.2, "operation": "add_multiplied_total" }
+  ],
+  "aftermath": {
+    "duration": 1200,
+    "health_bonus": -4,
+    "attributes": [
+      { "attribute": "minecraft:generic.movement_speed", "amount": -0.15, "operation": "add_multiplied_total" }
+    ],
+    "effects": [
+      { "id": "minecraft:nausea", "duration": 200 }
+    ]
+  }
+}
+```
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `duration` | int | longest effect | Ticks the `health_bonus` and `attributes` are held for. Left out, it is the longest finite effect duration below. Must be above `0` when there is a `health_bonus` or `attributes` — otherwise that is an error and only the effects are kept. |
+| `health_bonus` | double | `0.0` | Max health for the duration; negative is the usual case. Current health is clamped down at once. |
+| `attributes` | array | `[]` | Same format and operation rules as [`attributes` entries](#attributes-entries); held for the duration. |
+| `effects` | array | `[]` | Same format as [`effects` entries](#effects-entries); granted **once, when the aftermath starts**, each for its own duration (`-1` = infinite). One without a `duration` takes the aftermath's. |
+
+**When it starts.** When its buff or synergy **ends**: it runs out, a synergy loses one of its
+requirements, or the buff is removed on its own — Forgotten Mead, `/florafare buff remove`,
+`FlorafareAPI.removeBuff`. Removing a buff early is deliberately not a way around its
+downside; otherwise every bottle of Forgotten Mead would be a hangover cure. Eating the same
+food again before the buff runs out **refreshes** it, and nothing has ended, so no aftermath.
+A **wipe starts none**: `/florafare clear`, `FlorafareAPI.clearBuffs` and death end every
+buff, synergy *and* running aftermath at once, and switching synergies off in the config
+ends the running synergies without one. A hunger-only entry grants no buff, so its
+aftermath can never start (the loader warns).
+
+**While it runs** it takes no buff slot. It is an entry of its own on the player — saved with
+the buffs, restored on relog and across the End portal, shown on the HUD and in
+`/florafare buffs`, and removed when it runs out. At most one runs per source (the entry's
+target, or the synergy's id): if the same source ends again, the aftermath is refreshed to
+whichever end is later — never shortened, never stacked — and its modifiers re-applied
+cleanly. Its effects are granted again each time it starts; vanilla merges a repeat into the
+running effect. Effects an aftermath granted are ordinary effects from then on and are left
+to run out even if the aftermath is cleared.
+
+The definition is the one in force **when the buff ends**, looked up by the buff's target,
+so a `/reload` that changes an aftermath applies to buffs already running. Tooltips, the
+journal and EMI list it last, as **"After it ends (m:ss):"**, with harmful effects and stats
+that work against the player in red. Mistakes inside it — an unknown effect, attribute or
+operation, an unknown key, an aftermath that is not an object or holds nothing — are reported
+like everywhere else, under `invalid_aftermath` in `/florafare validate` for the object
+itself.
 
 ### Target types
 
@@ -382,6 +447,33 @@ Files live in `data/<namespace>/food_synergies/`. A file is a single synergy obj
 }
 ```
 
+A synergy can have an [`aftermath`](#aftermath) too. **Arcane Overflow** gives a burst of
+arcane power while its ingredients last, and costs a quarter of the player's max health both
+while it runs and for five minutes after it ends:
+
+```json
+{
+  "id": "mypack:arcane_overflow",
+  "requirements": ["minecraft:chorus_fruit", "minecraft:glow_berries", "minecraft:golden_carrot"],
+  "duration": 2400,
+  "attributes": [
+    { "attribute": "minecraft:generic.attack_damage", "amount": 0.5, "operation": "add_multiplied_total" },
+    { "attribute": "minecraft:generic.max_health", "amount": -0.25, "operation": "add_multiplied_total" }
+  ],
+  "aftermath": {
+    "duration": 6000,
+    "attributes": [
+      { "attribute": "minecraft:generic.max_health", "amount": -0.25, "operation": "add_multiplied_total" }
+    ]
+  }
+}
+```
+
+The aftermath starts whether the synergy runs its 2 minutes out or ends early because one of
+its three buffs did (or was drunk away with Forgotten Mead), and holds the −25% for 6000
+ticks. Activating it again while that is running does not stack a second −25%: when the new
+synergy ends, the aftermath is simply refreshed to a fresh five minutes.
+
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `id` | string | required | Unique synergy name (shown in logs and the journal). |
@@ -390,12 +482,14 @@ Files live in `data/<namespace>/food_synergies/`. A file is a single synergy obj
 | `health_bonus` | double | `0.0` | Extra max health while the synergy is active (negative allowed). |
 | `effects` | array | `[]` | Same format as food buffs; effect durations are stretched to the synergy's duration. |
 | `attributes` | array | `[]` | Same format as food buffs. |
+| `aftermath` | object | none | What the synergy leaves behind once it ends — same format and rules as a [food buff's](#aftermath). |
 
 Notes:
 
 - With **3 buff slots**, keep requirements to 3 or fewer or the synergy can never activate.
 - Synergies are **hidden** in the journal until first activated — a toast names the synergy and announces the discovery. Discoveries are saved per player.
-- If a required buff expires or is removed, the synergy is removed too.
+- If a required buff expires or is removed, the synergy is removed too — and its aftermath, if
+  it has one, starts.
 - Synergies can be disabled globally in the config.
 
 ---
@@ -511,9 +605,9 @@ datapacks may use (`addition`, `multiply_base`, `multiply_total`), stored under 
 | Command | What it does |
 |---|---|
 | `/florafare buff give <player> <targetId>` | Applies the configured buff for `targetId` (item id, `#tag`, `namespace:`, `template:` or `potion:` — whatever the datapack defined) to a player and unlocks its journal entry. Tab-completion lists every configured target, vanilla-style: typing `bacon` finds `farmersdelight:bacon`. Quotes are optional. |
-| `/florafare buff remove <player> <targetId>` | Removes one active buff, addressed by its config target or by the item that was eaten — tab-completion offers exactly what that player is currently carrying. Forgotten Mead only ever drops the newest buff; this is how you clear one out of the middle of a full set. |
-| `/florafare buffs <player>` | Lists what a player currently has running: every active buff and synergy, its config target, the item it came from, time remaining out of its full length, and the attribute modifiers actually applied. The modifiers are read off the live buff rather than off its config, so a buff that has drifted out of step with the datapack — the case `/florafare repair` exists for — shows what is really on the player. |
-| `/florafare clear <player>` | Removes all active buffs and synergies from a player. |
+| `/florafare buff remove <player> <targetId>` | Removes one active buff, addressed by its config target or by the item that was eaten — tab-completion offers exactly what that player is currently carrying. Forgotten Mead only ever drops the newest buff; this is how you clear one out of the middle of a full set. Like the mead, it ends the buff the ordinary way, so its [aftermath](#aftermath) starts. |
+| `/florafare buffs <player>` | Lists what a player currently has running: every active buff, synergy and aftermath, its config target, the item it came from, time remaining out of its full length, and the attribute modifiers actually applied. The modifiers are read off the live buff rather than off its config, so a buff that has drifted out of step with the datapack — the case `/florafare repair` exists for — shows what is really on the player. |
+| `/florafare clear <player>` | Removes all active buffs, synergies and aftermaths from a player. Nothing cleared this way starts an aftermath — it is a clean slate. |
 | `/florafare setbuff <duration> <nutrition> <saturation> <health> [<attr_id> <attr_amount> <attr_op>]` | Attaches a **custom buff to the food stack in your main hand** (via NBT). Anyone who eats that exact stack gets this buff instead of the normal config. Refused for a stack that is not edible or is on the ignore list, since such a buff would never fire. Persists across restarts, in the world save (`<world>/florafare_runtime.dat`), written once, the moment the command runs, so a server that is killed rather than stopped does not come back with the stacks intact and their buffs gone; a pre-1.4 `config/florafare_runtime.dat` is migrated into the first world that loads without one. Sent to every client, so tooltips, the journal and hunger prediction describe the stamped buff on a dedicated server too. Entries no stack has been seen carrying for `runtimeBuffRetentionDays` are pruned when the world loads (see below). |
 | `/florafare setbuff prune <days>` | Prunes now: drops every stack buff not seen for more than `<days>` days, saves, and re-syncs clients. "Seen" means the server resolved a stack carrying it (eaten, used, hovered by a player whose client asked) or found one in a player's inventory or ender chest when they joined; a stack left untouched in a chest is not seen. |
 | `/florafare edit <target> <field> <value>` | **Retunes a food's buff on a running server**, without a datapack edit or a `/reload`. `<target>` is an item id, `namespace:<modid>`, `template:default`, `tag <namespace:path>` for an item tag (typed without the leading `#`, which a command argument cannot read), or `potion <potion id>` for a `potion:` target. A target with no definition yet must name something real — an edible item, an existing tag (an empty one is accepted with a warning), a namespace a mod or item uses, a registered potion — or it is refused; a typo used to be stored and re-applied forever. Targets that already have an entry stay editable whatever they name, so an entry left behind by a removed mod can still be retuned or reset. `<field>` is `duration` (ticks), `nutrition`, `saturation`, `health`, `priority` or `always_edible`, within the ranges above. The change is live on the tick the command runs, saved into the world (`<world>/florafare_overrides.dat`), re-sent to every player online so their tooltips, journal, EMI and hunger prediction stay in step, and re-asserted after the next `/reload` and the next restart. |
@@ -580,7 +674,8 @@ configured `potion:` target:
   `auto_generated`, `excluded_by_*`, `not_food`, `potion_entry`), `target`, `file` (the
   datapack file in force, `<api>` for code), `priority`, `override` (a `/florafare edit` is
   in force), `hungerOnly`, `duration`, `healthBonus`, `nutrition` and `saturationPoints`
-  with inheritance resolved, `alwaysEdible`, `effects`, `attributes`, `losingDefinitions`
+  with inheritance resolved, `alwaysEdible`, `effects`, `attributes`, `aftermath` (`duration`,
+  `healthBonus`, `effects`, `attributes`; left out when the entry has none), `losingDefinitions`
   (other definitions of the target that lost on priority, with the winner) and `candidates`
   (every entry that could have applied, as `/florafare explain` shows them);
 - `synergies`: the ids of synergies with a requirement this item satisfies;
@@ -616,7 +711,8 @@ ancestor is marked `(cycle, not followed)` and one already expanded `(expanded a
 
 **CSV** (`.csv`) — one row per food with the key numbers: vanilla values, the FloraFare
 source, target, file, priority, buff duration, effective hunger, health, effects, attributes,
-synergies, recipe count and the primary recipe's id, type, yield and ingredients.
+synergies, recipe count, the primary recipe's id, type, yield and ingredients, and the
+aftermath in one cell.
 
 ### What survives a crash
 
@@ -626,7 +722,7 @@ kind of state is therefore written on a schedule of its own rather than at shutd
 
 | State | When it reaches disk | Worst case loss |
 |---|---|---|
-| Active buffs and synergies | Within ~5 s of being gained or lost, into the player's own data | a few seconds |
+| Active buffs, synergies and aftermaths | Within ~5 s of being gained or lost, into the player's own data | a few seconds |
 | Journal discoveries | Within ~30 s, same file | half a minute |
 | `/florafare edit` overrides | Before the command answers, atomically (temp file + rename) | nothing |
 | `/florafare setbuff` stack buffs | Before the command answers, atomically | nothing |
@@ -1057,9 +1153,11 @@ import net.tend1tnuy.florafare.api.FlorafareAPI;
 | `isFoodExcluded(ItemStack)` / `isFoodExcluded(Item)` | Whether Florafare currently ignores this item. |
 | `registerFoodBuff(String target, FoodBuffData)` / `registerSynergy(FoodSynergyData)` | Registers a buff/synergy config from code instead of a datapack JSON file. Same priority and target-matching rules apply. Call during mod init; already-connected clients pick up the change on their next join or `/reload`, same as a datapack edit. |
 | `getActiveBuffs(PlayerEntity)` / `getActiveSynergies(PlayerEntity)` | Read-only snapshot of the player's current buffs/synergies. |
+| `getActiveAftermaths(PlayerEntity)` | Read-only snapshot of the [aftermaths](#aftermath) running on the player. Each entry's `getTarget()` is its source's target (or synergy id, with `isSynergy()` true). |
 | `getDiscoveredFoods(PlayerEntity)` / `getDiscoveredSynergies(PlayerEntity)` | Read-only snapshot of the player's journal progress. |
-| `removeBuff(PlayerEntity, String targetOrItemId)` | Removes one active buff, addressed by its config target or by the item that was eaten. Returns whether such a buff was active. |
-| `clearBuffs(PlayerEntity)` | Removes all active buffs and synergies, same as `/florafare clear`. |
+| `removeBuff(PlayerEntity, String targetOrItemId)` | Removes one active buff, addressed by its config target or by the item that was eaten. Returns whether such a buff was active. Its aftermath starts. |
+| `clearBuffs(PlayerEntity)` | Removes all active buffs, synergies and aftermaths, same as `/florafare clear`; starts no aftermath. |
+| `clearAftermaths(PlayerEntity)` | Ends every running aftermath and leaves the buffs alone. Effects they granted stay. Returns how many ended. |
 | `unlockFood(PlayerEntity, String itemId)` | Marks an item as discovered without granting its buff. |
 | `getRegenDelayTicks(PlayerEntity)` | Ticks left of the player's [delay after damage](#delay-after-damage); `0` when none (and always on the client). |
 | `isRegenDelayed(PlayerEntity)` | Whether that delay is holding natural regeneration back right now — running, and no effect in `#florafare:ignores_regen_delay` overriding it. |
@@ -1068,7 +1166,11 @@ import net.tend1tnuy.florafare.api.FlorafareAPI;
 | `extendRegenDelay(PlayerEntity, int ticks)` | Makes the delay last at least `ticks` from now, keeping a longer one — what a hit does. |
 
 `FoodBuffData` also has a `FoodBuffData.builder(target)...build()` fluent builder, so you
-don't need to fill in the full 10-argument record constructor by hand.
+don't need to fill in the full 10-argument record constructor by hand; `.aftermath(new
+FoodAftermath(...))` sets an aftermath. The 9-argument `FoodBuffData` and 6-argument
+`FoodSynergyData` constructors from before aftermaths existed still work and mean "none".
+An aftermath is looked up by the buff's target when it ends, so a buff applied from a
+`FoodBuffData` that was never registered leaves none.
 
 ### `FlorafareEvents`
 
@@ -1088,6 +1190,8 @@ Hunger-only entries (`duration <= 0`) fire none of them.
 | `BUFF_REMOVED` | An active buff ends (expiry, Forgotten Mead, `/florafare clear`, or death). |
 | `SYNERGY_ACTIVATED` | A synergy's requirements become satisfied. |
 | `SYNERGY_ENDED` | An active synergy ends (expiry, a requirement no longer being met, or death). |
+| `AFTERMATH_STARTED` | An ended buff's or synergy's [aftermath](#aftermath) starts, or is refreshed — `(player, source, aftermath)`. Fires after the source's own `BUFF_REMOVED`/`SYNERGY_ENDED`. Not for an effects-only aftermath, which tracks nothing. |
+| `AFTERMATH_ENDED` | An aftermath runs out or is cleared (`/florafare clear`, `clearBuffs`, `clearAftermaths`, death). |
 | `FOOD_DISCOVERED` | A player eats a food item for the first time. |
 
 ```java

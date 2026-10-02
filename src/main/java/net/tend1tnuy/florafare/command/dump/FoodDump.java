@@ -74,6 +74,7 @@ public record FoodDump(Meta meta, List<Food> foods, Map<String, List<String>> tr
      * @param override   whether a {@code /florafare edit} override is in force for it
      * @param hungerOnly a duration of 0 or less: hunger and effects, no buff
      * @param nutrition  what a bite restores with the entry applied (inheritance resolved)
+     * @param aftermath  what the buff leaves behind once it ends; absent when it has none
      * @param losingDefinitions other definitions of the same target that lost on priority
      * @param candidates every entry that could have applied, as {@code /florafare explain}
      *                   prints them
@@ -83,8 +84,19 @@ public record FoodDump(Meta meta, List<Food> foods, Map<String, List<String>> tr
                         @Nullable Integer duration, @Nullable Double healthBonus,
                         @Nullable Integer nutrition, @Nullable Float saturationPoints,
                         @Nullable Boolean alwaysEdible, List<Effect> effects,
-                        List<Attribute> attributes, List<Loss> losingDefinitions,
-                        List<Candidate> candidates) {}
+                        List<Attribute> attributes, @Nullable Aftermath aftermath,
+                        List<Loss> losingDefinitions, List<Candidate> candidates) {}
+
+    /**
+     * A FloraFare entry's {@code aftermath}, as the datapack wrote it.
+     *
+     * @param duration    ticks its health bonus and attributes are held for; 0 for an
+     *                    aftermath that only grants effects
+     * @param effects     granted once when it starts, each with its own duration
+     *                    ({@code probability} is always 1)
+     */
+    public record Aftermath(int duration, double healthBonus, List<Effect> effects,
+                            List<Attribute> attributes) {}
 
     public record Loss(String file, int priority, String winnerFile, int winnerPriority, boolean tie) {}
 

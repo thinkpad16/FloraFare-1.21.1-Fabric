@@ -691,8 +691,11 @@ public final class EditBuffCommand {
                                      List<FoodBuffData.EffectData> effects,
                                      List<FoodBuffData.AttributeData> attributes,
                                      int priority, boolean alwaysEdible) {
+        // The aftermath has no edit subcommand of its own, so it rides along unchanged —
+        // dropping it here would quietly strip a hangover off a drink whose duration an
+        // operator merely adjusted.
         return new FoodBuffData(base.target(), duration, nutrition, saturation, healthBonus,
-                effects, attributes, priority, alwaysEdible);
+                effects, attributes, priority, alwaysEdible, base.aftermath());
     }
 
     private static FoodBuffData withDuration(FoodBuffData base, int duration) {
@@ -745,6 +748,6 @@ public final class EditBuffCommand {
     private static FoodBuffData retarget(FoodBuffData base, String target) {
         return new FoodBuffData(target, base.duration(), base.nutrition(), base.saturation(),
                 base.healthBonus(), base.effects(), base.attributes(),
-                base.priority(), base.alwaysEdible());
+                base.priority(), base.alwaysEdible(), base.aftermath());
     }
 }

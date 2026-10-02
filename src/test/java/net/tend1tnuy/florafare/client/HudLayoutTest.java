@@ -171,4 +171,39 @@ class HudLayoutTest {
                     HudLayout.nearestAnchor(SCREEN_W - 10, SCREEN_H - 10, SCREEN_W, SCREEN_H));
         }
     }
+
+    @Nested
+    @DisplayName("aftermath rows")
+    class AftermathRows {
+
+        @Test
+        @DisplayName("anchored to a top corner, they hang below the last slot")
+        void belowFromTop() {
+            int baseY = HudLayout.baseY(HudConfig.ScreenPosition.TOP_LEFT, SCREEN_H, SLOTS, 0);
+            assertEquals(baseY + HudLayout.panelHeight(SLOTS),
+                    HudLayout.aftermathY(HudConfig.ScreenPosition.TOP_LEFT, baseY, SLOTS, 0, SCREEN_H));
+            assertEquals(baseY + HudLayout.panelHeight(SLOTS) + HudLayout.SLOT_SPACING,
+                    HudLayout.aftermathY(HudConfig.ScreenPosition.TOP_RIGHT, baseY, SLOTS, 1, SCREEN_H));
+        }
+
+        @Test
+        @DisplayName("anchored to a bottom corner, they stack above the first slot")
+        void aboveFromBottom() {
+            int baseY = HudLayout.baseY(HudConfig.ScreenPosition.BOTTOM_LEFT, SCREEN_H, SLOTS, 0);
+            assertEquals(baseY - HudLayout.SLOT_SPACING,
+                    HudLayout.aftermathY(HudConfig.ScreenPosition.BOTTOM_LEFT, baseY, SLOTS, 0, SCREEN_H));
+            assertEquals(baseY - 2 * HudLayout.SLOT_SPACING,
+                    HudLayout.aftermathY(HudConfig.ScreenPosition.BOTTOM_RIGHT, baseY, SLOTS, 1, SCREEN_H));
+        }
+
+        @Test
+        @DisplayName("a row that would leave the screen is not placed at all")
+        void offScreenIsDropped() {
+            assertEquals(Integer.MIN_VALUE,
+                    HudLayout.aftermathY(HudConfig.ScreenPosition.BOTTOM_LEFT, 10, SLOTS, 0, SCREEN_H));
+            int nearBottom = SCREEN_H - HudLayout.panelHeight(SLOTS);
+            assertEquals(Integer.MIN_VALUE,
+                    HudLayout.aftermathY(HudConfig.ScreenPosition.TOP_LEFT, nearBottom, SLOTS, 0, SCREEN_H));
+        }
+    }
 }

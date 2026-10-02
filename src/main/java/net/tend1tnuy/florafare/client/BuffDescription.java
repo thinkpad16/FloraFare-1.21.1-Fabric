@@ -18,6 +18,7 @@ import net.minecraft.util.Language;
 import net.tend1tnuy.florafare.client.tooltip.FoodValuesTooltip;
 import net.tend1tnuy.florafare.component.IFoodComponentProvider;
 import net.tend1tnuy.florafare.food.AttributeOperations;
+import net.tend1tnuy.florafare.food.FoodAftermath;
 import net.tend1tnuy.florafare.food.FoodBuffData;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
 import net.tend1tnuy.florafare.food.FoodSynergyData;
@@ -238,6 +239,9 @@ public final class BuffDescription {
             lines.add(indent(Text.translatable("tooltip.florafare.buff.always_edible")
                     .formatted(Formatting.DARK_AQUA)));
         }
+        // Last, after everything the buff does while it runs. Not for a hunger-only entry:
+        // it grants no buff, so nothing ever ends and the aftermath can never start.
+        if (!data.isHungerOnly()) lines.addAll(aftermathBlock(data.aftermath()));
         return lines;
     }
 
@@ -283,7 +287,45 @@ public final class BuffDescription {
                         Text.translatable("gui.florafare.journal.duration_dynamic"))
                 .formatted(Formatting.GRAY)));
         lines.addAll(effectBlock(synergy.healthBonus(), synergy.attributes(), synergy.effects()));
+        lines.addAll(aftermathBlock(synergy.aftermath()));
         return lines;
+    }
+
+    /**
+     * What a buff or synergy leaves behind once it ends: "After it ends (5:00):" and one
+     * bullet per thing it does, coloured by the rules every other block uses — so a
+     * harmful effect and a stat that works against the player are red, and the rare
+     * aftermath that helps is not.
+     *
+     * <p>One flat list under one heading rather than {@link #effectBlock}'s three. Its
+     * "While active:" would be wrong here, and the point of the section is to be read at a
+     * glance as "the bill". The duration in the heading is how long the stats are held;
+     * each effect keeps its own, written beside it. An aftermath with effects only has no
+     * duration of its own and drops the parenthesis.
+     *
+     * <p>Empty for an entry without one, so callers can add it unconditionally.
+     */
+    public static List<Text> aftermathBlock(@Nullable FoodAftermath aftermath) {
+        if (aftermath == null || aftermath.isEmpty()) return List.of();
+        List<Text> lines = new ArrayList<>();
+        lines.add(aftermathHeading(aftermath).formatted(Formatting.RED));
+        if (aftermath.hasModifiers()) {
+            if (aftermath.healthBonus() != 0) lines.add(healthBullet(aftermath.healthBonus()));
+            for (FoodBuffData.AttributeData attr : aftermath.attributes()) {
+                lines.add(attributeBullet(attr));
+            }
+        }
+        for (FoodBuffData.EffectData effect : aftermath.effects()) {
+            lines.add(effectBullet(effect));
+        }
+        return lines;
+    }
+
+    /** "After it ends (5:00):", or "After it ends:" for an aftermath that holds nothing. */
+    public static MutableText aftermathHeading(FoodAftermath aftermath) {
+        return aftermath.isTracked()
+                ? Text.translatable("tooltip.florafare.buff.aftermath", formatDuration(aftermath.duration()))
+                : Text.translatable("tooltip.florafare.buff.aftermath_instant");
     }
 
     /**
@@ -311,20 +353,11 @@ public final class BuffDescription {
             // the heading, right under the duration, which put the one temporary effect
             // that looks permanent in the only place on the tooltip that isn't marked
             // "while active" — so "+30 max health" read as a permanent gain.
-            if (healthBonus != 0) {
-                lines.add(bullet(Text.translatable("tooltip.florafare.buff.entry",
-                                attributeName(MAX_HEALTH_ID), signed(healthBonus))
-                        // Kept red rather than the blue every other modifier gets: it is
-                        // hearts, and a player scanning the block should find it at once.
-                        .formatted(healthBonus > 0 ? Formatting.RED : Formatting.DARK_RED)));
-            }
+            if (healthBonus != 0) lines.add(healthBullet(healthBonus));
 
             if (hasAttributes) {
                 for (FoodBuffData.AttributeData attr : attributes) {
-                    lines.add(bullet(Text.translatable("tooltip.florafare.buff.entry",
-                                    attributeName(attr.attributeId()),
-                                    formatAmount(attr.amount(), attr.operation()))
-                            .formatted(attributeFormatting(attr.attributeId(), attr.amount()))));
+                    lines.add(attributeBullet(attr));
                 }
             }
         }
@@ -350,11 +383,31 @@ public final class BuffDescription {
                                       List<FoodBuffData.EffectData> effects) {
         if (effects.isEmpty()) return;
         lines.add(Text.translatable(headingKey).formatted(Formatting.GRAY));
-        for (FoodBuffData.EffectData effect : effects) {
-            lines.add(bullet(Text.translatable("tooltip.florafare.buff.entry",
-                            effectLabel(effect), formatDuration(effect.duration()))
-                    .formatted(effectFormatting(effectCategory(effect.id())))));
-        }
+        for (FoodBuffData.EffectData effect : effects) lines.add(effectBullet(effect));
+    }
+
+    /** "• Max Health: +4" — a health bonus, as the max-health modifier it is applied as. */
+    private static Text healthBullet(double healthBonus) {
+        return bullet(Text.translatable("tooltip.florafare.buff.entry",
+                        attributeName(MAX_HEALTH_ID), signed(healthBonus))
+                // Kept red rather than the blue every other modifier gets: it is hearts,
+                // and a player scanning the block should find it at once.
+                .formatted(healthBonus > 0 ? Formatting.RED : Formatting.DARK_RED));
+    }
+
+    /** "• Speed: +10%", coloured by the attribute's own sense of good and bad. */
+    private static Text attributeBullet(FoodBuffData.AttributeData attr) {
+        return bullet(Text.translatable("tooltip.florafare.buff.entry",
+                        attributeName(attr.attributeId()),
+                        formatAmount(attr.amount(), attr.operation()))
+                .formatted(attributeFormatting(attr.attributeId(), attr.amount())));
+    }
+
+    /** "• Regeneration II: 0:10", coloured by the effect's category. */
+    private static Text effectBullet(FoodBuffData.EffectData effect) {
+        return bullet(Text.translatable("tooltip.florafare.buff.entry",
+                        effectLabel(effect), formatDuration(effect.duration()))
+                .formatted(effectFormatting(effectCategory(effect.id()))));
     }
 
     /** An effect's name with its level numeral, e.g. "Regeneration II". */

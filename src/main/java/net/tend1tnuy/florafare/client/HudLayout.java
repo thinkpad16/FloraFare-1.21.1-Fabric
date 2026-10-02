@@ -71,6 +71,29 @@ public final class HudLayout {
         return MathHelper.clamp(anchored + offsetY, 0, Math.max(0, screenHeight - height));
     }
 
+    /** How many aftermath rows the overlay shows at most; the rest wait their turn. */
+    public static final int MAX_AFTERMATH_ROWS = 4;
+
+    /**
+     * Top edge of aftermath row {@code index}, or {@link Integer#MIN_VALUE} when it would
+     * leave the screen.
+     *
+     * <p>Aftermaths take no buff slot, so they are not part of the slot column the panel
+     * (and the placement screen) is measured by. They hang off its open end instead: below
+     * the last slot when the panel is anchored to a top corner, above the first one when it
+     * is anchored to a bottom corner — growing away from the screen edge either way, so the
+     * column itself never moves when a hangover starts or ends. A row that would not fit on
+     * screen is not drawn at all rather than clamped on top of the slots.
+     */
+    public static int aftermathY(HudConfig.ScreenPosition position, int baseY, int slotCount,
+                                 int index, int screenHeight) {
+        int y = switch (position) {
+            case TOP_LEFT, TOP_RIGHT       -> baseY + panelHeight(slotCount) + index * SLOT_SPACING;
+            case BOTTOM_LEFT, BOTTOM_RIGHT -> baseY - (index + 1) * SLOT_SPACING;
+        };
+        return (y < 0 || y + SLOT_HEIGHT > screenHeight) ? Integer.MIN_VALUE : y;
+    }
+
     /**
      * The corner a panel at this position belongs to, by which screen quadrant its own
      * centre falls in. Used when a drag ends: re-anchoring to the nearest corner is what

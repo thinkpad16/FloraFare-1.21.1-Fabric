@@ -73,7 +73,8 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
 
     /** Keys only an entry has — the ones that make a root object a single-entry file. */
     static final Set<String> ENTRY_ONLY_KEYS = Set.of(KEY_ID, KEY_DURATION, KEY_NUTRITION,
-            KEY_SATURATION, KEY_HEALTH_BONUS, KEY_EFFECTS, KEY_ATTRIBUTES);
+            KEY_SATURATION, KEY_HEALTH_BONUS, KEY_EFFECTS, KEY_ATTRIBUTES,
+            AftermathParser.KEY_AFTERMATH);
 
     /** Every key an entry reads. */
     static final Set<String> ENTRY_KEYS = union(ENTRY_ONLY_KEYS, Set.of(KEY_PRIORITY, KEY_ALWAYS_EDIBLE));
@@ -564,9 +565,19 @@ public class FoodReloadListener extends JsonDataLoader implements IdentifiableRe
                 }
             }
 
+            // What the buff leaves behind once it ends. Parsed for a hunger-only entry
+            // too, but it never applies there: such an entry grants no buff, so there is
+            // nothing to end. Said so rather than left to be discovered in game.
+            FoodAftermath aftermath = AftermathParser.parse(json, lookup, diagnostics, file, target);
+            if (!aftermath.isEmpty() && duration <= 0) {
+                diagnostics.warn(Category.INVALID_AFTERMATH, file, target,
+                        "is hunger-only (duration <= 0), so it grants no buff and its "
+                                + "'aftermath' can never start");
+            }
+
             FoodBuffData data = new FoodBuffData(
                     target, duration, nutrition, saturation,
-                    healthBonus, effects, attributes, priority, alwaysEdible);
+                    healthBonus, effects, attributes, priority, alwaysEdible, aftermath);
             FoodBuffManager.putConfig(target, data, file);
         }
     }

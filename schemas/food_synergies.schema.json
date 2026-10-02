@@ -78,6 +78,10 @@
             "$ref": "food_buffs.schema.json#/definitions/attribute"
           }
         },
+        "aftermath": {
+          "description": "What the synergy leaves behind once it ends \u2014 same format and rules as a food_buffs entry's aftermath. Starts when the synergy runs out or loses a requirement.",
+          "$ref": "food_buffs.schema.json#/definitions/aftermath"
+        },
         "_comment": {
           "description": "Ignored by the loader \u2014 a note for whoever edits the file. Florafare's own tag_categories.json uses it."
         }

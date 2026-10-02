@@ -18,7 +18,9 @@ import net.tend1tnuy.florafare.Florafare;
 import net.tend1tnuy.florafare.api.FlorafareEvents;
 import net.tend1tnuy.florafare.config.FlorafareConfig;
 import net.tend1tnuy.florafare.food.AttributeOperations;
+import net.tend1tnuy.florafare.food.FoodAftermath;
 import net.tend1tnuy.florafare.food.FoodBuffData;
+import net.tend1tnuy.florafare.food.FoodBuffManager;
 import net.tend1tnuy.florafare.food.FoodSynergyData;
 import net.tend1tnuy.florafare.food.FoodSynergyManager;
 import net.tend1tnuy.florafare.network.BuffStateSyncPayload;
@@ -65,6 +67,7 @@ public class PlayerFoodComponent {
     private static final String NBT_DISCOVERED_SYNERGIES_KEY = "FlorafareDiscoveredSynergies";
     private static final String NBT_ACTIVE_SYNERGIES_KEY    = "FlorafareActiveSynergies";
     private static final String NBT_SPENT_SYNERGIES_KEY     = "FlorafareSpentSynergies";
+    private static final String NBT_AFTERMATHS_KEY          = "FlorafareAftermaths";
 
     private final PlayerEntity player;
     private final List<ActiveFoodBuff> activeBuffs    = new ArrayList<>();
@@ -91,6 +94,19 @@ public class PlayerFoodComponent {
      * requirements stop being met (so the next time they are, it starts normally).
      */
     private final Set<String> spentSynergies = new HashSet<>();
+
+    /**
+     * What ended buffs and synergies left behind — see {@link #startAftermath}.
+     *
+     * <p>A list of its own, not more buff slots: an aftermath is a consequence, and letting
+     * a hangover take the slot the next meal needs would turn it into a second penalty the
+     * datapack never asked for. Entries reuse {@link ActiveFoodBuff} because they are, field
+     * for field, the same thing — a source id (the buff's target, or the synergy id with
+     * the synergy flag set), an icon item, a countdown and the modifiers recorded against
+     * it — so they persist, sync, tick and reapply through the code buffs already use.
+     * At most one per source: a second ending of the same source refreshes the first.
+     */
+    private final List<ActiveFoodBuff> activeAftermaths = new ArrayList<>();
 
     /**
      * Listener notifications waiting to be delivered — see {@link #fireQueuedEvents()}.
@@ -240,6 +256,7 @@ public class PlayerFoodComponent {
     public Set<String>          getDiscoveredSynergies()  { return discoveredSynergies; }
     public List<ActiveFoodBuff> getActiveBuffs()          { return activeBuffs; }
     public List<ActiveFoodBuff> getActiveSynergies()      { return activeSynergies; }
+    public List<ActiveFoodBuff> getActiveAftermaths()     { return activeAftermaths; }
 
     // -------------------------------------------------------------------------
     // FOOD DISCOVERY
@@ -617,7 +634,7 @@ public class PlayerFoodComponent {
                 continue;
             }
             activeBuffs.remove(i);
-            endBuff(buff);
+            endBuff(buff, EndCause.REMOVED);
             updateSynergies(null);
             markBuffChanged();
             fireQueuedEvents();
@@ -629,7 +646,10 @@ public class PlayerFoodComponent {
     public boolean removeLastBuff() {
         if (activeBuffs.isEmpty()) return false;
         ActiveFoodBuff buff = activeBuffs.remove(activeBuffs.size() - 1);
-        endBuff(buff);
+        // Forgotten Mead ends the buff like anything else does, aftermath and all: a
+        // bottle that cleared a hangover by draining the drink that caused it would make
+        // every aftermath optional.
+        endBuff(buff, EndCause.REMOVED);
         if (!player.getWorld().isClient) updateSynergies(null);
         markBuffChanged();
         fireQueuedEvents();
@@ -637,7 +657,14 @@ public class PlayerFoodComponent {
     }
 
     /**
-     * Drops every buff and synergy — {@code /florafare clear}, the API, and death.
+     * Drops every buff, synergy and aftermath — {@code /florafare clear}, the API, and death.
+     *
+     * <p>A clean slate: nothing ended here starts an aftermath, and the aftermaths already
+     * running end too. Death has to work that way (the respawned player starts fresh), and
+     * the clear command and the API share this method because an operator reaching for
+     * "clear" means "put this player back to nothing", not "swap their buffs for their
+     * hangovers". A single buff ended any other way does leave its aftermath; see
+     * {@link #startsAftermath}.
      *
      * <p>The lists are emptied first and the entries ended from a copy, so a
      * {@code BUFF_REMOVED} listener that calls back into the component finds it already
@@ -646,19 +673,39 @@ public class PlayerFoodComponent {
     public void clearAllBuffs() {
         if (player.getWorld().isClient) return;
         spentSynergies.clear();
-        if (activeBuffs.isEmpty() && activeSynergies.isEmpty()) return;
+        if (activeBuffs.isEmpty() && activeSynergies.isEmpty() && activeAftermaths.isEmpty()) return;
 
-        List<ActiveFoodBuff> buffs     = new ArrayList<>(activeBuffs);
-        List<ActiveFoodBuff> synergies = new ArrayList<>(activeSynergies);
+        List<ActiveFoodBuff> buffs      = new ArrayList<>(activeBuffs);
+        List<ActiveFoodBuff> synergies  = new ArrayList<>(activeSynergies);
+        List<ActiveFoodBuff> aftermaths = new ArrayList<>(activeAftermaths);
         activeBuffs.clear();
         activeSynergies.clear();
         activeSynergyMap.clear();
+        activeAftermaths.clear();
 
-        for (ActiveFoodBuff buff : buffs)     endBuff(buff);
-        for (ActiveFoodBuff buff : synergies) endBuff(buff);
+        for (ActiveFoodBuff buff : buffs)      endBuff(buff, EndCause.CLEARED);
+        for (ActiveFoodBuff buff : synergies)  endBuff(buff, EndCause.CLEARED);
+        for (ActiveFoodBuff entry : aftermaths) endAftermath(entry);
 
         markBuffChanged();
         fireQueuedEvents();
+    }
+
+    /**
+     * Ends every running aftermath and nothing else — {@code FlorafareAPI.clearAftermaths}.
+     * The effects an aftermath granted when it started are ordinary status effects by now
+     * and are left alone, like every other effect Florafare hands out.
+     *
+     * @return how many aftermaths were ended
+     */
+    public int clearAftermaths() {
+        if (player.getWorld().isClient || activeAftermaths.isEmpty()) return 0;
+        List<ActiveFoodBuff> aftermaths = new ArrayList<>(activeAftermaths);
+        activeAftermaths.clear();
+        for (ActiveFoodBuff entry : aftermaths) endAftermath(entry);
+        markBuffChanged();
+        fireQueuedEvents();
+        return aftermaths.size();
     }
 
     // -------------------------------------------------------------------------
@@ -781,26 +828,51 @@ public class PlayerFoodComponent {
     private void applyBuffEffects(ActiveFoodBuff buff, FoodBuffData data, boolean isSynergy) {
         if (player.getWorld().isClient) return;
 
+        String safeId = modifierScope(buff, isSynergy);
+        applyModifiers(buff, "health_" + safeId,
+                (attributeId, index) -> attributeModifierPath(safeId, attributeId, index),
+                data.healthBonus(), data.attributes(), data.target());
+
+        applyStatusEffects(data);
+    }
+
+    /** Builds the modifier id path for attribute line {@code index} of one entry. */
+    @FunctionalInterface
+    private interface ModifierPath {
+        String path(Identifier attributeId, int index);
+    }
+
+    /**
+     * Puts an entry's health bonus and attribute lines on the player, recording each one
+     * against the entry so it can be taken off again. Shared by buffs, synergies and
+     * aftermaths, which differ only in how their modifier ids are spelled.
+     *
+     * <p>Starts by taking off every modifier the entry already carries, so a refresh
+     * converges on {@code healthBonus} and {@code attributes} as they now stand rather than
+     * adding to whatever was there.
+     *
+     * @param owner what the lines came from, for the log
+     */
+    private void applyModifiers(ActiveFoodBuff entry, String healthPath, ModifierPath attributePath,
+                                double healthBonus, List<FoodBuffData.AttributeData> attributes,
+                                String owner) {
         // No health clamp between the strip and the re-apply: taking a max-health bonus
         // off and putting it straight back must not cost the player the hearts above the
         // un-buffed maximum. The clamp further down runs once, on the final state.
-        removeRecordedModifiers(buff);
-        buff.clearModifierRecords();
+        removeRecordedModifiers(entry);
+        entry.clearModifierRecords();
 
-        String safeId = modifierScope(buff, isSynergy);
-
-        if (data.healthBonus() != 0) {
-            Identifier id = Identifier.of(Florafare.MOD_ID, "health_" + safeId);
-            applyAttribute(buff, EntityAttributes.GENERIC_MAX_HEALTH, id,
-                    data.healthBonus(), EntityAttributeModifier.Operation.ADD_VALUE);
+        if (healthBonus != 0) {
+            Identifier id = Identifier.of(Florafare.MOD_ID, healthPath);
+            applyAttribute(entry, EntityAttributes.GENERIC_MAX_HEALTH, id,
+                    healthBonus, EntityAttributeModifier.Operation.ADD_VALUE);
         }
 
-        List<FoodBuffData.AttributeData> attributes = data.attributes();
         for (int i = 0; i < attributes.size(); i++) {
             FoodBuffData.AttributeData attr = attributes.get(i);
-            Optional<RegistryEntry.Reference<net.minecraft.entity.attribute.EntityAttribute>> entry =
+            Optional<RegistryEntry.Reference<net.minecraft.entity.attribute.EntityAttribute>> attribute =
                     Registries.ATTRIBUTE.getEntry(attr.attributeId());
-            if (entry.isEmpty()) continue;
+            if (attribute.isEmpty()) continue;
 
             // The loaders reject an unknown operation, so this only catches a config built
             // in code. Skipped rather than guessed: add_value in place of a multiplier is
@@ -809,22 +881,25 @@ public class PlayerFoodComponent {
                     AttributeOperations.parse(attr.operation());
             if (operation.isEmpty()) {
                 Florafare.LOGGER.error(
-                        "Buff '{}' gives attribute {} the unknown operation '{}'; skipped.",
-                        data.target(), attr.attributeId(), attr.operation());
+                        "'{}' gives attribute {} the unknown operation '{}'; skipped.",
+                        owner, attr.attributeId(), attr.operation());
                 continue;
             }
 
             Identifier id = Identifier.of(Florafare.MOD_ID,
-                    attributeModifierPath(safeId, attr.attributeId(), i));
-            applyAttribute(buff, entry.get(), id, attr.amount(), operation.get());
+                    attributePath.path(attr.attributeId(), i));
+            applyAttribute(entry, attribute.get(), id, attr.amount(), operation.get());
         }
 
         // A negative max-health modifier can leave current health above the new maximum.
+        clampHealth();
+    }
+
+    /** Pulls current health down to the maximum, after a max-health modifier changed. */
+    private void clampHealth() {
         if (player.getHealth() > player.getMaxHealth()) {
             player.setHealth(player.getMaxHealth());
         }
-
-        applyStatusEffects(data);
     }
 
     /**
@@ -973,7 +1048,7 @@ public class PlayerFoodComponent {
     }
 
     /**
-     * Reapplies the recorded attribute modifiers of every active buff and synergy.
+     * Reapplies the recorded attribute modifiers of every active buff, synergy and aftermath.
      * Needed whenever the player entity is (re)built — loading from disk, or being
      * recreated on a dimension change — because the modifiers are temporary and
      * vanilla carries over only BASE attribute values.
@@ -985,6 +1060,7 @@ public class PlayerFoodComponent {
         int reapplied = 0;
         for (ActiveFoodBuff buff : activeBuffs)     reapplied += reapplyBuffModifiers(buff);
         for (ActiveFoodBuff buff : activeSynergies) reapplied += reapplyBuffModifiers(buff);
+        for (ActiveFoodBuff entry : activeAftermaths) reapplied += reapplyBuffModifiers(entry);
         return reapplied;
     }
 
@@ -1082,7 +1158,7 @@ public class PlayerFoodComponent {
                 List<ActiveFoodBuff> ended = new ArrayList<>(activeSynergies);
                 activeSynergies.clear();
                 activeSynergyMap.clear();
-                for (ActiveFoodBuff synergyBuff : ended) endBuff(synergyBuff);
+                for (ActiveFoodBuff synergyBuff : ended) endBuff(synergyBuff, EndCause.SYNERGIES_DISABLED);
                 markDirty();
             }
             return changed;
@@ -1109,7 +1185,13 @@ public class PlayerFoodComponent {
             }
         }
         if (ended != null) {
-            for (ActiveFoodBuff synergyBuff : ended) endBuff(synergyBuff);
+            // Both causes start the aftermath; they are told apart only so the rule in
+            // startsAftermath reads the way it is documented. A synergy whose definition
+            // a /reload removed has no aftermath left to look up, and simply ends.
+            for (ActiveFoodBuff synergyBuff : ended) {
+                endBuff(synergyBuff, synergyBuff.isExpired()
+                        ? EndCause.EXPIRED : EndCause.REQUIREMENT_LOST);
+            }
         }
 
         // A spent synergy whose requirements have lapsed is no longer spent: the next time
@@ -1358,6 +1440,25 @@ public class PlayerFoodComponent {
     public void tick() {
         boolean isServer = !player.getWorld().isClient;
 
+        // Aftermaths first, so one started by a buff expiring further down is not also
+        // counted down in the same tick it began.
+        List<ActiveFoodBuff> lapsed = null;
+        for (int i = activeAftermaths.size() - 1; i >= 0; i--) {
+            ActiveFoodBuff entry = activeAftermaths.get(i);
+            entry.tick();
+            // Server only, for the same reason as a buff below: the client's entry waits
+            // at zero for the server's sync rather than disappearing on its own clock.
+            if (entry.isExpired() && isServer) {
+                activeAftermaths.remove(i);
+                if (lapsed == null) lapsed = new ArrayList<>();
+                lapsed.add(entry);
+            }
+        }
+        if (lapsed != null) {
+            for (ActiveFoodBuff entry : lapsed) endAftermath(entry);
+            markDirty();
+        }
+
         // Expired entries are taken out of the list inside the loop and ended after it,
         // so the listener events that ending queues never run mid-iteration.
         List<ActiveFoodBuff> expired = null;
@@ -1372,7 +1473,7 @@ public class PlayerFoodComponent {
         }
 
         if (expired != null) {
-            for (ActiveFoodBuff buff : expired) endBuff(buff);
+            for (ActiveFoodBuff buff : expired) endBuff(buff, EndCause.EXPIRED);
             markDirty();
             updateSynergies(null);
         }
@@ -1394,7 +1495,7 @@ public class PlayerFoodComponent {
         }
 
         if (ranOut != null) {
-            for (ActiveFoodBuff synergyBuff : ranOut) endBuff(synergyBuff);
+            for (ActiveFoodBuff synergyBuff : ranOut) endBuff(synergyBuff, EndCause.EXPIRED);
             markDirty();
         }
 
@@ -1424,15 +1525,13 @@ public class PlayerFoodComponent {
 
     /**
      * Ends a buff or synergy that has already been taken out of its list: strips what it
-     * applied and queues the matching listener event. The records stay on the entry, so a
-     * {@code BUFF_REMOVED} listener can still see what the buff had been granting.
+     * applied, queues the matching listener event, and — when {@code cause} calls for one
+     * — starts its aftermath. The records stay on the entry, so a {@code BUFF_REMOVED}
+     * listener can still see what the buff had been granting.
      */
-    private void endBuff(ActiveFoodBuff buff) {
+    private void endBuff(ActiveFoodBuff buff, EndCause cause) {
         removeRecordedModifiers(buff);
-
-        if (player.getHealth() > player.getMaxHealth()) {
-            player.setHealth(player.getMaxHealth());
-        }
+        clampHealth();
 
         // Whether this is a synergy is read off the entry itself. Asking the synergy
         // manager "is anything registered under this target" answered the wrong question
@@ -1452,6 +1551,11 @@ public class PlayerFoodComponent {
         } else {
             queueEvent(() -> FlorafareEvents.BUFF_REMOVED.invoker().onBuffRemoved(player, buff));
         }
+
+        // After the buff's own modifiers are off and its event queued, so listeners hear
+        // "ended" before "aftermath started", and a -25% max-health aftermath is measured
+        // against the player's un-buffed maximum rather than stacked on the buff's bonus.
+        if (startsAftermath(cause)) startAftermath(buff);
     }
 
     /**
@@ -1486,6 +1590,189 @@ public class PlayerFoodComponent {
                 player.removeStatusEffect(entry);
             });
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // AFTERMATH
+    //
+    // What a buff or synergy leaves behind once it is over (FoodAftermath). The rules:
+    //
+    //   * It starts when its source ENDS — runs out, loses a requirement (synergies), or
+    //     is removed on its own by Forgotten Mead, FlorafareAPI.removeBuff or
+    //     /florafare buff remove. Not when it is refreshed: eating the same food again
+    //     before it runs out keeps the buff going, and nothing has ended.
+    //   * A wipe starts none: clearAllBuffs (/florafare clear, FlorafareAPI.clearBuffs,
+    //     death) ends the running aftermaths too, and switching synergies off server-wide
+    //     is an operator's decision, not something the player did.
+    //   * One per source — the buff's target, or the synergy id. If it is already running,
+    //     it is refreshed to whichever of the two ends later and its modifiers re-applied
+    //     from the definition as it now stands; it never stacks.
+    //   * Its status effects are granted every time it starts (vanilla merges a repeat
+    //     into the running instance rather than stacking it); its health bonus and
+    //     attributes are held for its duration and taken off when it ends.
+    //   * The definition is looked up by the source's target when the source ends, the
+    //     same way the overlay and synergy-effect removal look theirs up — so a /reload
+    //     that changes an aftermath applies to buffs already running.
+    // -------------------------------------------------------------------------
+
+    /** Why a buff or synergy ended — which decides whether its aftermath follows. */
+    enum EndCause {
+        /** It ran its duration out. */
+        EXPIRED,
+        /** A synergy whose requirements stopped being met, or whose definition went away. */
+        REQUIREMENT_LOST,
+        /** Taken off on its own: Forgotten Mead, {@code removeBuff}, {@code /florafare buff remove}. */
+        REMOVED,
+        /** Wiped with everything else: {@code /florafare clear}, {@code clearBuffs}, death. */
+        CLEARED,
+        /** Every synergy ended because {@code enableSynergies} was switched off. */
+        SYNERGIES_DISABLED
+    }
+
+    /**
+     * Whether a source ending this way starts its aftermath.
+     *
+     * <p>Anything that ends one buff, early or on time, does — otherwise the Forgotten Mead
+     * that frees a slot would also be a hangover cure, and every aftermath would be
+     * optional for anyone carrying a bottle. A wipe does not: it is a reset, and death in
+     * particular has to leave the respawned player with nothing.
+     *
+     * <p>Package-private and static so the rule can be driven from a unit test.
+     */
+    static boolean startsAftermath(EndCause cause) {
+        return switch (cause) {
+            case EXPIRED, REQUIREMENT_LOST, REMOVED -> true;
+            case CLEARED, SYNERGIES_DISABLED        -> false;
+        };
+    }
+
+    /** How long an aftermath runs: {@code remaining} now, out of {@code initial} total. */
+    record AftermathWindow(int remaining, int initial) {}
+
+    /**
+     * What a running aftermath becomes when its source ends again.
+     *
+     * <p>The longer of the two wins. A fresh aftermath at least as long as what is left
+     * restarts the bar at full; a shorter one leaves the running aftermath exactly where it
+     * was — ending a source must never shorten a penalty that is already counting down,
+     * or a second, briefer ending would be a way to cut a long one short.
+     *
+     * <p>Package-private and static so the rule can be driven from a unit test.
+     */
+    static AftermathWindow refreshAftermath(int remaining, int initial, int duration) {
+        int fresh = ActiveFoodBuff.clampDuration(duration);
+        if (fresh >= remaining) return new AftermathWindow(fresh, fresh);
+        return new AftermathWindow(remaining, Math.max(initial, remaining));
+    }
+
+    /** Prefix of every aftermath modifier id path; see {@link #aftermathScope}. */
+    public static final String AFTERMATH_MODIFIER_PREFIX = "aftermath/";
+
+    /**
+     * The modifier-id scope of an aftermath: {@code buff/<target>} or
+     * {@code synergy/<id>}, sanitized the way {@link #modifierScope} sanitizes.
+     *
+     * <p>Keyed by the source alone, without the item eaten: there is one aftermath per
+     * source, so two items under one {@code #tag} entry share it, which is exactly the
+     * "refresh, never stack" rule. The {@code buff/}/{@code synergy/} split keeps a food
+     * target and a synergy that happen to share an id apart. Every id built from this
+     * starts with {@link #AFTERMATH_MODIFIER_PREFIX}, while buff and synergy ids start with
+     * {@code attr_} or {@code health_}, so the two can never collide whatever the scope.
+     */
+    static String aftermathScope(String source, boolean fromSynergy) {
+        return (fromSynergy ? "synergy/" : "buff/")
+                + sanitizePath(source.replace("#", "tag_").replace(":", "_"));
+    }
+
+    /** {@code aftermath/attr_<scope>_<namespace>_<path>_<index>}; see {@link #attributeModifierPath}. */
+    static String aftermathAttributePath(String scope, Identifier attributeId, int index) {
+        return AFTERMATH_MODIFIER_PREFIX + attributeModifierPath(scope, attributeId, index);
+    }
+
+    /** {@code aftermath/health_<scope>}. */
+    static String aftermathHealthPath(String scope) {
+        return AFTERMATH_MODIFIER_PREFIX + "health_" + scope;
+    }
+
+    /**
+     * The aftermath a buff or synergy currently defines, looked up by the target it
+     * records; {@link FoodAftermath#NONE} when nothing defines one any more.
+     *
+     * <p>A {@code setbuff} stack buff records {@code stack:<uuid>} and is found in the
+     * runtime map; an auto-generated buff was never stored anywhere and has none.
+     */
+    static FoodAftermath aftermathOf(ActiveFoodBuff source) {
+        String target = source.getTarget();
+        if (source.isSynergy()) {
+            FoodSynergyData synergy = FoodSynergyManager.getSynergy(target);
+            return synergy == null ? FoodAftermath.NONE : synergy.aftermath();
+        }
+        FoodBuffData data = target.startsWith(STACK_TARGET_PREFIX)
+                ? FoodBuffManager.getRuntimeStackConfig(target.substring(STACK_TARGET_PREFIX.length()))
+                : FoodBuffManager.getConfigByTarget(target);
+        return data == null ? FoodAftermath.NONE : data.aftermath();
+    }
+
+    /** The target prefix {@code /florafare setbuff} gives its per-stack buffs. */
+    private static final String STACK_TARGET_PREFIX = "stack:";
+
+    /** The running aftermath of one source, or null. */
+    private ActiveFoodBuff findAftermath(String source, boolean fromSynergy) {
+        for (ActiveFoodBuff entry : activeAftermaths) {
+            if (entry.isSynergy() == fromSynergy && entry.getTarget().equals(source)) return entry;
+        }
+        return null;
+    }
+
+    /**
+     * Starts — or refreshes — the aftermath of a buff or synergy that has just ended.
+     * See the rules at the top of this section.
+     */
+    private void startAftermath(ActiveFoodBuff source) {
+        if (player.getWorld().isClient) return;
+        FoodAftermath aftermath = aftermathOf(source);
+        if (aftermath.isEmpty()) return;
+
+        // Granted once per start, through the same path every other datapack effect takes
+        // — the buff ceiling, -1 as infinite, a floored amplifier.
+        for (FoodBuffData.EffectData effect : aftermath.effects()) {
+            applyEffect(effect.id(), effect.duration(), effect.amplifier());
+        }
+        if (!aftermath.isTracked()) return;
+
+        ActiveFoodBuff entry = findAftermath(source.getTarget(), source.isSynergy());
+        if (entry != null) {
+            AftermathWindow next = refreshAftermath(entry.getDurationRemaining(),
+                    entry.getInitialDuration(), aftermath.duration());
+            entry.resetDuration(next.remaining(), next.initial());
+        } else {
+            entry = new ActiveFoodBuff(source.getTarget(), source.getConsumedItemId(),
+                    aftermath.duration(), aftermath.duration(), source.isSynergy());
+            activeAftermaths.add(entry);
+        }
+
+        // Strips whatever the entry held before, so a refresh re-applies cleanly: the same
+        // ids are rewritten rather than added beside, and a line a /reload removed goes.
+        String scope = aftermathScope(source.getTarget(), source.isSynergy());
+        applyModifiers(entry, aftermathHealthPath(scope),
+                (attributeId, index) -> aftermathAttributePath(scope, attributeId, index),
+                aftermath.healthBonus(), aftermath.attributes(),
+                "aftermath of " + source.getTarget());
+
+        ActiveFoodBuff started = entry;
+        queueEvent(() -> FlorafareEvents.AFTERMATH_STARTED.invoker()
+                .onAftermathStarted(player, source, started));
+        markBuffChanged();
+    }
+
+    /**
+     * Ends an aftermath that has already been taken out of its list: its modifiers come
+     * off and {@code AFTERMATH_ENDED} is queued. Its effects are left to run out.
+     */
+    private void endAftermath(ActiveFoodBuff entry) {
+        removeRecordedModifiers(entry);
+        clampHealth();
+        queueEvent(() -> FlorafareEvents.AFTERMATH_ENDED.invoker().onAftermathEnded(player, entry));
     }
 
     // -------------------------------------------------------------------------
@@ -1564,6 +1851,12 @@ public class PlayerFoodComponent {
         NbtList activeSyn = new NbtList();
         for (ActiveFoodBuff b : activeSynergies) activeSyn.add(b.toNbt());
         nbt.put(NBT_ACTIVE_SYNERGIES_KEY, activeSyn);
+
+        // Part of the volatile half: synced with the buffs (the overlay shows them) and
+        // saved with them (a relog must not be a hangover cure).
+        NbtList aftermaths = new NbtList();
+        for (ActiveFoodBuff entry : activeAftermaths) aftermaths.add(entry.toNbt());
+        nbt.put(NBT_AFTERMATHS_KEY, aftermaths);
         return nbt;
     }
 
@@ -1571,6 +1864,7 @@ public class PlayerFoodComponent {
     public void readBuffStateFromNbt(NbtCompound nbt) {
         readActiveBuffs(nbt);
         readActiveSynergies(nbt);
+        readActiveAftermaths(nbt);
     }
 
     public NbtCompound writeToNbt(NbtCompound nbt) {
@@ -1617,9 +1911,22 @@ public class PlayerFoodComponent {
         }
     }
 
+    private void readActiveAftermaths(NbtCompound nbt) {
+        activeAftermaths.clear();
+        // Absent from every save written before aftermaths existed: read as none.
+        if (nbt.contains(NBT_AFTERMATHS_KEY, NbtElement.LIST_TYPE)) {
+            NbtList list = nbt.getList(NBT_AFTERMATHS_KEY, NbtElement.COMPOUND_TYPE);
+            for (int i = 0; i < list.size(); i++) {
+                // The "Synergy" flag rides in the tag: an aftermath list mixes both kinds.
+                activeAftermaths.add(ActiveFoodBuff.fromNbt(list.getCompound(i)));
+            }
+        }
+    }
+
     public void readFromNbt(NbtCompound nbt) {
         readActiveBuffs(nbt);
         readActiveSynergies(nbt);
+        readActiveAftermaths(nbt);
 
         discoveredFoods.clear();
         if (nbt.contains(NBT_DISCOVERED_KEY, NbtElement.LIST_TYPE)) {
@@ -1684,6 +1991,11 @@ public class PlayerFoodComponent {
 
         this.spentSynergies.clear();
         this.spentSynergies.addAll(old.spentSynergies);
+
+        // Through the End portal and back a hangover stays a hangover; reapplyAttributes,
+        // which the caller runs next, puts its modifiers on the new entity.
+        this.activeAftermaths.clear();
+        this.activeAftermaths.addAll(old.activeAftermaths);
 
         this.hasReceivedJournal = old.hasReceivedJournal;
         this.dirty = false;

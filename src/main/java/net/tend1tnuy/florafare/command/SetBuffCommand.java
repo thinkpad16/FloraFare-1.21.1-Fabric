@@ -336,11 +336,12 @@ public class SetBuffCommand {
 
         // Snapshots: sendFeedback takes a supplier, which Brigadier may call later, and
         // the component's own lists are mutated by the player tick as buffs expire.
-        List<ActiveFoodBuff> buffs     = List.copyOf(component.getActiveBuffs());
-        List<ActiveFoodBuff> synergies = List.copyOf(component.getActiveSynergies());
+        List<ActiveFoodBuff> buffs      = List.copyOf(component.getActiveBuffs());
+        List<ActiveFoodBuff> synergies  = List.copyOf(component.getActiveSynergies());
+        List<ActiveFoodBuff> aftermaths = List.copyOf(component.getActiveAftermaths());
         String playerName = player.getName().getString();
 
-        if (buffs.isEmpty() && synergies.isEmpty()) {
+        if (buffs.isEmpty() && synergies.isEmpty() && aftermaths.isEmpty()) {
             source.sendFeedback(() -> Text.translatable(
                     "command.florafare.buffs.none", playerName), false);
             return 0;
@@ -359,7 +360,17 @@ public class SetBuffCommand {
                 source.sendFeedback(() -> describeBuff(synergy, true), false);
             }
         }
-        return buffs.size() + synergies.size();
+
+        // Listed apart from the buffs: they take no slot, and an admin asked "why is this
+        // player at 15 max health" needs to find the hangover without reading every line.
+        if (!aftermaths.isEmpty()) {
+            source.sendFeedback(() -> Text.translatable(
+                    "command.florafare.buffs.aftermaths", aftermaths.size()), false);
+            for (ActiveFoodBuff aftermath : aftermaths) {
+                source.sendFeedback(() -> describeBuff(aftermath, aftermath.isSynergy()), false);
+            }
+        }
+        return buffs.size() + synergies.size() + aftermaths.size();
     }
 
     /** One line: what the buff is, how long it has left, and what it is applying. */
@@ -1068,6 +1079,16 @@ public class SetBuffCommand {
             if (data.alwaysEdible()) {
                 source.sendFeedback(() -> Text.translatable(
                         "command.florafare.explain.always_edible"), false);
+            }
+            net.tend1tnuy.florafare.food.FoodAftermath aftermath = data.aftermath();
+            if (!aftermath.isEmpty()) {
+                // A hunger-only entry parses one but never grants the buff that would end;
+                // the loader warns about that, and the explanation says it too.
+                source.sendFeedback(() -> Text.translatable(
+                        data.isHungerOnly() ? "command.florafare.explain.aftermath_unused"
+                                : "command.florafare.explain.aftermath",
+                        ticksToMmss(aftermath.duration()), trim(aftermath.healthBonus()),
+                        aftermath.attributes().size(), aftermath.effects().size()), false);
             }
         }
         return 1;

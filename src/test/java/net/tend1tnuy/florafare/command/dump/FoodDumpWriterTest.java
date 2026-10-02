@@ -16,6 +16,9 @@ class FoodDumpWriterTest {
                 false, false, 1200, 2.0, 5, 6.0f, false,
                 List.of(new FoodDump.Effect("minecraft:speed", 200, 0, 1f)),
                 List.of(new FoodDump.Attribute("minecraft:generic.max_health", 2.0, "add_value")),
+                new FoodDump.Aftermath(6000, 0.0, List.of(new FoodDump.Effect("minecraft:nausea", 300, 0, 1f)),
+                        List.of(new FoodDump.Attribute("minecraft:generic.max_health", -0.25,
+                                "add_multiplied_total"))),
                 List.of(new FoodDump.Loss("mypack:bread", 0, "florafare:defaults", 1, false)),
                 List.of());
         FoodDump.Recipe recipe = new FoodDump.Recipe("minecraft:bread", "minecraft:crafting", 1, null,
@@ -40,6 +43,8 @@ class FoodDumpWriterTest {
         assertTrue(json.contains("\"totalChoices\": 1"));
         assertFalse(json.contains("\"remainder\""), "null fields are omitted");
         assertFalse(json.contains("trees"));
+        assertTrue(json.contains("\"aftermath\": {"), "the aftermath sits in the florafare section");
+        assertTrue(json.contains("\"operation\": \"add_multiplied_total\""));
     }
 
     @Test
@@ -53,6 +58,8 @@ class FoodDumpWriterTest {
         assertTrue(text.contains("lost: mypack:bread (priority 0) to florafare:defaults (priority 1)"));
         assertTrue(text.contains("* minecraft:bread [crafting] <- 3x minecraft:wheat"));
         assertTrue(text.contains("└─ 3x minecraft:wheat"));
+        assertTrue(text.contains("aftermath: 6000 ticks · minecraft:generic.max_health -0.25 add_multiplied_total"),
+                text);
     }
 
     @Test

@@ -37,7 +37,7 @@ public class FoodSynergyReloadListener extends JsonDataLoader implements Identif
 
     static final Set<String> FILE_KEYS    = Set.of("entries");
     static final Set<String> SYNERGY_KEYS = Set.of("id", "requirements", "duration", "health_bonus",
-            "effects", "attributes");
+            "effects", "attributes", AftermathParser.KEY_AFTERMATH);
 
     private final DatapackLookup lookup;
     private DatapackDiagnostics.Collector diagnostics =
@@ -296,7 +296,11 @@ public class FoodSynergyReloadListener extends JsonDataLoader implements Identif
             }
         }
 
-        FoodSynergyData synergy = new FoodSynergyData(id, requirements, duration, healthBonus, effects, attributes);
+        // Same parser and the same rules as a food buff's; see AftermathParser.
+        FoodAftermath aftermath = AftermathParser.parse(json, lookup, diagnostics, file, id);
+
+        FoodSynergyData synergy = new FoodSynergyData(id, requirements, duration, healthBonus,
+                effects, attributes, aftermath);
         FoodSynergyData replaced = FoodSynergyManager.putSynergy(synergy, file);
         String previousFile = definedIn.put(id, file);
         if (replaced != null) {

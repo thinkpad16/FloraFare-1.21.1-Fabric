@@ -193,6 +193,22 @@ public final class FlorafareAPI {
         return List.copyOf(component(player).getActiveSynergies());
     }
 
+    /**
+     * The aftermaths currently running on this player — what buffs and synergies that
+     * have ended left behind. Snapshot; see {@link #getActiveBuffs}.
+     *
+     * <p>Each entry's {@link ActiveFoodBuff#getTarget()} is the source's config target (or
+     * synergy id, with {@link ActiveFoodBuff#isSynergy()} true), and its recorded modifiers
+     * are what it is holding. The aftermath applied is the one its source's definition has
+     * <em>when the source ends</em>, looked up by that target — so a buff granted through
+     * {@link #applyBuffToPlayer} from a {@link FoodBuffData} that was never registered has
+     * no definition to look up, and leaves no aftermath.
+     */
+    @NotNull
+    public static List<ActiveFoodBuff> getActiveAftermaths(@NotNull PlayerEntity player) {
+        return List.copyOf(component(player).getActiveAftermaths());
+    }
+
     /** Item ids this player has discovered (eaten at least once). Snapshot. */
     @NotNull
     public static Set<String> getDiscoveredFoods(@NotNull PlayerEntity player) {
@@ -209,15 +225,33 @@ public final class FlorafareAPI {
      * Removes a single active buff, addressed either by the config target it came from
      * ("#c:foods/berry") or by the item that was eaten ("minecraft:sweet_berries").
      *
+     * <p>The buff ends the ordinary way, so its aftermath (and that of any synergy it was
+     * holding up) starts — removing a buff early is not a way around its downside.
+     *
      * @return true if such a buff was active and has been removed
      */
     public static boolean removeBuff(@NotNull PlayerEntity player, @Nullable String targetOrItemId) {
         return component(player).removeBuff(targetOrItemId);
     }
 
-    /** Removes every active buff and synergy from the player, same as {@code /florafare clear}. */
+    /**
+     * Removes every active buff, synergy and aftermath from the player, same as
+     * {@code /florafare clear}. Nothing removed this way leaves an aftermath: a clear is a
+     * clean slate. {@link #removeBuff} is the one that ends a single buff the ordinary way.
+     */
     public static void clearBuffs(@NotNull PlayerEntity player) {
         component(player).clearAllBuffs();
+    }
+
+    /**
+     * Ends every aftermath running on the player — a cure for a hangover — and leaves
+     * buffs and synergies alone. Status effects an aftermath granted when it started are
+     * ordinary effects by now and stay; remove those the vanilla way if you need to.
+     *
+     * @return how many aftermaths were ended
+     */
+    public static int clearAftermaths(@NotNull PlayerEntity player) {
+        return component(player).clearAftermaths();
     }
 
     /**

@@ -49,6 +49,11 @@
               "required": [
                 "attributes"
               ]
+            },
+            {
+              "required": [
+                "aftermath"
+              ]
             }
           ]
         }
@@ -156,6 +161,42 @@
             "$ref": "#/definitions/attribute"
           }
         },
+        "aftermath": {
+          "$ref": "#/definitions/aftermath"
+        },
+        "_comment": {
+          "description": "Ignored by the loader \u2014 a note for whoever edits the file. Florafare's own tag_categories.json uses it."
+        }
+      },
+      "additionalProperties": false
+    },
+    "aftermath": {
+      "type": "object",
+      "description": "What a buff or synergy leaves behind once it ends: on expiry, a synergy losing a requirement, Forgotten Mead, or a single-buff removal (/florafare buff remove, FlorafareAPI.removeBuff). Not on /florafare clear, FlorafareAPI.clearBuffs or death, which also end running aftermaths. Takes no buff slot; if the same source's aftermath is still running it is refreshed to the longer remaining time, never stacked. Ignored on a hunger-only entry (duration <= 0), which grants no buff to end.",
+      "properties": {
+        "duration": {
+          "type": "integer",
+          "description": "Ticks the health_bonus and attributes are held for (6000 = 5 minutes). Defaults to the longest finite effect duration; required (> 0) when health_bonus or attributes are set. Effects that leave out their own duration take this one."
+        },
+        "health_bonus": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Max health added for the duration (add_value); negative is the usual case. Current health is clamped down at once."
+        },
+        "attributes": {
+          "type": "array",
+          "description": "Attribute modifiers held for the duration. Same format and operation rules as the entry's own.",
+          "items": {
+            "$ref": "#/definitions/attribute"
+          }
+        },
+        "effects": {
+          "type": "array",
+          "description": "Status effects granted once when the aftermath starts, each for its own duration (-1 = infinite).",
+          "items": {
+            "$ref": "#/definitions/effect"
+          }
+        },
         "_comment": {
           "description": "Ignored by the loader \u2014 a note for whoever edits the file. Florafare's own tag_categories.json uses it."
         }
@@ -176,8 +217,8 @@
         },
         "duration": {
           "type": "integer",
-          "minimum": 0,
-          "description": "Effect duration in ticks."
+          "minimum": -1,
+          "description": "Effect duration in ticks; -1 is infinite."
         },
         "amplifier": {
           "type": "integer",

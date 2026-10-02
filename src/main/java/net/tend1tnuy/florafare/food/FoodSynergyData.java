@@ -13,13 +13,25 @@ public record FoodSynergyData(
         int duration,
         double healthBonus,
         List<FoodBuffData.EffectData> effects,
-        List<FoodBuffData.AttributeData> attributes
+        List<FoodBuffData.AttributeData> attributes,
+        FoodAftermath aftermath
 ) {
     /** Defensive copies, for the same reason as {@link FoodBuffData}: every synergy is shared. */
     public FoodSynergyData {
         requirements = requirements == null ? List.of() : List.copyOf(requirements);
         effects      = effects      == null ? List.of() : List.copyOf(effects);
         attributes   = attributes   == null ? List.of() : List.copyOf(attributes);
+        aftermath    = aftermath    == null ? FoodAftermath.NONE : aftermath;
+    }
+
+    /**
+     * The constructor from before {@code aftermath} existed, kept for addons calling it
+     * through {@code FlorafareAPI.registerSynergy}. Equivalent to {@link FoodAftermath#NONE}.
+     */
+    public FoodSynergyData(String id, List<String> requirements, int duration, double healthBonus,
+                           List<FoodBuffData.EffectData> effects,
+                           List<FoodBuffData.AttributeData> attributes) {
+        this(id, requirements, duration, healthBonus, effects, attributes, FoodAftermath.NONE);
     }
 
     private static final String KEY_ID           = "id";
@@ -42,6 +54,7 @@ public record FoodSynergyData(
         // Delegate list serialization to the shared helper (#23)
         nbt.put(KEY_EFFECTS,    FoodNbtHelper.effectsToNbt(effects));
         nbt.put(KEY_ATTRIBUTES, FoodNbtHelper.attributesToNbt(attributes));
+        FoodAftermath.writeTo(nbt, aftermath);
 
         return nbt;
     }
@@ -59,7 +72,8 @@ public record FoodSynergyData(
                 nbt.getInt(KEY_DURATION),
                 nbt.getDouble(KEY_HEALTH_BONUS),
                 FoodNbtHelper.effectsFromNbt(nbt, KEY_EFFECTS),
-                FoodNbtHelper.attributesFromNbt(nbt, KEY_ATTRIBUTES)
+                FoodNbtHelper.attributesFromNbt(nbt, KEY_ATTRIBUTES),
+                FoodAftermath.readFrom(nbt)
         );
     }
 }
