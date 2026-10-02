@@ -12,6 +12,7 @@ import net.tend1tnuy.florafare.food.FoodBuffManager;
 import net.tend1tnuy.florafare.food.FoodExclusions;
 import net.tend1tnuy.florafare.food.FoodSynergyData;
 import net.tend1tnuy.florafare.food.FoodSynergyManager;
+import net.tend1tnuy.florafare.food.NaturalRegeneration;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -227,6 +228,52 @@ public final class FlorafareAPI {
      */
     public static boolean unlockFood(@NotNull PlayerEntity player, @NotNull String itemId) {
         return component(player).unlockFood(itemId);
+    }
+
+    // -------------------------------------------------------------------------
+    // NATURAL REGENERATION
+    //
+    // The delay after damage lives on the logical server, measured in server ticks. On the
+    // client these read as "no delay" and change nothing.
+    // -------------------------------------------------------------------------
+
+    /**
+     * Ticks left before this player's natural regeneration may resume after damage; 0 when
+     * there is no delay. Counts the delay itself, whether or not an effect in
+     * {@code #florafare:ignores_regen_delay} is currently letting regeneration through —
+     * see {@link #isRegenDelayed} for that.
+     */
+    public static int getRegenDelayTicks(@NotNull PlayerEntity player) {
+        return NaturalRegeneration.remainingDelay(player);
+    }
+
+    /**
+     * Whether natural regeneration is held back right now: a delay is running and no
+     * effect in {@code #florafare:ignores_regen_delay} overrides it.
+     */
+    public static boolean isRegenDelayed(@NotNull PlayerEntity player) {
+        return NaturalRegeneration.isDelayed(player);
+    }
+
+    /** Ends the player's regeneration delay at once. */
+    public static void clearRegenDelay(@NotNull PlayerEntity player) {
+        NaturalRegeneration.setDelay(player, 0);
+    }
+
+    /**
+     * Sets the player's regeneration delay to exactly {@code ticks} from now, replacing
+     * whatever was running, shorter or longer. 0 or less clears it.
+     */
+    public static void setRegenDelay(@NotNull PlayerEntity player, int ticks) {
+        NaturalRegeneration.setDelay(player, ticks);
+    }
+
+    /**
+     * Makes the player's regeneration delay last at least {@code ticks} from now — what a
+     * hit does. A longer delay already running is kept.
+     */
+    public static void extendRegenDelay(@NotNull PlayerEntity player, int ticks) {
+        NaturalRegeneration.extendDelay(player, ticks);
     }
 
     private static PlayerFoodComponent component(@NotNull PlayerEntity player) {

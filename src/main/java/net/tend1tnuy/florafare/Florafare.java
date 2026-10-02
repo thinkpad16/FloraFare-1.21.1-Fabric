@@ -66,6 +66,12 @@ public class Florafare implements ModInitializer {
         ItemRegistry.initialize();
         net.tend1tnuy.registry.FlorafareItemGroups.registerItemGroups();
 
+        // 2a. Natural regeneration: the two player attributes (normally registered already,
+        // during bootstrap, by the player-attribute mixin — see FlorafareAttributes), the
+        // damage listener that starts the delay after a hit, and the Hunger Tweaks check.
+        net.tend1tnuy.registry.FlorafareAttributes.init();
+        net.tend1tnuy.florafare.food.NaturalRegeneration.register();
+
         // 2b. Advancement triggers. Registered before the datapack listeners below so
         // the criteria exist by the time advancement JSON referencing them is parsed.
         net.tend1tnuy.florafare.advancement.FlorafareCriteria.register();

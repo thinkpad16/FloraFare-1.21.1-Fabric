@@ -431,6 +431,40 @@ public class PlayerFoodComponent {
     }
 
     // -------------------------------------------------------------------------
+    // REGENERATION DELAY
+    //
+    // When natural regeneration may resume after the player was hurt, as an absolute
+    // server tick (MinecraftServer#getTicks). Absolute rather than a countdown, so nothing
+    // has to tick it and a delay simply lapses by time passing, including while the
+    // player sits in a portal or a loading screen.
+    //
+    // Deliberately not persisted: a two-second wait has no business surviving a relog,
+    // and the server tick counter it is measured in restarts with the server anyway. A
+    // respawn builds a new component and so starts with no delay — the player is back at
+    // full health then regardless. Carried across the "alive" copy (the end-portal
+    // return) by copyFrom, and untouched by an ordinary dimension change, which keeps the
+    // same entity. See NaturalRegeneration for who sets and reads it.
+    // -------------------------------------------------------------------------
+
+    /** The server tick natural regeneration may resume at; anything in the past means "now". */
+    private long regenDelayUntilTick = 0L;
+
+    /** Ticks of regeneration delay left at server tick {@code nowTick}; 0 when none. */
+    public int getRegenDelayRemaining(long nowTick) {
+        return net.tend1tnuy.florafare.food.RegenMath.remainingTicks(regenDelayUntilTick, nowTick);
+    }
+
+    /** Replaces the delay with exactly {@code ticks} from now; 0 or less clears it. */
+    public void setRegenDelay(long nowTick, int ticks) {
+        regenDelayUntilTick = ticks > 0 ? nowTick + ticks : 0L;
+    }
+
+    /** Makes the delay at least {@code ticks} from now, keeping a longer one already running. */
+    public void extendRegenDelay(long nowTick, int ticks) {
+        regenDelayUntilTick = net.tend1tnuy.florafare.food.RegenMath.extendedUntil(regenDelayUntilTick, nowTick, ticks);
+    }
+
+    // -------------------------------------------------------------------------
     // BUFF MANAGEMENT
     // -------------------------------------------------------------------------
 
@@ -1653,6 +1687,10 @@ public class PlayerFoodComponent {
 
         this.hasReceivedJournal = old.hasReceivedJournal;
         this.dirty = false;
+
+        // Same server, same tick counter, so the absolute tick carries over as is: a hit
+        // taken just before the portal still holds regeneration back on the far side.
+        this.regenDelayUntilTick = old.regenDelayUntilTick;
 
         // The progress came across on a brand-new entity that has never been written, so
         // it is owed to disk even though nothing was discovered just now.

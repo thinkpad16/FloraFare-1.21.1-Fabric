@@ -2,8 +2,10 @@ package net.tend1tnuy.florafare.api;
 
 import net.fabricmc.fabric.api.event.Event;
 import net.fabricmc.fabric.api.event.EventFactory;
+import net.minecraft.entity.damage.DamageSource;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
+import net.minecraft.server.network.ServerPlayerEntity;
 import net.tend1tnuy.florafare.component.ActiveFoodBuff;
 import net.tend1tnuy.florafare.food.FoodBuffData;
 import net.tend1tnuy.florafare.food.FoodSynergyData;
@@ -13,17 +15,20 @@ import net.tend1tnuy.florafare.food.FoodSynergyData;
  * changes without touching internal classes.
  *
  * <p>Every event here is fired on the logical server only, matching where Florafare's
- * own buff/synergy state lives. All but one are informational: they fire from the same
+ * own buff/synergy state lives. All but two are informational: they fire from the same
  * call sites Florafare itself uses internally, so listening to them never changes
  * existing behavior.
  *
- * <p>The exception is {@link #BUFF_APPLYING}, which runs <em>before</em> a buff is
+ * <p>The first exception is {@link #BUFF_APPLYING}, which runs <em>before</em> a buff is
  * granted and can veto it. It exists because the alternatives were both bad: a mod that
  * wanted to suppress Florafare's buff for one particular situation — a status effect the
  * player has, a dimension, a difficulty setting — could previously only reach for
  * {@link FlorafareAPI#excludeFood(String)}, which is permanent and global, or let the
  * buff apply and immediately remove it, which fires a spurious
  * {@link #BUFF_APPLIED}/{@link #BUFF_REMOVED} pair at every listener.
+ *
+ * <p>{@link #REGEN_DELAY} is the other one that decides rather than observes: it sets how
+ * long natural regeneration waits after a player is hurt.
  *
  * <p>For mods that want Florafare to keep its hands off one of their items entirely,
  * {@link FlorafareAPI#excludeFood(String)} is still the right call — it takes the item
@@ -133,6 +138,50 @@ public final class FlorafareEvents {
                 }
             }
     );
+
+    /**
+     * Fired when a player takes damage, to decide how long their natural (hunger)
+     * regeneration then waits, in ticks.
+     *
+     * <p>Fired for every hit on a server player that actually lands: more than 0 damage
+     * and not blocked by a shield. {@code proposedTicks} is what Florafare worked out —
+     * {@code regenDelayAfterDamage x florafare:regen_delay_multiplier}, rounded to ticks,
+     * and 0 when the delay is turned off, the attribute is 0, or the damage type is in
+     * {@code #florafare:no_regen_delay}. Listeners run in registration order, each handed
+     * the previous one's answer, and the last answer is used: return the value unchanged
+     * to stay out of it, 0 (or less) for no delay from this hit, or any other number of
+     * ticks. Because a 0 is still handed on, a listener can impose a delay even where
+     * Florafare's config would not.
+     *
+     * <p>A positive result starts the delay, or extends one already running to at least
+     * that many ticks from now; it never shortens a longer one (use
+     * {@link FlorafareAPI#setRegenDelay} or {@link FlorafareAPI#clearRegenDelay} for that).
+     * While the player has an effect in {@code #florafare:ignores_regen_delay} the delay
+     * runs on but does not hold regeneration back. Only hunger regeneration ever waits;
+     * potions, the Regeneration effect and other healing are never touched.
+     */
+    public static final Event<RegenDelay> REGEN_DELAY = EventFactory.createArrayBacked(
+            RegenDelay.class,
+            listeners -> (player, source, proposedTicks) -> {
+                int ticks = proposedTicks;
+                for (RegenDelay listener : listeners) {
+                    ticks = listener.regenDelayTicks(player, source, ticks);
+                }
+                return ticks;
+            }
+    );
+
+    @FunctionalInterface
+    public interface RegenDelay {
+        /**
+         * @param player        the player who was hurt
+         * @param source        the damage
+         * @param proposedTicks the delay so far, in ticks: Florafare's, or the previous
+         *                      listener's answer
+         * @return the delay to use, in ticks; 0 or less for none
+         */
+        int regenDelayTicks(ServerPlayerEntity player, DamageSource source, int proposedTicks);
+    }
 
     @FunctionalInterface
     public interface BuffApplying {

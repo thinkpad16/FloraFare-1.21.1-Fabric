@@ -638,6 +638,112 @@ their destination and renamed over it, so a crash mid-write costs the write, nev
 a truncated NBT stream does not lose the last entry, it fails to parse and loses every entry.
 If one is unreadable anyway the server still starts, logs it, and falls back to the datapack.
 
+## Natural regeneration
+
+FloraFare can reshape the health players get back from a full stomach. Two parts, both
+server-side (health is server-authoritative, so nothing here needs to be on the client):
+a short **delay after damage**, on by default, and an optional **regeneration curve** that
+replaces vanilla's regeneration, off by default. Only natural (hunger) regeneration is ever
+touched — the Regeneration effect, instant health, golden apples, peaceful difficulty's
+regeneration and every other mod's healing work exactly as before.
+
+### Delay after damage
+
+After a player takes damage, natural regeneration waits `regenDelayAfterDamage` seconds
+(default `2`; `0` turns it off). Every hit that lands restarts the wait. It applies in both
+regeneration modes, and it holds back only the healing: hunger, exhaustion and starvation
+carry on as normal. A hit counts when it does more than 0 damage and is not blocked by a
+shield; damage soaked up by absorption hearts counts too. The delay is not saved — it does
+not survive a relog or a restart, and a respawn starts without one.
+
+It is shaped by four hooks:
+
+- **Attribute `florafare:regen_delay_multiplier`** (base `1`, `0`-`100`). Every player has
+  it, so food buffs, gear and effects can change it. The delay is
+  `regenDelayAfterDamage × this`; `0` means no delay at all. A food that halves it:
+
+  ```json
+  {
+    "id": "minecraft:golden_carrot",
+    "duration": 2400,
+    "attributes": [
+      { "attribute": "florafare:regen_delay_multiplier", "amount": -0.5, "operation": "add_multiplied_base" }
+    ]
+  }
+  ```
+
+- **Status-effect tag `#florafare:ignores_regen_delay`**
+  (`data/florafare/tags/mob_effect/ignores_regen_delay.json`). While the player has any
+  effect in it, the delay does not hold regeneration back. Ships empty:
+
+  ```json
+  { "replace": false, "values": [ "minecraft:regeneration", "minecraft:absorption" ] }
+  ```
+
+- **Damage-type tag `#florafare:no_regen_delay`**
+  (`data/florafare/tags/damage_type/no_regen_delay.json`). Damage of these types does not
+  start or extend the delay. Ships with `minecraft:starve`, so a starving player is not also
+  locked out of the regeneration that eating restores:
+
+  ```json
+  { "replace": false, "values": [ "minecraft:in_fire", "minecraft:on_fire" ] }
+  ```
+
+- **Event `FlorafareEvents.REGEN_DELAY`** and the delay methods on `FlorafareAPI` (see
+  [API for mod makers](#api-for-mod-makers)). The event is asked on every hit that lands,
+  with FloraFare's own answer in ticks (0 when the config, the attribute or the damage-type
+  tag rule out a delay); listeners chain, each getting the previous answer, and return the
+  ticks to use — 0 for none:
+
+  ```java
+  FlorafareEvents.REGEN_DELAY.register((player, source, proposedTicks) ->
+          source.isIn(DamageTypeTags.IS_FALL) ? 0 : proposedTicks);
+  ```
+
+### Regeneration modes
+
+`regenMode` picks how hunger turns into health.
+
+**`"vanilla"`** (default) — vanilla's regeneration (fast at a full bar while saturation
+lasts, slow at 18 hunger and up), held back by the delay after damage. The attribute
+**`florafare:natural_regeneration`** (base `1`, `0`-`100`) multiplies the health each of
+those heals restores, so a food buff of `+0.5` `add_multiplied_base` heals 50% more per
+tick of regeneration; `0` stops natural regeneration.
+
+**`"curve"`** — vanilla's two regeneration branches are turned off and FloraFare heals
+players itself every 10 ticks, whenever they are below max health, their hunger is at least
+`regenMinHunger`, the delay is not running and the `naturalRegeneration` game rule is on:
+
+```
+health per second = regenBase
+                  × (maxHealth / 20) ^ regenMaxHealthExponent
+                  × hungerFactor
+                  × (1 + regenSaturationBonus × saturation / saturationCap)
+                  × florafare:natural_regeneration
+```
+
+- `hungerFactor` runs linearly from `regenHungerCurve` at `regenMinHunger` to `1.0` at a
+  full bar (20), and is 0 below `regenMinHunger`.
+- `saturationCap` is `maxSaturation` when that is set, 20 otherwise.
+- Each heal costs `healed × regenCostPerHealth × (20 / maxHealth) ^ regenMaxHealthExponent`
+  exhaustion, charged for the health actually restored.
+
+With the defaults a 20-health player at a full bar heals 0.5 health a second with no
+saturation and 1.0 with a full saturation bar, and pays 6 exhaustion (a point and a half of
+hunger) per health point — vanilla's slow-regeneration price. A 100-health player heals
+`√5 ≈ 2.24` times as many points a second, and each point costs `1/√5` as much, so a
+second of regeneration drains the hunger bar the same at any max health.
+
+`exhaustionMultiplier` (default `1`) multiplies every exhaustion addition in **both** modes —
+sprinting, jumping, mining, taking damage and regeneration alike. `0.5` makes food last
+twice as long.
+
+**Hunger Tweaks.** The curve and `exhaustionMultiplier` cover what Hunger Tweaks does. With
+both installed their multipliers stack (its `exhaust_rate` on top of `exhaustionMultiplier`,
+its `healing_rate` on top of `florafare:natural_regeneration` in vanilla mode), so FloraFare
+logs a warning at every server start recommending removing it. Nothing is disabled
+automatically.
+
 ---
 
 ## Configuration (`config/florafare.json`)
@@ -660,6 +766,15 @@ Every field below is editable in-game via **ModMenu** (if installed — Cloth Co
   "writeCommandPermissionLevel": 3,
   "runtimeBuffRetentionDays": 180,
   "maxSaturation": 0,
+  "regenDelayAfterDamage": 2.0,
+  "regenMode": "vanilla",
+  "exhaustionMultiplier": 1.0,
+  "regenBase": 0.5,
+  "regenMaxHealthExponent": 0.5,
+  "regenMinHunger": 6,
+  "regenHungerCurve": 0.25,
+  "regenSaturationBonus": 1.0,
+  "regenCostPerHealth": 6.0,
   "enableHud": true,
   "hideHudWhenEmpty": true,
   "enableDiscoveryToasts": true,
@@ -699,6 +814,15 @@ Every field below is editable in-game via **ModMenu** (if installed — Cloth Co
 | `writeCommandPermissionLevel` | int `0`-`4`, default `3` | Permission level for the subcommands that change the rules for everybody or write files: `setbuff`, changing `edit`, `ignore add\|remove`, `repair`, `dumpfoods`, `validate file`. Normally at least `commandPermissionLevel`. |
 | `runtimeBuffRetentionDays` | int `0`-`36500`, default `180` | How long a `/florafare setbuff` stack buff is kept after the server last saw a stack carrying it; older ones are pruned when the world loads. `0` keeps them forever. Generous by default, because a stack left untouched in a chest past this loses its buff. |
 | `maxSaturation` | float `0`-`1000`, default `0` | The most saturation a player can hold, in points. `0` keeps vanilla's rule (never more than the current hunger level, so at most 20). Any other value is a fixed ceiling that ignores the hunger bar — for packs whose foods give more saturation than a full bar holds. A bigger pool makes food last longer and, since fast healing at a full hunger bar spends saturation, heals more per meal. Synced to clients and re-read on `/reload`. Vanilla's HUD and AppleSkin still draw at most 20; a HUD that prints the number shows the rest. |
+| `regenDelayAfterDamage` | float `0`-`600`, default `2` | Seconds of no natural regeneration after a player takes damage; `0` turns the delay off. Applies in both `regenMode`s, scaled per player by the `florafare:regen_delay_multiplier` attribute. See [Delay after damage](#delay-after-damage). Re-read on `/reload`. |
+| `regenMode` | `"vanilla"` / `"curve"`, default `"vanilla"` | `"vanilla"` keeps vanilla's regeneration (scaled by `florafare:natural_regeneration`); `"curve"` replaces it with FloraFare's curve below. Anything else is logged and read as `"vanilla"`. See [Regeneration modes](#regeneration-modes). |
+| `exhaustionMultiplier` | float `0`-`10`, default `1` | Multiplies every exhaustion addition, in both modes. `0.5` makes food last twice as long. Stacks with Hunger Tweaks' `exhaust_rate` if that is installed. |
+| `regenBase` | float `0`-`100`, default `0.5` | Curve mode: health per second at 20 max health, a full hunger bar and no saturation. |
+| `regenMaxHealthExponent` | float `0`-`2`, default `0.5` | Curve mode: the rate scales with `(maxHealth / 20) ^ this`, and the exhaustion cost per point with the inverse. `0` heals a flat amount at any max health, `1` the same share of the bar. |
+| `regenMinHunger` | int `0`-`20`, default `6` | Curve mode: the lowest hunger level at which the curve still heals. |
+| `regenHungerCurve` | float `0`-`1`, default `0.25` | Curve mode: the rate factor at `regenMinHunger`, rising linearly to `1` at a full bar. |
+| `regenSaturationBonus` | float `0`-`10`, default `1` | Curve mode: extra rate at full saturation, as a fraction (`1` = twice as fast). Full is `maxSaturation` when set, 20 otherwise. |
+| `regenCostPerHealth` | float `0`-`100`, default `6` | Curve mode: exhaustion per health point healed at 20 max health (6 is vanilla's slow-regeneration price), scaled by `(20 / maxHealth) ^ regenMaxHealthExponent`. |
 | `notifyOnFullBuffSlots` | bool, default `true` | Tells a player on the action bar when a bite granted no buff because all `maxBuffSlots` were already taken. The refusal itself is unchanged and always has been — what it replaces is the silence, which is the mod's most confusing moment: the food is still eaten, the hunger still goes up, the journal still records it, so an ordinary bite appears to do nothing and reads as a bug. Server-side, so a vanilla client sees it too. |
 | `consumptionLogging` | `NONE` / `REDUCED` / `ALL`, default `NONE` | How much Florafare writes to the **server** log during play. `ALL` logs every consumption and synergy with full stats; `REDUCED` logs synergy activations plus every health-restoring food (exploit tracking) — note that covers roughly half the bundled foods, so it is only a little quieter than `ALL`; `NONE` (the default) keeps normal gameplay out of the log entirely. Read from the config of whichever side is running the logic, so on a dedicated server it is the **server's** `florafare.json` that decides — changing it client-side in ModMenu while connected to one has no effect. |
 | `ignoredFoodMods` | array of mod ids, default `[]` | Whole mods Florafare must never intercept, e.g. `["loot_n_explore"]`. Exactly equivalent to putting `"loot_n_explore:*"` in `ignoredFoodItems`; it exists because "exclude this mod" is the common case. |
@@ -937,6 +1061,11 @@ import net.tend1tnuy.florafare.api.FlorafareAPI;
 | `removeBuff(PlayerEntity, String targetOrItemId)` | Removes one active buff, addressed by its config target or by the item that was eaten. Returns whether such a buff was active. |
 | `clearBuffs(PlayerEntity)` | Removes all active buffs and synergies, same as `/florafare clear`. |
 | `unlockFood(PlayerEntity, String itemId)` | Marks an item as discovered without granting its buff. |
+| `getRegenDelayTicks(PlayerEntity)` | Ticks left of the player's [delay after damage](#delay-after-damage); `0` when none (and always on the client). |
+| `isRegenDelayed(PlayerEntity)` | Whether that delay is holding natural regeneration back right now — running, and no effect in `#florafare:ignores_regen_delay` overriding it. |
+| `clearRegenDelay(PlayerEntity)` | Ends the delay at once. |
+| `setRegenDelay(PlayerEntity, int ticks)` | Sets the delay to exactly `ticks` from now, shorter or longer than the running one; `0` clears it. |
+| `extendRegenDelay(PlayerEntity, int ticks)` | Makes the delay last at least `ticks` from now, keeping a longer one — what a hit does. |
 
 `FoodBuffData` also has a `FoodBuffData.builder(target)...build()` fluent builder, so you
 don't need to fill in the full 10-argument record constructor by hand.
@@ -970,6 +1099,12 @@ FlorafareEvents.SYNERGY_ACTIVATED.register((player, synergy, buff) -> {
 There is also a cancellable `BUFF_APPLYING`, fired before a buff is granted; returning
 false from a listener stops it — see the javadoc on the event for exactly what a veto
 hands back to vanilla.
+
+And one that decides a number: `REGEN_DELAY`, `(ServerPlayerEntity player, DamageSource
+source, int proposedTicks) -> int`, asked on every hit that lands on a player for how many
+ticks natural regeneration should then wait. Listeners chain, each handed the previous
+answer; return `proposedTicks` to stay out of it and `0` for no delay. See
+[Delay after damage](#delay-after-damage).
 
 If all you need is to react from a **datapack**, you do not need any of this: the three
 [advancement triggers](#advancement-triggers) are built on these same events.

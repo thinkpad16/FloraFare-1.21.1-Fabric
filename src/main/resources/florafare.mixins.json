@@ -6,6 +6,7 @@
     "HungerManagerMixin",
     "ItemUseMixin",
     "LivingEntityEatMixin",
+    "PlayerAttributesMixin",
     "PlayerEntityMixin",
     "PlayerEntityEatMixin",
     "PlayerManagerInvoker",

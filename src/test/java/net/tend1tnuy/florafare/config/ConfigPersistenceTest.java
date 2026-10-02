@@ -234,6 +234,51 @@ class ConfigPersistenceTest {
     }
 
     @Test
+    @DisplayName("the natural-regeneration settings survive a restart, are clamped and re-read on /reload")
+    void regenSettings() throws Exception {
+        FlorafareConfig.regenMode = FlorafareConfig.RegenMode.CURVE;
+        FlorafareConfig.regenDelayAfterDamage = 5f;
+        FlorafareConfig.exhaustionMultiplier = 0.5f;
+        FlorafareConfig.regenMinHunger = 10;
+        FlorafareConfig.save();
+        assertTrue(Files.readString(configDir.resolve("florafare.json")).contains("\"regenMode\": \"curve\""),
+                "written as the lowercase name the README documents");
+        FlorafareConfig.regenMode = FlorafareConfig.RegenMode.VANILLA;
+        FlorafareConfig.regenDelayAfterDamage = 2f;
+        FlorafareConfig.exhaustionMultiplier = 1f;
+        FlorafareConfig.regenMinHunger = 6;
+        restart();
+        assertEquals(FlorafareConfig.RegenMode.CURVE, FlorafareConfig.regenMode);
+        assertEquals(5f, FlorafareConfig.regenDelayAfterDamage);
+        assertEquals(0.5f, FlorafareConfig.exhaustionMultiplier);
+        assertEquals(10, FlorafareConfig.regenMinHunger);
+
+        Files.writeString(configDir.resolve("florafare.json"), """
+                { "regenMode": "sometimes", "regenDelayAfterDamage": -4, "exhaustionMultiplier": 99,
+                  "regenMinHunger": 25, "regenHungerCurve": 3, "regenBase": -1 }
+                """);
+        restart();
+        assertEquals(FlorafareConfig.RegenMode.VANILLA, FlorafareConfig.regenMode, "unknown mode: vanilla");
+        assertEquals(0f, FlorafareConfig.regenDelayAfterDamage);
+        assertEquals(FlorafareConfig.MAX_EXHAUSTION_MULTIPLIER, FlorafareConfig.exhaustionMultiplier);
+        assertEquals(20, FlorafareConfig.regenMinHunger);
+        assertEquals(1f, FlorafareConfig.regenHungerCurve);
+        assertEquals(0f, FlorafareConfig.regenBase);
+
+        Files.writeString(configDir.resolve("florafare.json"), "{ \"regenMode\": \"CURVE\", \"regenDelayAfterDamage\": 3.5 }");
+        assertTrue(FlorafareConfig.reloadServerSettings());
+        assertEquals(FlorafareConfig.RegenMode.CURVE, FlorafareConfig.regenMode);
+        assertEquals(3.5f, FlorafareConfig.regenDelayAfterDamage);
+        assertEquals(6, FlorafareConfig.regenMinHunger, "missing keys go back to the default");
+
+        FlorafareConfig.regenMode = FlorafareConfig.RegenMode.VANILLA;
+        FlorafareConfig.regenDelayAfterDamage = 2f;
+        FlorafareConfig.exhaustionMultiplier = 1f;
+        FlorafareConfig.regenHungerCurve = 0.25f;
+        FlorafareConfig.regenBase = 0.5f;
+    }
+
+    @Test
     @DisplayName("the write permission level and setbuff retention survive a restart, clamped")
     void writeLevelAndRetention() throws Exception {
         FlorafareConfig.writeCommandPermissionLevel = 4;

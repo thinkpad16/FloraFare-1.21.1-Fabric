@@ -154,6 +154,113 @@ public class FlorafareConfig {
     /** Upper bound for {@link #maxSaturation}. */
     public static final float MAX_SATURATION_CEILING = 1000f;
 
+    // --- Natural regeneration (server-only, not synced) ---
+    //
+    // Health is server-authoritative: HungerManager#update and every exhaustion addition
+    // run on the logical server alone, so nothing on the client reads these and they are
+    // not part of the server config payload. Re-read on /reload like the rest of the
+    // server settings. See NaturalRegeneration for the hooks.
+
+    /** How natural regeneration works: vanilla's two hunger branches, or Florafare's curve. */
+    public enum RegenMode {
+        /** Vanilla's regeneration, scaled by {@code florafare:natural_regeneration}. */
+        VANILLA,
+        /** Vanilla's branches off; Florafare heals on its own curve every 10 ticks. */
+        CURVE;
+
+        /** The spelling used in {@code florafare.json}: {@code "vanilla"} or {@code "curve"}. */
+        public String configName() {
+            return name().toLowerCase(java.util.Locale.ROOT);
+        }
+
+        /**
+         * Reads a {@code regenMode} value, ignoring case and surrounding spaces.
+         *
+         * @return the mode, or null when the text names neither (the caller warns and
+         *         falls back to {@link #VANILLA})
+         */
+        public static RegenMode parse(String text) {
+            if (text == null) return null;
+            String normalized = text.trim().toLowerCase(java.util.Locale.ROOT);
+            for (RegenMode mode : values()) {
+                if (mode.configName().equals(normalized)) return mode;
+            }
+            return null;
+        }
+    }
+
+    /**
+     * Seconds of no natural regeneration after a player takes damage; 0 turns the delay
+     * off. Applies in both {@link RegenMode}s. Scaled per player by the
+     * {@code florafare:regen_delay_multiplier} attribute, skipped for damage types in
+     * {@code #florafare:no_regen_delay}, ignored while the player has an effect in
+     * {@code #florafare:ignores_regen_delay}, and adjustable by the {@code REGEN_DELAY}
+     * event. Only hunger regeneration waits — potions, Regeneration and other healing are
+     * untouched.
+     */
+    public static volatile float regenDelayAfterDamage = 2.0f;
+
+    /** Upper bound for {@link #regenDelayAfterDamage}: ten minutes. */
+    public static final float MAX_REGEN_DELAY_SECONDS = 600f;
+
+    /** Which regeneration is in force; see {@link RegenMode}. Vanilla by default. */
+    public static volatile RegenMode regenMode = RegenMode.VANILLA;
+
+    /**
+     * Multiplies every exhaustion addition, in both modes — sprinting, jumping, mining,
+     * taking damage and regenerating alike. 1 is vanilla, 0.5 makes food last twice as
+     * long. The same knob as Hunger Tweaks' {@code exhaust_rate}.
+     */
+    public static volatile float exhaustionMultiplier = 1.0f;
+
+    /** Upper bound for {@link #exhaustionMultiplier}. */
+    public static final float MAX_EXHAUSTION_MULTIPLIER = 10f;
+
+    /** Curve mode: health per second at 20 max health, a full hunger bar and no saturation. */
+    public static volatile float regenBase = 0.5f;
+
+    /** Upper bound for {@link #regenBase}. */
+    public static final float MAX_REGEN_BASE = 100f;
+
+    /**
+     * Curve mode: how the rate grows with max health, as {@code (maxHealth/20)^this}. 0
+     * heals the same flat amount at any max health, 1 the same share of the bar, and the
+     * default 0.5 sits between. The exhaustion cost per point scales by the inverse, so a
+     * second of regeneration drains the hunger bar the same at any max health.
+     */
+    public static volatile float regenMaxHealthExponent = 0.5f;
+
+    /** Upper bound for {@link #regenMaxHealthExponent}. */
+    public static final float MAX_REGEN_MAX_HEALTH_EXPONENT = 2f;
+
+    /** Curve mode: the lowest hunger level (0-20) at which the curve still heals. */
+    public static volatile int regenMinHunger = 6;
+
+    /**
+     * Curve mode: the rate factor at {@link #regenMinHunger}, rising linearly to 1.0 at a
+     * full bar. 0.25 heals at a quarter of the full-bar rate when barely fed enough.
+     */
+    public static volatile float regenHungerCurve = 0.25f;
+
+    /**
+     * Curve mode: extra rate at full saturation, as a fraction — 1.0 doubles it. "Full"
+     * is {@link #maxSaturation} when that is set, 20 otherwise.
+     */
+    public static volatile float regenSaturationBonus = 1.0f;
+
+    /** Upper bound for {@link #regenSaturationBonus}. */
+    public static final float MAX_REGEN_SATURATION_BONUS = 10f;
+
+    /**
+     * Curve mode: exhaustion per health point healed, at 20 max health. 6.0 is what
+     * vanilla's slow regeneration charges — 6 exhaustion, a point and a half of hunger,
+     * per health point. Scaled by {@code (20/maxHealth)^regenMaxHealthExponent}.
+     */
+    public static volatile float regenCostPerHealth = 6.0f;
+
+    /** Upper bound for {@link #regenCostPerHealth}. */
+    public static final float MAX_REGEN_COST_PER_HEALTH = 100f;
+
     // -------------------------------------------------------------------------
     // CONCURRENCY
     //
@@ -431,6 +538,7 @@ public class FlorafareConfig {
                     writeCommandPermissionLevel = data.writeCommandPermissionLevel;
                     runtimeBuffRetentionDays = data.runtimeBuffRetentionDays;
                     maxSaturation = data.maxSaturation;
+                    applyRegenSettings(data);
                     if (data.ignoredFoodItems != null) ignoredFoodItems = data.ignoredFoodItems;
                     if (data.ignoredFoodMods  != null) ignoredFoodMods  = data.ignoredFoodMods;
                     if (data.managedFoodItems != null) managedFoodItems = data.managedFoodItems;
@@ -536,12 +644,39 @@ public class FlorafareConfig {
         commandPermissionLevel  = data.commandPermissionLevel;
         writeCommandPermissionLevel = data.writeCommandPermissionLevel;
         runtimeBuffRetentionDays = data.runtimeBuffRetentionDays;
+        applyRegenSettings(data);
         ignoredFoodItems = data.ignoredFoodItems != null ? data.ignoredFoodItems : new java.util.ArrayList<>();
         ignoredFoodMods  = data.ignoredFoodMods  != null ? data.ignoredFoodMods  : new java.util.ArrayList<>();
         managedFoodItems = data.managedFoodItems != null ? data.managedFoodItems : new java.util.ArrayList<>();
 
         clampToValidRanges();
         applyExclusions();
+    }
+
+    /**
+     * The natural-regeneration fields of a read file, shared by {@link #load()} and
+     * {@link #reloadServerSettings()}. Server-only and never synced, so they go straight
+     * into the live fields: a client's own values are not displaced by a server's, because
+     * a server never sends them. Ranges are enforced afterwards by
+     * {@link #clampToValidRanges()}; only the mode is checked here, since an unknown name
+     * has no "nearest valid value" to clamp to.
+     */
+    private static void applyRegenSettings(ConfigData data) {
+        regenDelayAfterDamage  = data.regenDelayAfterDamage;
+        RegenMode mode = RegenMode.parse(data.regenMode);
+        if (mode == null) {
+            Florafare.LOGGER.warn("Florafare config: 'regenMode' was \"{}\", which is neither "
+                    + "\"vanilla\" nor \"curve\"; using \"vanilla\".", data.regenMode);
+            mode = RegenMode.VANILLA;
+        }
+        regenMode              = mode;
+        exhaustionMultiplier   = data.exhaustionMultiplier;
+        regenBase              = data.regenBase;
+        regenMaxHealthExponent = data.regenMaxHealthExponent;
+        regenMinHunger         = data.regenMinHunger;
+        regenHungerCurve       = data.regenHungerCurve;
+        regenSaturationBonus   = data.regenSaturationBonus;
+        regenCostPerHealth     = data.regenCostPerHealth;
     }
 
     /**
@@ -598,6 +733,23 @@ public class FlorafareConfig {
             maxSaturation = saturationCeiling;
         }
 
+        // Natural regeneration. NaN falls back to the default rather than to a bound: a
+        // NaN rate or cost would otherwise heal or starve nobody in a way no log explains.
+        regenDelayAfterDamage  = clampLogged(regenDelayAfterDamage, 0f, MAX_REGEN_DELAY_SECONDS, 2.0f,
+                "regenDelayAfterDamage");
+        exhaustionMultiplier   = clampLogged(exhaustionMultiplier, 0f, MAX_EXHAUSTION_MULTIPLIER, 1.0f,
+                "exhaustionMultiplier");
+        regenBase              = clampLogged(regenBase, 0f, MAX_REGEN_BASE, 0.5f, "regenBase");
+        regenMaxHealthExponent = clampLogged(regenMaxHealthExponent, 0f, MAX_REGEN_MAX_HEALTH_EXPONENT, 0.5f,
+                "regenMaxHealthExponent");
+        regenMinHunger         = clamp(regenMinHunger, 0, 20, "regenMinHunger");
+        regenHungerCurve       = clampLogged(regenHungerCurve, 0f, 1f, 0.25f, "regenHungerCurve");
+        regenSaturationBonus   = clampLogged(regenSaturationBonus, 0f, MAX_REGEN_SATURATION_BONUS, 1.0f,
+                "regenSaturationBonus");
+        regenCostPerHealth     = clampLogged(regenCostPerHealth, 0f, MAX_REGEN_COST_PER_HEALTH, 6.0f,
+                "regenCostPerHealth");
+        if (regenMode == null) regenMode = RegenMode.VANILLA;
+
         double healthMult = clampAutoGenHealth(autoGenHealthMultiplier);
         if (Double.compare(healthMult, autoGenHealthMultiplier) != 0) {
             warnClamped("autoGenHealthMultiplier", autoGenHealthMultiplier, healthMult);
@@ -628,13 +780,6 @@ public class FlorafareConfig {
     }
 
     /**
-     * The auto-generation health multiplier forced into {@code 0..}{@link
-     * #MAX_AUTO_GEN_HEALTH_MULT}, NaN becoming the default 0.5. Both bounds matter: this is
-     * multiplied by a food's nutrition and becomes a max-health modifier, so a negative
-     * value makes eating <em>lower</em> max health, and a stray extra digit hands every
-     * player on the server hundreds of hearts. Shared with {@code config_generation.json}.
-     */
-    /**
      * {@link #maxSaturation} kept in range: negative and NaN mean "vanilla" (0), and the
      * top is {@link #MAX_SATURATION_CEILING}.
      */
@@ -643,6 +788,29 @@ public class FlorafareConfig {
         return Math.min(value, MAX_SATURATION_CEILING);
     }
 
+    /**
+     * A float setting forced into {@code min..max}, NaN becoming {@code fallback}. Public
+     * and pure so the ranges of the natural-regeneration settings can be tested.
+     */
+    public static float clampFloat(float value, float min, float max, float fallback) {
+        if (Float.isNaN(value)) return fallback;
+        return Math.min(Math.max(value, min), max);
+    }
+
+    /** {@link #clampFloat} with the usual warning naming the setting when it had to step in. */
+    private static float clampLogged(float value, float min, float max, float fallback, String field) {
+        float corrected = clampFloat(value, min, max, fallback);
+        if (Float.compare(corrected, value) != 0) warnClamped(field, value, corrected);
+        return corrected;
+    }
+
+    /**
+     * The auto-generation health multiplier forced into {@code 0..}{@link
+     * #MAX_AUTO_GEN_HEALTH_MULT}, NaN becoming the default 0.5. Both bounds matter: this is
+     * multiplied by a food's nutrition and becomes a max-health modifier, so a negative
+     * value makes eating <em>lower</em> max health, and a stray extra digit hands every
+     * player on the server hundreds of hearts. Shared with {@code config_generation.json}.
+     */
     public static double clampAutoGenHealth(double value) {
         if (Double.isNaN(value)) return 0.5;
         return Math.min(Math.max(value, 0.0), MAX_AUTO_GEN_HEALTH_MULT);
@@ -722,6 +890,15 @@ public class FlorafareConfig {
             data.writeCommandPermissionLevel = writeCommandPermissionLevel;
             data.runtimeBuffRetentionDays = runtimeBuffRetentionDays;
             data.maxSaturation = localMaxSaturation();
+            data.regenDelayAfterDamage = regenDelayAfterDamage;
+            data.regenMode = regenMode.configName();
+            data.exhaustionMultiplier = exhaustionMultiplier;
+            data.regenBase = regenBase;
+            data.regenMaxHealthExponent = regenMaxHealthExponent;
+            data.regenMinHunger = regenMinHunger;
+            data.regenHungerCurve = regenHungerCurve;
+            data.regenSaturationBonus = regenSaturationBonus;
+            data.regenCostPerHealth = regenCostPerHealth;
             // Copies, so what is serialized is one consistent snapshot even if a caller
             // that skipped editExclusionLists() is changing a list right now.
             data.ignoredFoodItems = new java.util.ArrayList<>(ignoredFoodItems);
@@ -796,6 +973,15 @@ public class FlorafareConfig {
         public int writeCommandPermissionLevel = 3;
         public int runtimeBuffRetentionDays = 180;
         public float maxSaturation = 0f;
+        public float regenDelayAfterDamage = 2.0f;
+        public String regenMode = "vanilla";
+        public float exhaustionMultiplier = 1.0f;
+        public float regenBase = 0.5f;
+        public float regenMaxHealthExponent = 0.5f;
+        public int regenMinHunger = 6;
+        public float regenHungerCurve = 0.25f;
+        public float regenSaturationBonus = 1.0f;
+        public float regenCostPerHealth = 6.0f;
         public java.util.List<String> ignoredFoodItems = new java.util.ArrayList<>();
         public java.util.List<String> ignoredFoodMods = new java.util.ArrayList<>();
         public java.util.List<String> managedFoodItems = new java.util.ArrayList<>();
