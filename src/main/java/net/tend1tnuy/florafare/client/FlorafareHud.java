@@ -18,6 +18,8 @@ import net.tend1tnuy.florafare.food.FoodBuffData;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
 import net.tend1tnuy.florafare.food.FoodSynergyData;
 import net.tend1tnuy.florafare.food.FoodSynergyManager;
+import net.tend1tnuy.florafare.food.SynergyOverdrive;
+import net.tend1tnuy.florafare.util.RomanNumerals;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -210,7 +212,8 @@ public class FlorafareHud implements HudRenderCallback {
                 float appearProgress = 1.0f - MathHelper.clamp(
                         Math.abs(state.animationOffset) / (slotWidth * 1.5f), 0.0f, 1.0f);
                 renderSlot(context, client, buff, renderX, y, 1.0f, appearProgress,
-                        slotWidth, slotHeight, isCompact, isSynergized);
+                        slotWidth, slotHeight, isCompact, isSynergized,
+                        overdriveStageOf(buff, activeSynergies));
 
                 if (cursorVisible) {
                     int realX = (int) (renderX  * hudScale);
@@ -235,7 +238,8 @@ public class FlorafareHud implements HudRenderCallback {
                     boolean isSynergized = isBuffSynergized(state.lastBuff, activeSynergies);
                     // Same progress curve, now shrinking the icon back down as it slides away.
                     renderSlot(context, client, state.lastBuff, renderX, y, fadeAlpha, fadeAlpha,
-                            slotWidth, slotHeight, isCompact, isSynergized);
+                            slotWidth, slotHeight, isCompact, isSynergized,
+                            overdriveStageOf(state.lastBuff, activeSynergies));
                 } else {
                     state.lastBuff = null;
                     renderEmptySlot(context, client, baseX, y, slotWidth, slotHeight, isCompact);
@@ -270,7 +274,8 @@ public class FlorafareHud implements HudRenderCallback {
         // real screen coordinates — outside the HUD-scale transform above, so the
         // tooltip isn't itself scaled by the HUD's own zoom — and on top of the screen.
         if (hoveredBuff != null) {
-            deferredTooltip = buildTooltipLines(hoveredBuff, configFor(hoveredBuff), hoveredSynergized);
+            deferredTooltip = buildTooltipLines(hoveredBuff, configFor(hoveredBuff), hoveredSynergized,
+                    activeSynergies);
         } else if (hoveredAftermath != null) {
             deferredTooltip = buildAftermathTooltipLines(hoveredAftermath);
         }
@@ -309,7 +314,8 @@ public class FlorafareHud implements HudRenderCallback {
      */
     private static List<Text> buildTooltipLines(ActiveFoodBuff buff,
                                                  @org.jetbrains.annotations.Nullable FoodBuffData data,
-                                                 boolean isSynergized) {
+                                                 boolean isSynergized,
+                                                 List<ActiveFoodBuff> activeSynergies) {
         List<Text> lines = new ArrayList<>();
         lines.add(buff.peekConsumedItemStack().getName());
         lines.add(Text.translatable("tooltip.florafare.hud.remaining",
@@ -332,11 +338,94 @@ public class FlorafareHud implements HudRenderCallback {
 
         if (isSynergized) {
             lines.add(Text.translatable("tooltip.florafare.hud.synergized").formatted(Formatting.GOLD));
+            lines.addAll(overdriveLines(buff, activeSynergies));
         }
 
         // What it will leave behind, so the bill is visible while the meal is still on.
         if (data != null) lines.addAll(BuffDescription.aftermathBlock(data.aftermath()));
         return lines;
+    }
+
+    /**
+     * For each running overdrive this buff feeds: which one, "Overdrive: stage II of IV",
+     * when the next stage comes (or that this is the last), and what the stage it is at is
+     * costing — its drawbacks, then what it will leave behind. The stage's benefits are already listed above as the player's own state; the
+     * point here is the bill.
+     *
+     * <p>The player is in that stage, so its drawbacks are normally known (reaching a stage
+     * is what reveals them); the "???" form only shows in the tick between the server
+     * moving the stage and the discovery packet arriving, or after an admin
+     * {@code synergy forget}. Its aftermath stays "???" until it has started once.
+     */
+    private static List<Text> overdriveLines(ActiveFoodBuff buff, List<ActiveFoodBuff> activeSynergies) {
+        List<Text> lines = new ArrayList<>();
+        for (ActiveFoodBuff synergyBuff : activeSynergies) {
+            FoodSynergyData synergy = FoodSynergyManager.getSynergy(synergyBuff.getTarget());
+            if (synergy == null || !synergy.hasOverdrive() || !feeds(buff, synergy)) continue;
+
+            int stage = synergy.clampStage(synergyBuff.getStage());
+            lines.add(Text.translatable("tooltip.florafare.hud.overdrive_stage",
+                            BuffDescription.synergyName(synergy.id()),
+                            RomanNumerals.of(stage), RomanNumerals.of(synergy.stageCount()))
+                    .formatted(Formatting.LIGHT_PURPLE));
+            // When it climbs next, counted down on the client between syncs like the
+            // remaining time above — or, at the top, the warning that matters there.
+            if (stage >= synergy.stageCount()) {
+                lines.add(Text.translatable("tooltip.florafare.hud.overdrive_last")
+                        .formatted(Formatting.RED));
+            } else if (synergyBuff.hasStageClock()) {
+                lines.add(Text.translatable("tooltip.florafare.hud.overdrive_next",
+                                BuffDescription.formatDuration(synergyBuff.getTicksToNextStage()))
+                        .formatted(Formatting.GRAY));
+            }
+
+            SynergyOverdrive.Stage fields = synergy.stage(stage);
+            if (BuffDescription.isStageDiscovered(synergy.id(), stage)) {
+                List<Text> drawbacks = BuffDescription.drawbackLines(fields);
+                if (!drawbacks.isEmpty()) {
+                    lines.add(Text.translatable("tooltip.florafare.hud.overdrive_drawbacks")
+                            .formatted(Formatting.GRAY));
+                    lines.addAll(drawbacks);
+                }
+            } else if (BuffDescription.hasDrawbacks(fields)) {
+                lines.add(BuffDescription.hiddenDrawbacksLine());
+            }
+            lines.addAll(BuffDescription.synergyAftermathBlock(synergy, stage));
+        }
+        return lines;
+    }
+
+    /** Whether a buff satisfies one of a synergy's requirements; see {@link #isBuffSynergized}. */
+    private static boolean feeds(ActiveFoodBuff buff, FoodSynergyData synergy) {
+        for (String req : synergy.requirements()) {
+            if (PlayerFoodComponent.satisfiesRequirement(buff, req)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * The overdrive stage a buff slot is feeding, for the numeral on its corner: the highest
+     * stage among the running overdrives it is an ingredient of, or 0 when it feeds none.
+     */
+    private static int overdriveStageOf(ActiveFoodBuff buff, List<ActiveFoodBuff> activeSynergies) {
+        if (buff == null || activeSynergies == null) return 0;
+        int stage = 0;
+        for (ActiveFoodBuff synergyBuff : activeSynergies) {
+            FoodSynergyData synergy = FoodSynergyManager.getSynergy(synergyBuff.getTarget());
+            if (synergy == null || !synergy.hasOverdrive() || !feeds(buff, synergy)) continue;
+            stage = Math.max(stage, synergy.clampStage(synergyBuff.getStage()));
+        }
+        return stage;
+    }
+
+    /**
+     * The stage numeral an aftermath row carries: its stage when it is the aftermath of an
+     * overdrive, 0 (none) for a buff's or an ordinary synergy's.
+     */
+    private static int aftermathStageOf(ActiveFoodBuff entry) {
+        if (!entry.isSynergy()) return 0;
+        FoodSynergyData synergy = FoodSynergyManager.getSynergy(entry.getTarget());
+        return synergy != null && synergy.hasOverdrive() ? entry.getStage() : 0;
     }
 
     /**
@@ -347,7 +436,11 @@ public class FlorafareHud implements HudRenderCallback {
      */
     private static List<Text> buildAftermathTooltipLines(ActiveFoodBuff entry) {
         List<Text> lines = new ArrayList<>();
-        lines.add(Text.translatable("tooltip.florafare.hud.aftermath", sourceName(entry))
+        int stage = aftermathStageOf(entry);
+        lines.add((stage > 0
+                ? Text.translatable("tooltip.florafare.hud.aftermath_stage", sourceName(entry),
+                        RomanNumerals.of(stage))
+                : Text.translatable("tooltip.florafare.hud.aftermath", sourceName(entry)))
                 .formatted(Formatting.RED));
         lines.add(Text.translatable("tooltip.florafare.hud.remaining",
                 BuffDescription.formatDuration(entry.getDurationRemaining())).formatted(Formatting.GRAY));
@@ -463,7 +556,7 @@ public class FlorafareHud implements HudRenderCallback {
     private void renderSlot(DrawContext context, MinecraftClient client,
                             ActiveFoodBuff buff, int x, int y, float fadeAlpha, float appearProgress,
                             int slotWidth, int slotHeight,
-                            boolean isCompact, boolean isSynergized) {
+                            boolean isCompact, boolean isSynergized, int overdriveStage) {
         float initialDuration = Math.max(1.0f, (float) buff.getInitialDuration());
         int   remainingTicks  = buff.getDurationRemaining();
         float progress        = MathHelper.clamp(remainingTicks / initialDuration, 0.0f, 1.0f);
@@ -544,6 +637,13 @@ public class FlorafareHud implements HudRenderCallback {
         }
         context.getMatrices().pop();
 
+        // Once the icon has settled, like the stack count it is styled after: a numeral
+        // that pops in with the icon would be unreadable for the length of the slide.
+        if (overdriveStage > 0 && appearProgress > 0.9f) {
+            drawStageBadge(context, client, overdriveStage, x, y, slotHeight,
+                    (alphaInt << 24) | STAGE_BADGE_COLOR);
+        }
+
         if (!isCompact) {
             String timeStr = BuffDescription.formatDuration(remainingTicks);
             int    textY   = y + 8;
@@ -620,6 +720,9 @@ public class FlorafareHud implements HudRenderCallback {
         }
         context.getMatrices().pop();
 
+        int stage = aftermathStageOf(entry);
+        if (stage > 0) drawStageBadge(context, client, stage, x, y, slotHeight, AFTERMATH_STAGE_COLOR);
+
         if (!isCompact) {
             String timeStr = BuffDescription.formatDuration(remainingTicks);
             int    textY   = y + 8;
@@ -643,6 +746,39 @@ public class FlorafareHud implements HudRenderCallback {
                 context.drawTextWithShadow(client.textRenderer, name, nameX, textY, AFTERMATH_NAME);
             }
         }
+    }
+
+    /** The overdrive numeral on a buff slot: the synergized border's gold, a shade lighter. */
+    private static final int STAGE_BADGE_COLOR     = 0xFFD75F;
+    /** ...and on an aftermath row, the row's own red accent. */
+    private static final int AFTERMATH_STAGE_COLOR = 0xFFFF7070;
+    /** Badge text scale: small enough to sit on a 12-pixel icon, large enough to read "III". */
+    private static final float STAGE_BADGE_SCALE   = 0.75f;
+
+    /**
+     * The overdrive stage as a small Roman numeral on the bottom-right corner of the slot's
+     * icon — where vanilla draws a stack count, so it reads as a number belonging to the
+     * icon, and the one corner of the slot nothing else uses: the bar runs along the bottom
+     * edge below it, the aftermath notch sits top-right, and in the non-compact layout the
+     * time and name start to its right. Drawn above the item (z 200) the way the count is.
+     *
+     * <p>Anchored to the icon rather than the slot, so it follows the icon in both icon
+     * sizes and in compact mode, where the icon is all the slot shows.
+     */
+    private static void drawStageBadge(DrawContext context, MinecraftClient client, int stage,
+                                       int x, int y, int slotHeight, int color) {
+        boolean small  = HudConfig.iconSize == HudConfig.IconSize.SMALL;
+        int     size   = small ? 12 : 16;
+        int     iconX  = small ? x + (slotHeight - size) / 2 : x + 4;
+        int     iconY  = small ? y + (slotHeight - size) / 2 - 1 : y + 2;
+        String  text   = RomanNumerals.of(stage);
+
+        context.getMatrices().push();
+        context.getMatrices().translate(iconX + size + 1, iconY + size + 1, 200);
+        context.getMatrices().scale(STAGE_BADGE_SCALE, STAGE_BADGE_SCALE, 1.0f);
+        context.drawTextWithShadow(client.textRenderer, text,
+                -client.textRenderer.getWidth(text), -8, color);
+        context.getMatrices().pop();
     }
 
     /**

@@ -98,7 +98,26 @@ public final class DatapackDiagnostics {
          * {@link #INVALID_EFFECT}, {@link #INVALID_ATTRIBUTE} and {@link #UNKNOWN_OPERATION}
          * like everyone else's.
          */
-        INVALID_AFTERMATH
+        INVALID_AFTERMATH,
+        /**
+         * A synergy {@code timer} that is not {@code "members"} or {@code "own"}, an
+         * {@code "own"} timer with no positive {@code duration} to run for, or one combined
+         * with an {@code overdrive} (whose stages need the members' timer). The synergy falls
+         * back to the members' timer.
+         */
+        INVALID_TIMER,
+        /**
+         * A synergy {@code overdrive} block that is not an object, a stage that is not one,
+         * lockout keys written inside it, or an overdrive with no stages past I. Lines inside
+         * a stage report under {@link #INVALID_EFFECT}, {@link #INVALID_ATTRIBUTE} and
+         * {@link #UNKNOWN_OPERATION} like everyone else's.
+         */
+        INVALID_OVERDRIVE,
+        /**
+         * A synergy {@code lockout_group} that is not a valid identifier, or one switched off
+         * by {@code "lockout": false}.
+         */
+        INVALID_LOCKOUT
     }
 
     /**

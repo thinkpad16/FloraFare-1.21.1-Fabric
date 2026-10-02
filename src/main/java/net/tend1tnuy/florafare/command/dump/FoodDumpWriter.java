@@ -2,6 +2,7 @@ package net.tend1tnuy.florafare.command.dump;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import net.tend1tnuy.florafare.util.RomanNumerals;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -50,12 +51,12 @@ public final class FoodDumpWriter {
     // JSON
     // -------------------------------------------------------------------------
 
-    /** The JSON root: {@code meta} and {@code foods}. The text-only trees are left out. */
-    private record JsonRoot(FoodDump.Meta meta, List<FoodDump.Food> foods) {}
+    /** The JSON root: {@code meta}, {@code foods} and {@code synergies}. The text-only trees are left out. */
+    private record JsonRoot(FoodDump.Meta meta, List<FoodDump.Food> foods, List<FoodDump.Synergy> synergies) {}
 
     public static String json(FoodDump dump) {
         Gson gson = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
-        return gson.toJson(new JsonRoot(dump.meta(), dump.foods()));
+        return gson.toJson(new JsonRoot(dump.meta(), dump.foods(), dump.synergies()));
     }
 
     // -------------------------------------------------------------------------
@@ -110,7 +111,58 @@ public final class FoodDumpWriter {
             }
             out.append('\n');
         }
+
+        if (!dump.synergies().isEmpty()) {
+            out.append("=== SYNERGIES (").append(dump.synergies().size()).append(") ===\n\n");
+            for (FoodDump.Synergy synergy : dump.synergies()) appendSynergy(out, synergy);
+        }
         return out.toString();
+    }
+
+    /**
+     * One synergy: requirements, timing, stage I, then each overdrive stage with its own
+     * aftermath, and the lockout.
+     */
+    private static void appendSynergy(StringBuilder out, FoodDump.Synergy synergy) {
+        out.append("--- ").append(synergy.id());
+        if (synergy.file() != null) out.append(" from ").append(synergy.file());
+        out.append('\n');
+        out.append("  requires: ").append(String.join(", ", synergy.requirements())).append('\n');
+        out.append("  timer ").append(synergy.timer()).append(" · ")
+           .append(synergy.duration() > 0
+                   ? ("own".equals(synergy.timer()) ? "runs " : "ceiling ") + synergy.duration() + " ticks"
+                   : "no ceiling (lasts as long as its shortest ingredient)");
+        if (synergy.lockout()) {
+            out.append(" · lockout ").append(synergy.lockoutGroup() != null
+                    ? "group " + synergy.lockoutGroup() : "self");
+        }
+        out.append('\n');
+        String prefix = synergy.overdrive() == null ? "  " : "  stage I: ";
+        appendStageBody(out, prefix, synergy.healthBonus(), synergy.effects(), synergy.attributes(),
+                synergy.aftermath());
+        FoodDump.Overdrive overdrive = synergy.overdrive();
+        if (overdrive != null) {
+            out.append("  overdrive: ").append(overdrive.stageCount()).append(" stages\n");
+            for (FoodDump.Stage stage : overdrive.stages()) {
+                appendStageBody(out, "  stage " + RomanNumerals.of(stage.stage()) + ": ", stage.healthBonus(),
+                        stage.effects(), stage.attributes(), stage.aftermath());
+            }
+        }
+        out.append('\n');
+    }
+
+    /** {@code <prefix>health +2 · minecraft:... · effects: ...}, then its aftermath on a line of its own. */
+    private static void appendStageBody(StringBuilder out, String prefix, double healthBonus,
+                                        List<FoodDump.Effect> effects, List<FoodDump.Attribute> attributes,
+                                        FoodDump.Aftermath aftermath) {
+        List<String> parts = new ArrayList<>();
+        if (healthBonus != 0) parts.add("health " + (healthBonus > 0 ? "+" : "") + num(healthBonus));
+        for (FoodDump.Attribute attribute : attributes) {
+            parts.add(attribute.id() + " " + num(attribute.amount()) + " " + attribute.operation());
+        }
+        if (!effects.isEmpty()) parts.add("effects: " + effects(effects));
+        out.append(prefix).append(parts.isEmpty() ? "nothing while active" : String.join(" · ", parts)).append('\n');
+        if (aftermath != null) out.append("    aftermath: ").append(aftermath(aftermath)).append('\n');
     }
 
     private static String foodValues(FoodDump.Food food) {

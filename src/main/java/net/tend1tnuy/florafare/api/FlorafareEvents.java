@@ -130,6 +130,47 @@ public final class FlorafareEvents {
     );
 
     /**
+     * Fired when an overdrive synergy moves up a stage on a player: it was still running when
+     * its stage clock reached a boundary, and {@code newStage} ({@code oldStage + 1}) is now
+     * the one applied. Stages are 1-based; stage I is the synergy's own fields. The first
+     * boundary is when the shortest ingredient running at activation would have run out;
+     * every later one is that ingredient's full duration after the last. Eating never moves
+     * a stage — it only keeps the synergy alive to reach the next boundary.
+     *
+     * <p>Fired after the old stage's modifiers and effects are off and the new stage's are
+     * on, so {@link FlorafareAPI#getSynergyStage} already answers {@code newStage}. Not fired
+     * when the synergy activates (that is {@link #SYNERGY_ACTIVATED}, always at stage I) nor
+     * when it overloads at its last stage (that is {@link #SYNERGY_OVERLOADED}).
+     */
+    public static final Event<SynergyStageChanged> SYNERGY_STAGE_CHANGED = EventFactory.createArrayBacked(
+            SynergyStageChanged.class,
+            listeners -> (player, synergyId, oldStage, newStage) -> {
+                for (SynergyStageChanged listener : listeners) {
+                    listener.onSynergyStageChanged(player, synergyId, oldStage, newStage);
+                }
+            }
+    );
+
+    /**
+     * Fired when an overdrive synergy refuses to go further: a bite prolonged it while it was
+     * already at its last stage ({@code stage}) — or, rarely, it was still running when the
+     * boundary after its last stage came — and it ends on the spot.
+     *
+     * <p>Fired just before that ending's own {@link #SYNERGY_ENDED} and the
+     * {@link #AFTERMATH_STARTED} of the last stage's aftermath, which follow as for any
+     * other ending — so a listener that only cares that the synergy is over need not listen
+     * here at all; this is for telling an overload apart from the synergy running out.
+     */
+    public static final Event<SynergyOverloaded> SYNERGY_OVERLOADED = EventFactory.createArrayBacked(
+            SynergyOverloaded.class,
+            listeners -> (player, synergyId, stage) -> {
+                for (SynergyOverloaded listener : listeners) {
+                    listener.onSynergyOverloaded(player, synergyId, stage);
+                }
+            }
+    );
+
+    /**
      * Fired when a buff's or synergy's aftermath starts on a player — or is refreshed,
      * because the same source ended again while its aftermath was still running.
      *
@@ -248,6 +289,25 @@ public final class FlorafareEvents {
     @FunctionalInterface
     public interface SynergyEnded {
         void onSynergyEnded(PlayerEntity player, ActiveFoodBuff buff);
+    }
+
+    @FunctionalInterface
+    public interface SynergyStageChanged {
+        /**
+         * @param synergyId the synergy's id
+         * @param oldStage  the stage it was at, 1-based
+         * @param newStage  the stage it is at now
+         */
+        void onSynergyStageChanged(PlayerEntity player, String synergyId, int oldStage, int newStage);
+    }
+
+    @FunctionalInterface
+    public interface SynergyOverloaded {
+        /**
+         * @param synergyId the synergy's id
+         * @param stage     the last stage, the one it overloaded at and whose aftermath starts
+         */
+        void onSynergyOverloaded(PlayerEntity player, String synergyId, int stage);
     }
 
     @FunctionalInterface

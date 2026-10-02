@@ -23,9 +23,11 @@ import net.tend1tnuy.florafare.food.FoodBuffData;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
 import net.tend1tnuy.florafare.food.FoodSynergyData;
 import net.tend1tnuy.florafare.food.FoodSynergyManager;
+import net.tend1tnuy.florafare.food.SynergyOverdrive;
 import net.tend1tnuy.florafare.network.BuffStateSyncPayload;
 import net.tend1tnuy.florafare.network.FoodBuffSyncPayload;
 import net.tend1tnuy.florafare.network.FoodUnlockedPayload;
+import net.tend1tnuy.florafare.network.StageDiscoveredPayload;
 import net.tend1tnuy.florafare.network.SynergyUnlockedPayload;
 
 import java.util.*;
@@ -68,6 +70,7 @@ public class PlayerFoodComponent {
     private static final String NBT_ACTIVE_SYNERGIES_KEY    = "FlorafareActiveSynergies";
     private static final String NBT_SPENT_SYNERGIES_KEY     = "FlorafareSpentSynergies";
     private static final String NBT_AFTERMATHS_KEY          = "FlorafareAftermaths";
+    private static final String NBT_DISCOVERED_STAGES_KEY   = "FlorafareDiscoveredStages";
 
     private final PlayerEntity player;
     private final List<ActiveFoodBuff> activeBuffs    = new ArrayList<>();
@@ -76,6 +79,18 @@ public class PlayerFoodComponent {
 
     private final Set<String>          discoveredSynergies = new HashSet<>();
     private final List<ActiveFoodBuff> activeSynergies     = new ArrayList<>();
+
+    /**
+     * What this player has learned about synergy stages and aftermaths the hard way —
+     * {@code "<synergyId>#<stage>"} once a synergy has reached that stage, and
+     * {@code "<synergyId>#<stage>/aftermath"} once that stage's aftermath has started on
+     * them (see {@link FoodSynergyData#stageKey}). The HUD, the tooltips and the journal show
+     * an overdrive stage's drawbacks and any synergy's aftermath only once it is in here.
+     *
+     * <p>Journal progress like the two discovery sets above: saved, kept through death,
+     * sent whole on the full sync and one key at a time after that.
+     */
+    private final Set<String>          discoveredStages    = new HashSet<>();
 
     // #11 — Map keyed by synergy id for O(1) "is this synergy already active?" lookup.
     private final Map<String, ActiveFoodBuff> activeSynergyMap = new HashMap<>();
@@ -254,9 +269,19 @@ public class PlayerFoodComponent {
     }
     public Set<String>          getDiscoveredFoods()      { return discoveredFoods; }
     public Set<String>          getDiscoveredSynergies()  { return discoveredSynergies; }
+    public Set<String>          getDiscoveredStages()     { return discoveredStages; }
     public List<ActiveFoodBuff> getActiveBuffs()          { return activeBuffs; }
     public List<ActiveFoodBuff> getActiveSynergies()      { return activeSynergies; }
     public List<ActiveFoodBuff> getActiveAftermaths()     { return activeAftermaths; }
+
+    /**
+     * The stage a synergy running on this player has reached, 1-based — 1 for any running
+     * synergy without an overdrive — or 0 when it is not running.
+     */
+    public int getSynergyStage(String synergyId) {
+        ActiveFoodBuff running = activeSynergyMap.get(synergyId);
+        return running == null ? 0 : running.getStage();
+    }
 
     // -------------------------------------------------------------------------
     // FOOD DISCOVERY
@@ -373,6 +398,62 @@ public class PlayerFoodComponent {
         discoveredSynergies.clear();
         markPersistPending();
         sync();
+        return removed;
+    }
+
+    /**
+     * Records one stage or stage-aftermath key as learned, and tells the client. Called as
+     * it happens — a synergy reaching a stage, an aftermath starting — so it is the
+     * single-entry path; {@link #revealStages} is the bulk one.
+     *
+     * @return false if it was already known
+     */
+    private boolean discoverStage(String key) {
+        if (!discoveredStages.add(key)) return false;
+        markDiscoveryPending();
+        if (player instanceof ServerPlayerEntity serverPlayer) {
+            Florafare.sendTo(serverPlayer, new StageDiscoveredPayload(key));
+        }
+        return true;
+    }
+
+    /**
+     * Records several stage keys at once — {@code /florafare journal synergy reveal}. One
+     * full sync, like {@link #unlockSynergies}.
+     *
+     * @return how many of the keys were not already known
+     */
+    public int revealStages(Collection<String> keys) {
+        int added = 0;
+        for (String key : keys) {
+            if (discoveredStages.add(key)) added++;
+        }
+        if (added > 0) {
+            markDiscoveryPending();
+            sync();
+        }
+        return added;
+    }
+
+    /**
+     * Forgets the stage keys of one synergy, or of every synergy when {@code synergyId} is
+     * null — {@code /florafare journal synergy forget}. Its drawbacks and aftermaths go back
+     * to "???" until the player suffers them again.
+     *
+     * @return how many keys were dropped
+     */
+    public int forgetStages(@org.jetbrains.annotations.Nullable String synergyId) {
+        int before = discoveredStages.size();
+        if (synergyId == null) {
+            discoveredStages.clear();
+        } else {
+            discoveredStages.removeIf(key -> FoodSynergyData.isKeyOf(key, synergyId));
+        }
+        int removed = before - discoveredStages.size();
+        if (removed > 0) {
+            markPersistPending();
+            sync();
+        }
         return removed;
     }
 
@@ -1143,6 +1224,15 @@ public class PlayerFoodComponent {
     /**
      * Re-evaluates every synergy against the buffs now active.
      *
+     * <p>Three timing models meet here. An ordinary synergy follows its ingredients (see
+     * {@link #synergyWindow} and {@link #refreshWindow}). One with {@code "timer": "own"}
+     * runs its own {@code duration} out whatever its ingredients do, and only a bite of one
+     * of them resets it ({@link #ownTimerWindow}). One with an {@code overdrive} follows its
+     * ingredients exactly like an ordinary one, and on top of that carries a stage clock
+     * that {@link #tick()} advances ({@link ActiveFoodBuff#startStageClock}); the one thing
+     * a bite does to it here is overload it, if it prolongs it at its last stage
+     * ({@link #overdriveStep}).
+     *
      * @param fresh the buff that was just gained or refreshed, or null when this runs
      *              because something ended. Only a fresh buff that feeds a synergy may
      *              lengthen it or restart one that has already run out — see
@@ -1174,11 +1264,17 @@ public class PlayerFoodComponent {
             ActiveFoodBuff synergyBuff = activeSynergies.get(i);
             FoodSynergyData synergyData = FoodSynergyManager.getSynergy(synergyBuff.getTarget());
 
-            if (synergyData == null
-                    || !requirementsMet(synergyData.requirements())
-                    || synergyBuff.isExpired()) {
+            // An own-timer synergy outlives its ingredients by design: losing one is not
+            // the end of it, only its own clock is.
+            boolean lostRequirement = synergyData != null && !synergyData.ownTimer()
+                    && !requirementsMet(synergyData.requirements());
+            if (synergyData == null || lostRequirement || synergyBuff.isExpired()) {
                 activeSynergies.remove(i);
                 activeSynergyMap.remove(synergyBuff.getTarget()); // #11
+                // Ran its own window out: the same "wait for a fresh bite" the tick applies,
+                // or the add pass below would start it again on the spot. Dropped again
+                // straight after if its requirements have lapsed.
+                if (synergyBuff.isExpired()) spentSynergies.add(synergyBuff.getTarget());
                 if (ended == null) ended = new ArrayList<>();
                 ended.add(synergyBuff);
                 changed = true;
@@ -1201,8 +1297,29 @@ public class PlayerFoodComponent {
             return synergy == null || !requirementsMet(synergy.requirements());
         });
 
+        // Overloaded overdrives, ended after the loop for the same reason as above.
+        List<ActiveFoodBuff> overloaded = null;
+
         // Add or refresh synergies whose requirements are now met.
         for (FoodSynergyData synergy : FoodSynergyManager.getAllSynergies()) {
+            boolean fed = fresh != null && feedsSynergy(fresh, synergy);
+
+            // #11 — O(1) lookup via map instead of stream().filter()
+            ActiveFoodBuff existing = activeSynergyMap.get(synergy.id());
+
+            // Ahead of the requirements check: an own-timer synergy keeps running with an
+            // ingredient gone, and eating any of them while it does resets it, whether or
+            // not the others are still there.
+            if (existing != null && synergy.ownTimer()) {
+                SynergyWindow next = ownTimerWindow(existing.getDurationRemaining(), synergy.duration(), fed);
+                if (next != null) {
+                    existing.resetDuration(next.remaining(), next.initial());
+                    applyBuffEffects(existing, synergyData(synergy, existing.getStage(), next.remaining()), true);
+                    changed = true;
+                }
+                continue;
+            }
+
             if (!requirementsMet(synergy.requirements())) continue;
 
             // Synergy duration mirrors the shortest remaining buff among its requirements.
@@ -1220,13 +1337,34 @@ public class PlayerFoodComponent {
                 }
             }
 
-            SynergyWindow window = synergyWindow(minDuration, minInitial, synergy.duration());
-            boolean fed = fresh != null && feedsSynergy(fresh, synergy);
-
-            // #11 — O(1) lookup via map instead of stream().filter()
-            ActiveFoodBuff existing = activeSynergyMap.get(synergy.id());
+            SynergyWindow window = synergy.ownTimer()
+                    ? ownTimerStart(synergy.duration())
+                    : synergyWindow(minDuration, minInitial, synergy.duration());
 
             if (existing != null) {
+                if (synergy.hasOverdrive()) {
+                    // A synergy loaded from a save written before stage clocks existed, or
+                    // one a /reload has just made an overdrive, gets its clock now, from the
+                    // ingredients it has at this moment.
+                    if (!existing.hasStageClock()) {
+                        existing.startStageClock(minDuration, minInitial);
+                        changed = true;
+                    }
+                    if (overdriveStep(existing.getDurationRemaining(), window, fed,
+                            existing.getStage(), synergy.stageCount()) == OverdriveStep.OVERLOAD) {
+                        // Pushed at its last stage: it ends here and now, with the last
+                        // stage's aftermath, and waits for a fresh bite like any synergy that
+                        // ran its window out — so the bite that broke it cannot also restart it.
+                        activeSynergies.remove(existing);
+                        activeSynergyMap.remove(synergy.id());
+                        spentSynergies.add(synergy.id());
+                        if (overloaded == null) overloaded = new ArrayList<>();
+                        overloaded.add(existing);
+                        changed = true;
+                        continue;
+                    }
+                }
+
                 SynergyWindow next = refreshWindow(existing.getDurationRemaining(),
                         existing.getInitialDuration(), window, fed);
                 if (next != null) {
@@ -1241,10 +1379,16 @@ public class PlayerFoodComponent {
                     // off at all. applyBuffEffects strips every recorded modifier before
                     // re-adding the current ones, so this converges on whatever the
                     // synergy currently says rather than drifting away from it.
-                    applyBuffEffects(existing, synergyData(synergy, next.remaining()), true);
+                    applyBuffEffects(existing, synergyData(synergy, existing.getStage(), next.remaining()), true);
                     changed = true;
                 }
             } else {
+                // Still paying for the last time: a synergy with a lockout does not start
+                // while an aftermath from it (or from its lockout group) is running. Asked
+                // before the spent check, so a bite that is turned away here does not use up
+                // the fresh bite a spent synergy is waiting for.
+                if (lockedOut(synergy, activeAftermaths, FoodSynergyManager::getSynergy)) continue;
+
                 // Ran its window out with its ingredients still going: it waits for one of
                 // them to be eaten again rather than restarting on any bite at all.
                 if (spentSynergies.contains(synergy.id())) {
@@ -1267,7 +1411,7 @@ public class PlayerFoodComponent {
                 ActiveFoodBuff synergyBuff = ActiveFoodBuff.synergy(
                         synergy.id(), iconItem, window.remaining(), window.initial());
 
-                applyBuffEffects(synergyBuff, synergyData(synergy, window.remaining()), true);
+                applyBuffEffects(synergyBuff, synergyData(synergy, 1, window.remaining()), true);
                 activeSynergies.add(synergyBuff);
                 activeSynergyMap.put(synergy.id(), synergyBuff); // #11
 
@@ -1281,11 +1425,208 @@ public class PlayerFoodComponent {
                         Florafare.sendTo(serverPlayer, new SynergyUnlockedPayload(synergy.id()));
                     }
                 }
+                // Stage I reached. Only an overdrive has stage drawbacks to reveal — and a stage
+                // clock: its first boundary when the shortest ingredient now running would run
+                // out, then one every full length of that ingredient. Not for an own timer,
+                // whose length has nothing to do with its ingredients (only code can build an
+                // overdrive on one; the loader refuses it).
+                if (synergy.hasOverdrive()) {
+                    discoverStage(FoodSynergyData.stageKey(synergy.id(), 1));
+                    if (!synergy.ownTimer()) synergyBuff.startStageClock(minDuration, minInitial);
+                }
                 changed = true;
             }
         }
+
+        if (overloaded != null) {
+            for (ActiveFoodBuff synergyBuff : overloaded) overload(synergyBuff);
+        }
         if (changed) markDirty();
         return changed;
+    }
+
+    /**
+     * Ends an overdrive that refused to go further — already taken out of the lists and
+     * marked spent by the caller: the message, {@code SYNERGY_OVERLOADED}, then the ordinary
+     * ending, whose aftermath is the last stage's.
+     */
+    private void overload(ActiveFoodBuff synergyBuff) {
+        int stage = synergyBuff.getStage();
+        String id = synergyBuff.getTarget();
+        player.sendMessage(net.minecraft.text.Text.translatable(
+                "message.florafare.overdrive.overload", synergyText(id),
+                net.tend1tnuy.florafare.util.RomanNumerals.of(stage)), true);
+        queueEvent(() -> FlorafareEvents.SYNERGY_OVERLOADED.invoker()
+                .onSynergyOverloaded(player, id, stage));
+        endBuff(synergyBuff, EndCause.OVERLOAD);
+    }
+
+    /**
+     * Deals with an overdrive whose stage clock has reached a boundary while it is still
+     * running: it moves up a stage — or, already at its last, ends as an overload. Server
+     * only; called from {@link #tick()} once the countdowns are done.
+     *
+     * <p>A synergy whose definition a {@code /reload} has removed, or turned into an
+     * ordinary one, simply loses its clock.
+     */
+    private void reachStageBoundary(ActiveFoodBuff synergyBuff) {
+        FoodSynergyData synergy = FoodSynergyManager.getSynergy(synergyBuff.getTarget());
+        if (synergy == null || !synergy.hasOverdrive()) {
+            synergyBuff.clearStageClock();
+            return;
+        }
+        if (boundaryStep(synergyBuff.getStage(), synergy.stageCount()) == OverdriveStep.OVERLOAD) {
+            // Only reachable when the fuse was eaten just before the last stage began, so the
+            // synergy outlived a whole last phase without the bite that would have overloaded
+            // it. It has had its last stage; it ends as if it had been pushed.
+            activeSynergies.remove(synergyBuff);
+            activeSynergyMap.remove(synergyBuff.getTarget());
+            spentSynergies.add(synergyBuff.getTarget());
+            overload(synergyBuff);
+            return;
+        }
+        advanceStage(synergyBuff, synergy);
+        synergyBuff.restartPhase();
+    }
+
+    /**
+     * Moves a running overdrive up one stage, in place: the old stage's effects and
+     * modifiers come off and the new stage's go on through the ordinary apply path. Its
+     * remaining time is untouched — that is still its ingredients' business.
+     */
+    private void advanceStage(ActiveFoodBuff existing, FoodSynergyData synergy) {
+        int oldStage = existing.getStage();
+        int newStage = synergy.clampStage(oldStage + 1);
+
+        // The effects the old stage granted run exactly as long as the synergy has left,
+        // which is what removeSynergyEffects measures them against.
+        removeSynergyEffects(existing, synergy.stage(oldStage).effects());
+        existing.setStage(newStage);
+        // applyBuffEffects strips every modifier the entry recorded before writing the new
+        // stage's, so a stat stage II has and stage III does not is gone, not left behind.
+        applyBuffEffects(existing, synergyData(synergy, newStage, existing.getDurationRemaining()), true);
+
+        discoverStage(FoodSynergyData.stageKey(synergy.id(), newStage));
+        player.sendMessage(net.minecraft.text.Text.translatable(
+                "message.florafare.overdrive.stage_up", synergyText(synergy.id()),
+                net.tend1tnuy.florafare.util.RomanNumerals.of(newStage),
+                net.tend1tnuy.florafare.util.RomanNumerals.of(synergy.stageCount())), true);
+        String id = synergy.id();
+        queueEvent(() -> FlorafareEvents.SYNERGY_STAGE_CHANGED.invoker()
+                .onSynergyStageChanged(player, id, oldStage, newStage));
+    }
+
+    /**
+     * A synergy's name for a message sent from the server: its translation key, which the
+     * client resolves, with the raw id as the fallback for a pack that ships none. The
+     * server cannot resolve it itself — a dedicated server has no mod language files.
+     */
+    private static net.minecraft.text.Text synergyText(String synergyId) {
+        return net.minecraft.text.Text.translatableWithFallback(
+                "synergy.florafare." + synergyId.replace(":", "."), synergyId);
+    }
+
+    /** What happens to a running overdrive; see {@link #overdriveStep} and {@link #boundaryStep}. */
+    enum OverdriveStep {
+        /** Nothing stage-related: the ordinary refresh rules apply. */
+        NONE,
+        /** It moves up one stage. */
+        ADVANCE,
+        /** It was already at its last stage, and ends. */
+        OVERLOAD
+    }
+
+    /**
+     * What a bite does to a running overdrive's stage: overload it, or nothing.
+     *
+     * <p>Stages are not bought with bites — they come with time, at the boundaries of the
+     * stage clock ({@link #boundaryStep}). So eating the fuse below the last stage never
+     * moves the stage, however many times it is eaten inside one phase; it only keeps the
+     * synergy alive to reach the next boundary. With a 35-minute Fried Chicken, a 35-minute
+     * Red Rum and a 3-minute pepper slice, the pepper is the fuse: re-eating it every couple
+     * of minutes keeps the feast going, and it climbs a stage every three minutes it lasts.
+     *
+     * <p>At the last stage there is nowhere left to climb, and a bite that <em>prolongs</em>
+     * it — feeds it, and the window it is now entitled to ends later than what it had left
+     * — overloads it instead. Eating more chicken does not prolong it (the shortest
+     * ingredient is still the pepper, so the window does not grow) and is harmless.
+     *
+     * <p>Package-private and static so the rule can be driven from a unit test.
+     */
+    static OverdriveStep overdriveStep(int remaining, SynergyWindow window, boolean fed,
+                                       int stage, int stageCount) {
+        if (stage < stageCount || !fed || !extendsWindow(remaining, window)) return OverdriveStep.NONE;
+        return OverdriveStep.OVERLOAD;
+    }
+
+    /**
+     * What a stage boundary does to an overdrive still running when it is reached: move it
+     * up one stage, or — already at its last — end it as an overload.
+     *
+     * <p>Package-private and static so the rule can be driven from a unit test.
+     */
+    static OverdriveStep boundaryStep(int stage, int stageCount) {
+        return stage >= stageCount ? OverdriveStep.OVERLOAD : OverdriveStep.ADVANCE;
+    }
+
+    /**
+     * Whether {@code window} ends later than {@code remaining}, by more than the drift the
+     * refresh rule tolerates — so a re-sync of a few ticks never counts as a push.
+     */
+    static boolean extendsWindow(int remaining, SynergyWindow window) {
+        return window.remaining() > remaining + SYNERGY_DRIFT_TOLERANCE;
+    }
+
+    /** The window an own-timer synergy starts with: its whole {@code duration}. */
+    static SynergyWindow ownTimerStart(int duration) {
+        int full = ActiveFoodBuff.clampDuration(duration);
+        return new SynergyWindow(full, full);
+    }
+
+    /**
+     * What a running own-timer synergy becomes, or null to leave it alone.
+     *
+     * <p>Its ingredients have no say in it at all — an unrelated bite, an ingredient running
+     * out — except that eating one of them ({@code fed}) resets it to its full
+     * {@code duration}. A reset within the drift tolerance of where it already is changes
+     * nothing, so the bite that started it does not also "refresh" it.
+     *
+     * <p>Package-private and static so the rule can be driven from a unit test.
+     */
+    static SynergyWindow ownTimerWindow(int remaining, int duration, boolean fed) {
+        if (!fed) return null;
+        SynergyWindow full = ownTimerStart(duration);
+        if (Math.abs(remaining - full.remaining()) <= SYNERGY_DRIFT_TOLERANCE) return null;
+        return full;
+    }
+
+    /**
+     * Whether a synergy is locked out by an aftermath running on the player.
+     *
+     * <p>Only a synergy with a lockout ({@code "lockout": true}, or a {@code lockout_group},
+     * at its top level — overdrive or not) is ever locked out, and then by an aftermath that
+     * came from itself or, with a group, from any synergy of the same group. A synergy that is
+     * already running is never ended by one; it only cannot start. Only an aftermath that is tracked (it
+     * has a duration and something to hold) counts: one that only grants effects leaves no
+     * entry behind to wait out.
+     *
+     * <p>The source of each aftermath is looked up by its id through {@code lookup}, the
+     * same way the aftermath itself was; an aftermath whose synergy a {@code /reload}
+     * removed still locks out a synergy of the same id.
+     *
+     * <p>Package-private and static so the rule can be driven from a unit test.
+     */
+    static boolean lockedOut(FoodSynergyData synergy, List<ActiveFoodBuff> aftermaths,
+                             java.util.function.Function<String, FoodSynergyData> lookup) {
+        String key = synergy.lockoutKey();
+        if (key == null) return false;
+        for (ActiveFoodBuff entry : aftermaths) {
+            if (!entry.isSynergy()) continue;
+            if (entry.getTarget().equals(synergy.id())) return true;
+            FoodSynergyData source = lookup.apply(entry.getTarget());
+            if (source != null && key.equals(source.lockoutKey())) return true;
+        }
+        return false;
     }
 
     /** Whether a buff satisfies at least one of a synergy's requirements. */
@@ -1334,20 +1675,23 @@ public class PlayerFoodComponent {
     }
 
     /**
-     * A synergy expressed as the {@link FoodBuffData} the apply path understands, with
-     * every effect rewritten to last exactly as long as the synergy itself.
+     * One stage of a synergy expressed as the {@link FoodBuffData} the apply path
+     * understands, with every effect rewritten to last exactly as long as the synergy itself.
      *
      * <p>That rewrite is what lets {@code removeSynergyEffects} tell a synergy's own
      * Regeneration apart from a beacon's later on: it knows the effect it granted cannot
      * outlive the synergy.
+     *
+     * @param stage the stage to apply, 1-based; stage I is the synergy's own fields
      */
-    private static FoodBuffData synergyData(FoodSynergyData synergy, int duration) {
-        List<FoodBuffData.EffectData> scoped = new ArrayList<>(synergy.effects().size());
-        for (FoodBuffData.EffectData eff : synergy.effects()) {
+    private static FoodBuffData synergyData(FoodSynergyData synergy, int stage, int duration) {
+        SynergyOverdrive.Stage fields = synergy.stage(stage);
+        List<FoodBuffData.EffectData> scoped = new ArrayList<>(fields.effects().size());
+        for (FoodBuffData.EffectData eff : fields.effects()) {
             scoped.add(new FoodBuffData.EffectData(eff.id(), duration, eff.amplifier()));
         }
         return new FoodBuffData(synergy.id(), duration, 0, 0f,
-                synergy.healthBonus(), scoped, synergy.attributes(), 0, false);
+                fields.healthBonus(), scoped, fields.attributes(), 0, false);
     }
 
     /** How long a synergy runs for: {@code remaining} now, out of {@code initial} total. */
@@ -1479,9 +1823,16 @@ public class PlayerFoodComponent {
         }
 
         List<ActiveFoodBuff> ranOut = null;
+        List<ActiveFoodBuff> boundaries = null;
         for (int i = activeSynergies.size() - 1; i >= 0; i--) {
             ActiveFoodBuff synergyBuff = activeSynergies.get(i);
             synergyBuff.tick();
+            // A stage boundary counts only for a synergy still alive at it: one that runs
+            // out on the very tick ends in the stage it had, as below.
+            if (!synergyBuff.isExpired() && synergyBuff.isStageDue() && isServer) {
+                if (boundaries == null) boundaries = new ArrayList<>();
+                boundaries.add(synergyBuff);
+            }
             if (synergyBuff.isExpired() && isServer) {
                 activeSynergies.remove(i);
                 activeSynergyMap.remove(synergyBuff.getTarget()); // #11
@@ -1497,6 +1848,14 @@ public class PlayerFoodComponent {
         if (ranOut != null) {
             for (ActiveFoodBuff synergyBuff : ranOut) endBuff(synergyBuff, EndCause.EXPIRED);
             markDirty();
+        }
+
+        // After the loop, like every other change here: moving a stage applies modifiers
+        // and queues events, and an overload takes the synergy out of the list.
+        if (boundaries != null) {
+            for (ActiveFoodBuff synergyBuff : boundaries) reachStageBoundary(synergyBuff);
+            // Owed to disk like a buff gained: the stage decides which aftermath is paid.
+            markBuffChanged();
         }
 
         fireQueuedEvents();
@@ -1540,7 +1899,8 @@ public class PlayerFoodComponent {
         // treated as a food buff — so its status effects were never taken back.
         if (buff.isSynergy()) {
             FoodSynergyData synergy = FoodSynergyManager.getSynergy(buff.getTarget());
-            if (synergy != null) removeSynergyEffects(buff, synergy);
+            // The effects of the stage it was at, which are the only ones it was granting.
+            if (synergy != null) removeSynergyEffects(buff, synergy.stage(buff.getStage()).effects());
         }
 
         // Single choke point for every removal path (expiry, Forgotten Mead, /florafare
@@ -1573,14 +1933,14 @@ public class PlayerFoodComponent {
      * amplifier, and not outlasting the synergy itself — and anything stronger or
      * longer-lived is left to its real owner.
      */
-    private void removeSynergyEffects(ActiveFoodBuff buff, FoodSynergyData synergy) {
+    private void removeSynergyEffects(ActiveFoodBuff buff, List<FoodBuffData.EffectData> effects) {
         // The refresh in updateSynergies() tolerates SYNERGY_DRIFT_TOLERANCE ticks of
         // drift before it re-applies, so our own instance can legitimately read slightly
         // longer than the buff. A second of slack covers that without reaching a beacon's
         // minutes.
         final int slack = 20;
 
-        for (FoodBuffData.EffectData eff : synergy.effects()) {
+        for (FoodBuffData.EffectData eff : effects) {
             Registries.STATUS_EFFECT.getEntry(eff.id()).ifPresent(entry -> {
                 StatusEffectInstance active = player.getStatusEffect(entry);
                 if (active == null) return;
@@ -1626,7 +1986,13 @@ public class PlayerFoodComponent {
         /** Wiped with everything else: {@code /florafare clear}, {@code clearBuffs}, death. */
         CLEARED,
         /** Every synergy ended because {@code enableSynergies} was switched off. */
-        SYNERGIES_DISABLED
+        SYNERGIES_DISABLED,
+        /**
+         * An overdrive prolonged at its last stage (or still running at the boundary after
+         * it): it refuses, and ends on the spot. Its last stage's aftermath follows — overloading is the most expensive way
+         * for one to end, never a way out of paying.
+         */
+        OVERLOAD
     }
 
     /**
@@ -1641,7 +2007,7 @@ public class PlayerFoodComponent {
      */
     static boolean startsAftermath(EndCause cause) {
         return switch (cause) {
-            case EXPIRED, REQUIREMENT_LOST, REMOVED -> true;
+            case EXPIRED, REQUIREMENT_LOST, REMOVED, OVERLOAD -> true;
             case CLEARED, SYNERGIES_DISABLED        -> false;
         };
     }
@@ -1705,7 +2071,9 @@ public class PlayerFoodComponent {
         String target = source.getTarget();
         if (source.isSynergy()) {
             FoodSynergyData synergy = FoodSynergyManager.getSynergy(target);
-            return synergy == null ? FoodAftermath.NONE : synergy.aftermath();
+            // The aftermath of the stage it had reached: an overdrive pushed to stage III
+            // leaves stage III's bill, not stage I's. Stage I for every ordinary synergy.
+            return synergy == null ? FoodAftermath.NONE : synergy.aftermathOf(source.getStage());
         }
         FoodBuffData data = target.startsWith(STACK_TARGET_PREFIX)
                 ? FoodBuffManager.getRuntimeStackConfig(target.substring(STACK_TARGET_PREFIX.length()))
@@ -1733,6 +2101,13 @@ public class PlayerFoodComponent {
         FoodAftermath aftermath = aftermathOf(source);
         if (aftermath.isEmpty()) return;
 
+        // Suffered now, effects-only or not: from here on the HUD, the tooltips and the
+        // journal show this synergy stage's aftermath instead of "???". Buffs' aftermaths
+        // are never hidden — a food's is on its tooltip from the first bite.
+        if (source.isSynergy()) {
+            discoverStage(FoodSynergyData.aftermathKey(source.getTarget(), source.getStage()));
+        }
+
         // Granted once per start, through the same path every other datapack effect takes
         // — the buff ceiling, -1 as infinite, a floored amplifier.
         for (FoodBuffData.EffectData effect : aftermath.effects()) {
@@ -1750,6 +2125,9 @@ public class PlayerFoodComponent {
                     aftermath.duration(), aftermath.duration(), source.isSynergy());
             activeAftermaths.add(entry);
         }
+        // Whose bill it is now, for the numeral on its HUD row and its tooltip title. A
+        // refresh takes the new ending's stage along with its modifiers.
+        entry.setStage(source.getStage());
 
         // Strips whatever the entry held before, so a refresh re-applies cleanly: the same
         // ids are rewritten rather than added beside, and a line a /reload removed goes.
@@ -1878,6 +2256,10 @@ public class PlayerFoodComponent {
         for (String synId : discoveredSynergies) discoveredSyn.add(NbtString.of(synId));
         nbt.put(NBT_DISCOVERED_SYNERGIES_KEY, discoveredSyn);
 
+        NbtList discoveredStg = new NbtList();
+        for (String key : discoveredStages) discoveredStg.add(NbtString.of(key));
+        nbt.put(NBT_DISCOVERED_STAGES_KEY, discoveredStg);
+
         nbt.putBoolean(NBT_JOURNAL_KEY, hasReceivedJournal);
 
         // Saved so a relog does not hand every spent synergy a free restart. Server
@@ -1940,6 +2322,13 @@ public class PlayerFoodComponent {
             for (int i = 0; i < list.size(); i++) discoveredSynergies.add(list.getString(i));
         }
 
+        // Absent from every save written before overdrives existed: nothing learned yet.
+        discoveredStages.clear();
+        if (nbt.contains(NBT_DISCOVERED_STAGES_KEY, NbtElement.LIST_TYPE)) {
+            NbtList list = nbt.getList(NBT_DISCOVERED_STAGES_KEY, NbtElement.STRING_TYPE);
+            for (int i = 0; i < list.size(); i++) discoveredStages.add(list.getString(i));
+        }
+
         spentSynergies.clear();
         if (nbt.contains(NBT_SPENT_SYNERGIES_KEY, NbtElement.LIST_TYPE)) {
             NbtList list = nbt.getList(NBT_SPENT_SYNERGIES_KEY, NbtElement.STRING_TYPE);
@@ -1965,6 +2354,9 @@ public class PlayerFoodComponent {
     public void copyProgressFrom(PlayerFoodComponent old) {
         this.discoveredFoods.addAll(old.discoveredFoods);
         this.discoveredSynergies.addAll(old.discoveredSynergies);
+        // What a stage costs is journal knowledge too, and dying is exactly how a player
+        // learns some of it; forgetting it on respawn would hide the lesson again.
+        this.discoveredStages.addAll(old.discoveredStages);
         this.hasReceivedJournal = old.hasReceivedJournal;
 
         // Same reasoning as in copyFrom: a brand-new entity that has never been written.
@@ -1981,6 +2373,9 @@ public class PlayerFoodComponent {
 
         this.discoveredSynergies.clear();
         this.discoveredSynergies.addAll(old.discoveredSynergies);
+
+        this.discoveredStages.clear();
+        this.discoveredStages.addAll(old.discoveredStages);
 
         this.activeSynergies.clear();
         this.activeSynergyMap.clear();

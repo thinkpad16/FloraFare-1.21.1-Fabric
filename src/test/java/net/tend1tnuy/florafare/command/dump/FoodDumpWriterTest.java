@@ -74,6 +74,43 @@ class FoodDumpWriterTest {
         assertEquals("plain", FoodDumpWriter.csvCell("plain"));
     }
 
+    /** The sample, plus one overdrive synergy in a lockout group and one on its own timer. */
+    private static FoodDump withSynergies() {
+        FoodDump base = sample();
+        FoodDump.Synergy inferno = new FoodDump.Synergy("falleneden:inferno_feast", "falleneden:synergies",
+                List.of("falleneden:fried_chicken", "falleneden:red_rum"), 0, "members", 2.0,
+                List.of(), List.of(), new FoodDump.Aftermath(2400, -2.0, List.of(), List.of()),
+                new FoodDump.Overdrive(3, List.of(
+                        new FoodDump.Stage(2, 4.0, List.of(new FoodDump.Effect("minecraft:speed", 0, 1, 1f)),
+                                List.of(), new FoodDump.Aftermath(3600, -4.0, List.of(), List.of())),
+                        new FoodDump.Stage(3, -2.0, List.of(), List.of(), null))),
+                true, "falleneden:all");
+        FoodDump.Synergy tea = new FoodDump.Synergy("mypack:tea_time", null, List.of("minecraft:bread"), 6000,
+                "own", 0.0, List.of(), List.of(), null, null, false, null);
+        return new FoodDump(base.meta(), base.foods(), List.of(inferno, tea), base.trees());
+    }
+
+    @Test
+    @DisplayName("synergies: timer, ceiling, lockout and every overdrive stage, in JSON and text")
+    void synergies() {
+        FoodDump dump = withSynergies();
+        String json = FoodDumpWriter.json(dump);
+        assertTrue(json.contains("\"synergies\": ["), json);
+        assertTrue(json.contains("\"timer\": \"own\""));
+        assertTrue(json.contains("\"lockoutGroup\": \"falleneden:all\""));
+        assertTrue(json.contains("\"stageCount\": 3"));
+
+        String text = FoodDumpWriter.text(dump);
+        assertTrue(text.contains("=== SYNERGIES (2) ==="), text);
+        assertTrue(text.contains("timer members · no ceiling (lasts as long as its shortest ingredient)"
+                + " · lockout group falleneden:all"), text);
+        assertTrue(text.contains("timer own · runs 6000 ticks"), text);
+        assertTrue(text.contains("overdrive: 3 stages"), text);
+        assertTrue(text.contains("stage II: health +4 · effects: minecraft:speed II 0s"), text);
+        assertTrue(text.contains("stage III: health -2"), text);
+        assertTrue(text.contains("    aftermath: 3600 ticks · health -4"), text);
+    }
+
     @Test
     @DisplayName("format names, and numbers printed the same in every locale")
     void formatsAndNumbers() {

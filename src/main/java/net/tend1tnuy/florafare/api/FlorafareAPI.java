@@ -168,6 +168,12 @@ public final class FlorafareAPI {
     /**
      * Registers a food synergy in code instead of via a datapack JSON file.
      * See {@link #registerFoodBuff(String, FoodBuffData)} for the same timing caveat.
+     *
+     * <p>The full constructor takes a {@link FoodSynergyData.Timer} and an optional
+     * {@link net.tend1tnuy.florafare.food.SynergyOverdrive}, as the datapack keys
+     * {@code timer} and {@code overdrive} do. The loader refuses an own timer on an
+     * overdrive; one registered from code that has both runs on its own timer, and its
+     * stages never advance.
      */
     public static void registerSynergy(@NotNull FoodSynergyData data) {
         FoodSynergyManager.putApiSynergy(data);
@@ -207,6 +213,31 @@ public final class FlorafareAPI {
     @NotNull
     public static List<ActiveFoodBuff> getActiveAftermaths(@NotNull PlayerEntity player) {
         return List.copyOf(component(player).getActiveAftermaths());
+    }
+
+    /**
+     * The stage an overdrive synergy has reached on this player, 1-based (stage I is the
+     * synergy's own fields; stage II is the first entry of its {@code overdrive.stages}).
+     * A running synergy without an overdrive is always at 1. 0 when the synergy is not
+     * running on the player at all.
+     *
+     * <p>Answers on both sides; the client's copy is the server's, synced with the buffs.
+     * {@link FlorafareEvents#SYNERGY_STAGE_CHANGED} says when it moves.
+     */
+    public static int getSynergyStage(@NotNull PlayerEntity player, @NotNull String synergyId) {
+        return component(player).getSynergyStage(synergyId);
+    }
+
+    /**
+     * What this player has learned about synergy stages the hard way, as discovery keys:
+     * {@code "<synergyId>#<stage>"} for each overdrive stage they have reached, and
+     * {@code "<synergyId>#<stage>/aftermath"} for each synergy aftermath that has started on
+     * them (an ordinary synergy's is {@code "<synergyId>#1/aftermath"}). The journal, the HUD
+     * and the tooltips hide those drawbacks until the key is here. Snapshot.
+     */
+    @NotNull
+    public static Set<String> getDiscoveredStages(@NotNull PlayerEntity player) {
+        return Set.copyOf(component(player).getDiscoveredStages());
     }
 
     /** Item ids this player has discovered (eaten at least once). Snapshot. */

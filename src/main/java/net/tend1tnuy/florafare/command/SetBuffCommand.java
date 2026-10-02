@@ -253,6 +253,37 @@ public class SetBuffCommand {
                                                         )
                                                 )
                                         )
+                                        // What a synergy's stages and aftermaths cost, which
+                                        // the journal hides until suffered: reveal shows it
+                                        // without the suffering, forget hides it again. Apart
+                                        // from unlock/lock on purpose — knowing a synergy
+                                        // exists and knowing its price are separate lessons.
+                                        .then(CommandManager.literal("reveal")
+                                                .then(CommandManager.argument("player", EntityArgumentType.player())
+                                                        .then(CommandManager.literal("all")
+                                                                .executes(ctx -> executeStageReveal(ctx, null))
+                                                        )
+                                                        .then(CommandManager.argument("target", StringArgumentType.greedyString())
+                                                                .suggests((ctx, builder) ->
+                                                                        suggestTargets(synergyIds(), builder))
+                                                                .executes(ctx -> executeStageReveal(ctx,
+                                                                        unquote(StringArgumentType.getString(ctx, "target"))))
+                                                        )
+                                                )
+                                        )
+                                        .then(CommandManager.literal("forget")
+                                                .then(CommandManager.argument("player", EntityArgumentType.player())
+                                                        .then(CommandManager.literal("all")
+                                                                .executes(ctx -> executeStageForget(ctx, null))
+                                                        )
+                                                        .then(CommandManager.argument("target", StringArgumentType.greedyString())
+                                                                .suggests((ctx, builder) ->
+                                                                        suggestTargets(synergyIds(), builder))
+                                                                .executes(ctx -> executeStageForget(ctx,
+                                                                        unquote(StringArgumentType.getString(ctx, "target"))))
+                                                        )
+                                                )
+                                        )
                                 )
                         )
 
@@ -384,6 +415,17 @@ public class SetBuffCommand {
         if (!isSynergy && !buff.getTarget().equals(buff.getConsumedItemId())) {
             line.append(Text.literal(" (" + buff.getConsumedItemId() + ")")
                     .formatted(Formatting.GRAY));
+        }
+
+        // An overdrive's stage — on the synergy, the one it is at; on its aftermath, the one
+        // whose bill it is — since "which stage" is the first thing to ask about either.
+        if (isSynergy) {
+            FoodSynergyData synergy = FoodSynergyManager.getSynergy(buff.getTarget());
+            if (synergy != null && synergy.hasOverdrive()) {
+                line.append(Text.literal(" [" + net.tend1tnuy.florafare.util.RomanNumerals.of(buff.getStage())
+                        + "/" + net.tend1tnuy.florafare.util.RomanNumerals.of(synergy.stageCount()) + "]")
+                        .formatted(Formatting.LIGHT_PURPLE));
+            }
         }
 
         line.append(Text.literal(" \u2014 " + ticksToMmss(buff.getDurationRemaining())
@@ -759,6 +801,49 @@ public class SetBuffCommand {
 
         context.getSource().sendFeedback(() -> Text.translatable(
                 "command.florafare.synergy_lock_all.success", removed, player.getName().getString()), true);
+        return removed;
+    }
+
+    /**
+     * Marks every stage and every aftermath of one synergy — or of all of them — as
+     * suffered, so the journal, the HUD and the tooltips show their drawbacks in full.
+     *
+     * @param target the synergy id, or null for every synergy loaded
+     */
+    private static int executeStageReveal(CommandContext<ServerCommandSource> context, String target)
+            throws CommandSyntaxException {
+        ServerPlayerEntity player = EntityArgumentType.getPlayer(context, "player");
+        List<String> keys = new ArrayList<>();
+        if (target == null) {
+            for (FoodSynergyData synergy : FoodSynergyManager.getAllSynergies()) keys.addAll(synergy.discoveryKeys());
+        } else {
+            FoodSynergyData synergy = FoodSynergyManager.getSynergy(target);
+            if (synergy == null) {
+                context.getSource().sendError(Text.translatable("command.florafare.synergy_unlock.unknown", target));
+                return 0;
+            }
+            keys.addAll(synergy.discoveryKeys());
+        }
+        int added = componentOf(player).revealStages(keys);
+        String what = target == null ? "*" : target;
+        context.getSource().sendFeedback(() -> Text.translatable(
+                "command.florafare.synergy_reveal.success", added, what, player.getName().getString()), true);
+        return added;
+    }
+
+    /**
+     * Forgets what the player learned about one synergy's stages and aftermaths, or about
+     * every synergy's: back to "???" until suffered again. The synergy itself stays known.
+     *
+     * @param target the synergy id, or null for all of them
+     */
+    private static int executeStageForget(CommandContext<ServerCommandSource> context, String target)
+            throws CommandSyntaxException {
+        ServerPlayerEntity player = EntityArgumentType.getPlayer(context, "player");
+        int removed = componentOf(player).forgetStages(target);
+        String what = target == null ? "*" : target;
+        context.getSource().sendFeedback(() -> Text.translatable(
+                "command.florafare.synergy_forget.success", removed, what, player.getName().getString()), true);
         return removed;
     }
 

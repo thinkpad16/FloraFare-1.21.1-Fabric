@@ -35,6 +35,7 @@ import net.tend1tnuy.florafare.network.FoodSynergySyncPayload;
 import net.tend1tnuy.florafare.network.FoodUnlockedPayload;
 import net.tend1tnuy.florafare.network.OpenFoodJournalPayload;
 import net.tend1tnuy.florafare.network.RequestStateSyncPayload;
+import net.tend1tnuy.florafare.network.StageDiscoveredPayload;
 import net.tend1tnuy.florafare.network.SynergyUnlockedPayload;
 import org.lwjgl.glfw.GLFW;
 
@@ -354,6 +355,17 @@ public class FlorafareClient implements ClientModInitializer {
                         // showed it properly.
                         Text synergyName = BuffDescription.synergyName(payload.synergyId());
                         context.client().getToastManager().add(FoodDiscoveryToast.forSynergy(synergyName));
+                    }
+                }));
+
+        // A stage reached, or a stage's aftermath suffered: the overdrive drawbacks the HUD,
+        // the tooltips and the journal stop hiding. No toast; see StageDiscoveredPayload.
+        ClientPlayNetworking.registerGlobalReceiver(StageDiscoveredPayload.ID, (payload, context) ->
+                context.client().execute(() -> {
+                    ClientPlayerEntity player = context.player();
+                    if (player != null) {
+                        ((IFoodComponentProvider) player).florafare$getFoodComponent()
+                                .getDiscoveredStages().add(payload.key());
                     }
                 }));
 

@@ -87,6 +87,10 @@ column (below it when the overlay is anchored to a top corner, above it at a bot
 up to four: a red-tinted frame with a small red notch in the corner, a red bar and the
 time left, so the cost of a buff never reads as a buff. They take no slot.
 
+A buff feeding a running [overdrive](#overdrive) shows the stage it has reached as a small gold
+Roman numeral on the bottom-right of its icon, where a stack count would go; the aftermath
+row an overdrive leaves shows its stage the same way, in red.
+
 Hovering a buff slot while a screen is open (inventory, chat, the journal itself, and so on) shows a tooltip with the full breakdown — remaining time, health bonus, attributes, and every status effect it grants — plus a note if it's contributing to an active synergy. This only works while the cursor is actually unlocked, since during normal play the mouse just steers the camera and has no on-screen position to hover with.
 
 ---
@@ -478,19 +482,199 @@ synergy ends, the aftermath is simply refreshed to a fresh five minutes.
 |---|---|---|---|
 | `id` | string | required | Unique synergy name (shown in logs and the journal). |
 | `requirements` | array of strings | required | Item ids and/or `#` tags. The synergy activates while the player's **active buffs** cover *every* requirement at once. A tag requirement is satisfied by any buff whose **eaten item** is in that tag — even if that item got its buff from its own item entry. |
-| `duration` | int | `2400` | Maximum duration in ticks. The synergy runs for the shortest remaining duration among the buffs that satisfy it, capped at this value — so it can never outlast its ingredients, and never exceed this ceiling either. A capped synergy runs its cap **once**: eating some other food does not reset it, and once it runs out it stays off until one of its requirement foods is eaten again (gained or refreshed), which restarts it. `0` or less means "no ceiling", i.e. mirror the ingredients exactly. |
+| `duration` | int | `2400` | Maximum duration in ticks. The synergy runs for the shortest remaining duration among the buffs that satisfy it, capped at this value — so it can never outlast its ingredients, and never exceed this ceiling either. A capped synergy runs its cap **once**: eating some other food does not reset it, and once it runs out it stays off until one of its requirement foods is eaten again (gained or refreshed), which restarts it. **`0`** (or less) means **no ceiling**: the synergy lasts exactly as long as its shortest ingredient, and re-eating that ingredient keeps it going for as long as you keep doing so. Leaving the key out means `2400` — two minutes — so write `0` if you want "as long as the food". With `"timer": "own"` it is instead exactly how long the synergy runs. |
+| `timer` | string | `"members"` | What the countdown follows — see [Own timer](#own-timer). `"members"` is everything above. |
 | `health_bonus` | double | `0.0` | Extra max health while the synergy is active (negative allowed). |
-| `effects` | array | `[]` | Same format as food buffs; effect durations are stretched to the synergy's duration. |
+| `effects` | array | `[]` | Same format as food buffs. Each effect is granted for exactly as long as the synergy has left, whatever `duration` the line gives, so tooltips and the journal list them without one. |
 | `attributes` | array | `[]` | Same format as food buffs. |
-| `aftermath` | object | none | What the synergy leaves behind once it ends — same format and rules as a [food buff's](#aftermath). |
+| `aftermath` | object | none | What the synergy leaves behind once it ends — same format and rules as a [food buff's](#aftermath). Hidden as "???" in the journal, EMI and tooltips until it has started on the player once. |
+| `lockout` | bool | `false` (`true` with a group) | While an aftermath this synergy left is running, it **cannot start** again. See [Lockout](#lockout). |
+| `lockout_group` | identifier | none | Synergies sharing a group lock each other out. Setting one turns `lockout` on. |
+| `overdrive` | object | none | Makes it an [overdrive](#overdrive): stages II, III, … reached by keeping it going. |
 
 Notes:
 
 - With **3 buff slots**, keep requirements to 3 or fewer or the synergy can never activate.
 - Synergies are **hidden** in the journal until first activated — a toast names the synergy and announces the discovery. Discoveries are saved per player.
 - If a required buff expires or is removed, the synergy is removed too — and its aftermath, if
-  it has one, starts.
+  it has one, starts. (Not for an [own-timer](#own-timer) synergy, which only its clock ends.)
 - Synergies can be disabled globally in the config.
+
+### Own timer
+
+`"timer": "own"` gives a synergy a clock of its own: once its requirements come together it
+runs for exactly `duration` ticks (which must then be above `0`), and **keeps running if one
+of its ingredients' buffs ends** in the meantime. Eating any of its ingredients again while it
+runs resets it to the full `duration`; nothing else touches it. When the clock runs out it
+ends (aftermath and all) and starts again only once every requirement is met again *and* one
+of them is freshly eaten. An own timer cannot be combined with an `overdrive`, whose stages
+depend on the ingredients' time — `/florafare validate` reports that as an error, and an own
+timer without a positive `duration` as another; both fall back to `"members"`.
+
+### Lockout
+
+`"lockout": true` makes a synergy refuse to start while an aftermath it left is still
+running — the bill has to be paid before the meal is served again. `"lockout_group":
+"<namespace:path>"` widens that to a group: while an aftermath from **any** synergy of the
+group is running, **no** synergy of the group can start. Naming a group turns `lockout` on;
+put every synergy of a pack in one group (`"lockout_group": "falleneden:all"`) and a player
+can only ever be paying off one of them at a time. Both keys sit at the synergy's top level
+and work on any synergy, overdrive or not.
+
+A locked-out synergy simply does not start — no message, no stage I. One that is already
+running is never ended by a lockout. Only an aftermath that is *tracked* counts (one with a
+`duration` and a `health_bonus` or `attributes`); one that only grants effects leaves nothing
+to wait out. `/florafare validate` reports an invalid group id, or a group with
+`"lockout": false`, under `invalid_lockout`.
+
+### Overdrive
+
+An **overdrive** is a synergy that climbs, one stage at a time, for as long as it is kept
+going — at a price that rises with each stage — and that refuses to be pushed past its last.
+
+```json
+{
+  "id": "falleneden:inferno_feast",
+  "requirements": ["mypack:fried_chicken", "mypack:red_rum", "mypack:roasted_red_pepper_slice"],
+  "duration": 0,
+  "lockout_group": "falleneden:all",
+  "health_bonus": 2,
+  "attributes": [
+    { "attribute": "minecraft:generic.attack_damage", "amount": 0.1, "operation": "add_multiplied_total" }
+  ],
+  "effects": [
+    { "id": "minecraft:fire_resistance" }
+  ],
+  "aftermath": {
+    "duration": 1200,
+    "attributes": [
+      { "attribute": "minecraft:generic.movement_speed", "amount": -0.1, "operation": "add_multiplied_total" }
+    ]
+  },
+  "overdrive": {
+    "stages": [
+      {
+        "health_bonus": 4,
+        "attributes": [
+          { "attribute": "minecraft:generic.attack_damage", "amount": 0.25, "operation": "add_multiplied_total" },
+          { "attribute": "minecraft:generic.armor", "amount": -2, "operation": "add_value" }
+        ],
+        "effects": [
+          { "id": "minecraft:fire_resistance" },
+          { "id": "minecraft:strength" }
+        ],
+        "aftermath": {
+          "duration": 2400,
+          "health_bonus": -4,
+          "effects": [ { "id": "minecraft:weakness", "duration": 600 } ]
+        }
+      },
+      {
+        "health_bonus": 2,
+        "attributes": [
+          { "attribute": "minecraft:generic.attack_damage", "amount": 0.45, "operation": "add_multiplied_total" },
+          { "attribute": "minecraft:generic.armor", "amount": -4, "operation": "add_value" }
+        ],
+        "effects": [
+          { "id": "minecraft:fire_resistance" },
+          { "id": "minecraft:strength", "amplifier": 1 },
+          { "id": "minecraft:hunger" }
+        ],
+        "aftermath": {
+          "duration": 3600,
+          "health_bonus": -6,
+          "attributes": [
+            { "attribute": "minecraft:generic.movement_speed", "amount": -0.2, "operation": "add_multiplied_total" }
+          ],
+          "effects": [
+            { "id": "minecraft:weakness", "duration": 1200 },
+            { "id": "minecraft:nausea", "duration": 200 }
+          ]
+        }
+      },
+      {
+        "attributes": [
+          { "attribute": "minecraft:generic.attack_damage", "amount": 0.75, "operation": "add_multiplied_total" },
+          { "attribute": "minecraft:generic.max_health", "amount": -0.25, "operation": "add_multiplied_total" }
+        ],
+        "effects": [
+          { "id": "minecraft:strength", "amplifier": 2 },
+          { "id": "minecraft:wither" }
+        ],
+        "aftermath": {
+          "duration": 6000,
+          "health_bonus": -8,
+          "attributes": [
+            { "attribute": "minecraft:generic.max_health", "amount": -0.25, "operation": "add_multiplied_total" }
+          ],
+          "effects": [
+            { "id": "minecraft:weakness", "duration": 2400, "amplifier": 1 },
+            { "id": "minecraft:slowness", "duration": 1200 }
+          ]
+        }
+      }
+    ]
+  }
+}
+```
+
+- The synergy's own top-level `health_bonus`, `attributes`, `effects` and `aftermath` are
+  **stage I**. `overdrive.stages` lists stages **II, III, IV, …** in order. Each stage is a
+  full replacement — the example lists Fire Resistance again in stage II because stage II
+  replaces stage I rather than adding to it — and has its own `aftermath`. A stage takes the
+  same keys, with the same validation, as the synergy's top level.
+- It runs on the **members' timer**: the shortest ingredient is the fuse. With a 35-minute
+  Fried Chicken, a 35-minute Red Rum and a 3-minute Roasted Red Pepper Slice, the synergy
+  lasts as long as the pepper (`"duration": 0` — no two-minute ceiling).
+- **Stages come with time.** When it starts, the synergy notes its **phase length** — the full
+  duration of its shortest ingredient (the pepper's 3 minutes) — and its **first boundary**,
+  when that ingredient would run out (the pepper's time left at that moment). Every later
+  boundary is one phase length after the last: 3, 6 and 9 minutes for a fresh pepper. If the
+  synergy is **still running at a boundary**, it moves up one stage: the current stage's
+  modifiers and effects come off, the next stage's go on, and the player sees "Inferno Feast
+  surges to stage II of IV!" on the action bar. Its remaining time is untouched.
+- **Eating keeps it alive; it never moves the stage.** Re-eating the pepper refreshes the
+  pepper's buff, which keeps the synergy going past the next boundary — exactly as with any
+  synergy. However many peppers are eaten inside one phase, it climbs one stage per boundary,
+  never more. Without a fresh pepper the synergy ends when the pepper does — on the very
+  boundary it would have climbed at. The clock is a countdown saved with the synergy, so a
+  relog resumes it where it was. Hovering a slot that feeds it shows "Next stage in 1:23".
+- **Refusal.** At the **last** stage, a bite that would prolong it — a fresh pepper, which
+  would lengthen its time — **overloads** it instead: it ends on the spot, the last stage's
+  aftermath starts, and the player is told it refuses to go further. (Eating more chicken
+  does not prolong it, since the pepper is still the shortest, and is harmless.) Should it
+  still be running at the boundary after its last stage — a pepper eaten just before the last
+  stage began — it overloads there the same way. Like a synergy that ran its time out, it
+  then waits for a fresh bite before it can start again (and with a lockout, for its
+  aftermath to end too).
+- **Any other ending** — the fuse runs out, an ingredient is lost or drunk away — starts the
+  aftermath **of the stage it had reached**.
+- An overdrive with no `stages` is legal: stage I is then the last, so the first bite that
+  prolongs it overloads it (`/florafare validate` warns, in case that was not meant).
+- An overdrive needs the members' timer; with `"duration"` above `0` it is still capped there,
+  which can end it before a boundary.
+- `/florafare validate` lists overdrive problems under `invalid_overdrive` — the block or a
+  stage that is not an object (a skipped stage moves the later ones up a numeral, and the
+  report says so), lockout keys written inside it instead of at the top level, no stages —
+  and lines inside a stage (unknown effects, attributes, operations, keys) under the same
+  sections as everywhere else, naming the stage.
+
+**What the player sees.** A buff slot feeding a running overdrive carries the stage as a small
+Roman numeral on the corner of its icon (I, II, III, …), and so does an aftermath row left by
+one. Hovering the slot shows "Inferno Feast — Overdrive: stage II of IV", "Next stage in 1:23"
+(or, at the top, that prolonging it now overloads it), what the current stage is costing (its
+drawbacks) and what it will leave behind; an aftermath row's tooltip is
+titled "Aftermath of Inferno Feast (III)".
+
+**Drawbacks are learned the hard way.** A stage the player has not reached shows in the
+journal and EMI as "Stage III: ??? — push further to find out", and a stage's aftermath as
+"Aftermath: ??? — you haven't suffered it yet" until it has actually started on them. Reaching
+a stage reveals its drawbacks; suffering an aftermath reveals that aftermath. The benefits of
+stage I, and of the stage a player is in, are always shown. The same "???" covers an
+ordinary synergy's aftermath until it has started once. What a player has learned is saved
+per player (and kept through death) as `"<synergyId>#<stage>"` and
+`"<synergyId>#<stage>/aftermath"` keys — see `FlorafareAPI.getDiscoveredStages` — and
+`/florafare journal synergy reveal|forget` sets or clears it.
 
 ---
 
@@ -606,7 +790,7 @@ datapacks may use (`addition`, `multiply_base`, `multiply_total`), stored under 
 |---|---|
 | `/florafare buff give <player> <targetId>` | Applies the configured buff for `targetId` (item id, `#tag`, `namespace:`, `template:` or `potion:` — whatever the datapack defined) to a player and unlocks its journal entry. Tab-completion lists every configured target, vanilla-style: typing `bacon` finds `farmersdelight:bacon`. Quotes are optional. |
 | `/florafare buff remove <player> <targetId>` | Removes one active buff, addressed by its config target or by the item that was eaten — tab-completion offers exactly what that player is currently carrying. Forgotten Mead only ever drops the newest buff; this is how you clear one out of the middle of a full set. Like the mead, it ends the buff the ordinary way, so its [aftermath](#aftermath) starts. |
-| `/florafare buffs <player>` | Lists what a player currently has running: every active buff, synergy and aftermath, its config target, the item it came from, time remaining out of its full length, and the attribute modifiers actually applied. The modifiers are read off the live buff rather than off its config, so a buff that has drifted out of step with the datapack — the case `/florafare repair` exists for — shows what is really on the player. |
+| `/florafare buffs <player>` | Lists what a player currently has running: every active buff, synergy and aftermath (an overdrive and its aftermath with their stage, `[II/IV]`), its config target, the item it came from, time remaining out of its full length, and the attribute modifiers actually applied. The modifiers are read off the live buff rather than off its config, so a buff that has drifted out of step with the datapack — the case `/florafare repair` exists for — shows what is really on the player. |
 | `/florafare clear <player>` | Removes all active buffs, synergies and aftermaths from a player. Nothing cleared this way starts an aftermath — it is a clean slate. |
 | `/florafare setbuff <duration> <nutrition> <saturation> <health> [<attr_id> <attr_amount> <attr_op>]` | Attaches a **custom buff to the food stack in your main hand** (via NBT). Anyone who eats that exact stack gets this buff instead of the normal config. Refused for a stack that is not edible or is on the ignore list, since such a buff would never fire. Persists across restarts, in the world save (`<world>/florafare_runtime.dat`), written once, the moment the command runs, so a server that is killed rather than stopped does not come back with the stacks intact and their buffs gone; a pre-1.4 `config/florafare_runtime.dat` is migrated into the first world that loads without one. Sent to every client, so tooltips, the journal and hunger prediction describe the stamped buff on a dedicated server too. Entries no stack has been seen carrying for `runtimeBuffRetentionDays` are pruned when the world loads (see below). |
 | `/florafare setbuff prune <days>` | Prunes now: drops every stack buff not seen for more than `<days>` days, saves, and re-syncs clients. "Seen" means the server resolved a stack carrying it (eaten, used, hovered by a player whose client asked) or found one in a player's inventory or ender chest when they joined; a stack left untouched in a chest is not seen. |
@@ -622,8 +806,9 @@ datapacks may use (`addition`, `multiply_base`, `multiply_total`), stored under 
 | `/florafare journal lock <player> <foodId>` | Forgets one discovered food — its journal entry goes back to locked. Tab-completion lists what *that player* knows. Ids left behind by a since-removed mod can be cleared this way too. |
 | `/florafare journal lock <player> all` | Forgets every discovered food, resetting the journal to a fresh player's state. Synergies are kept — see below. |
 | `/florafare journal synergy unlock\|lock <player> <synergyId>\|all` | The same four operations for discovered synergies. Unlocking one records it without having to actually trigger it; locking it hides it from the journal again. Neither touches the buffs currently running — use `/florafare clear` for those. |
+| `/florafare journal synergy reveal\|forget <player> <synergyId>\|all` | What a synergy *costs*, which the journal hides until suffered: `reveal` marks every [overdrive](#overdrive) stage and every aftermath of the synergy (or of all of them) as suffered, so they show in full; `forget` puts them back to "???". Apart from `unlock`/`lock` on purpose — knowing a synergy exists and knowing its price are separate lessons. |
 | `/florafare repair <player>` | Strips any Florafare-namespaced attribute modifier from the player, scanning every registered attribute directly rather than relying on the mod's own tracked buff state. Since 1.3 the same scan runs automatically on every player load, so stuck stats should no longer happen at all — this stays as a manual escape hatch for a player who got stuck without relogging. |
-| `/florafare validate` | Everything wrong with the loaded food data, grouped into sections with a count each: one per datapack diagnostics category (malformed files and entries, wrong field types, unknown keys, missing or non-food targets, invalid effects/attributes/operations, duplicate entries and synergies, missing or empty tags, `config_generation.json` problems), plus `synergy_reachability` (synergies needing more buffs than `maxBuffSlots`, requirements no edible managed item satisfies), `ambiguous_tie` (same-priority ties, decided by load order), `priority_loss` (definitions that lost on priority, with the winner in force now) and `sync` (entries too large to reach clients). The first three findings of each section are shown, then "…and N more"; every finding is click-to-copy and every section name opens it. |
+| `/florafare validate` | Everything wrong with the loaded food data, grouped into sections with a count each: one per datapack diagnostics category (malformed files and entries, wrong field types, unknown keys, missing or non-food targets, invalid effects/attributes/operations, duplicate entries and synergies, missing or empty tags, `config_generation.json` problems, invalid aftermaths, synergy `timer`s, `overdrive`s and lockouts), plus `synergy_reachability` (synergies needing more buffs than `maxBuffSlots`, requirements no edible managed item satisfies), `ambiguous_tie` (same-priority ties, decided by load order), `priority_loss` (definitions that lost on priority, with the winner in force now) and `sync` (entries too large to reach clients). The first three findings of each section are shown, then "…and N more"; every finding is click-to-copy and every section name opens it. |
 | `/florafare validate <section> [page]` | One section in full, ten findings a page, with a clickable next page. Tab-completion lists the section names. |
 | `/florafare validate file` | Writes the whole report to `<game dir>/logs/florafare/reports/validate-<timestamp>.txt` (off the server thread) and answers with the path, click-to-copy. Write level. |
 | `/florafare explain [<item>]` | Why does *this* item have *that* buff? Walks the same resolution chain the mod uses — exclusions, per-stack command buffs, item entry, tag entries, `namespace:`, `template:default`, auto-generation — and prints which rung decided it, every entry that could have applied with its priority, why each of the others lost, and the values the winner produces. With no argument it reads the stack in your main hand, components and all. This is the command for "my datapack entry did nothing". |
@@ -703,11 +888,19 @@ Feast blocks are found by shape: a block item whose block has an int property na
 `servings`, linked to its serving item when the block answers `getServingItem` /
 `getServingStack`. `meta.feastDetection` says how many were found and linked.
 
+The root also has **`synergies`**: every loaded synergy, sorted by id and whatever the mod
+filter — `id`, `file`, `requirements`, `duration` (`0`: no ceiling), `timer` (`members` /
+`own`), `healthBonus`, `effects`, `attributes`, `aftermath` (stage I's), `lockout`,
+`lockoutGroup`, and for an overdrive `overdrive` (`stageCount`, `stages`: `stage`,
+`healthBonus`, `effects`, `attributes`, `aftermath` for stages II and up).
+
 **Text** (`.txt`) — the same per food, for reading, plus a crafting **tree** following primary
 recipes only: storage edges are never followed, ingredients are expanded up to `maxDepth`
 levels and food alone for up to four more, so a dish chain is shown whole while ingots and
 planks become leaves; tags and multi-choice slots are leaves; an ingredient that is its own
-ancestor is marked `(cycle, not followed)` and one already expanded `(expanded above)`.
+ancestor is marked `(cycle, not followed)` and one already expanded `(expanded above)`. A
+`=== SYNERGIES ===` section follows the foods: one block per synergy with its requirements,
+timer and ceiling, lockout, stage I, and each overdrive stage with its aftermath.
 
 **CSV** (`.csv`) — one row per food with the key numbers: vanilla values, the FloraFare
 source, target, file, priority, buff duration, effective hunger, health, effects, attributes,
@@ -1155,6 +1348,8 @@ import net.tend1tnuy.florafare.api.FlorafareAPI;
 | `getActiveBuffs(PlayerEntity)` / `getActiveSynergies(PlayerEntity)` | Read-only snapshot of the player's current buffs/synergies. |
 | `getActiveAftermaths(PlayerEntity)` | Read-only snapshot of the [aftermaths](#aftermath) running on the player. Each entry's `getTarget()` is its source's target (or synergy id, with `isSynergy()` true). |
 | `getDiscoveredFoods(PlayerEntity)` / `getDiscoveredSynergies(PlayerEntity)` | Read-only snapshot of the player's journal progress. |
+| `getSynergyStage(PlayerEntity, String synergyId)` | The [overdrive](#overdrive) stage a running synergy has reached, 1-based (`1` for any running synergy without an overdrive); `0` when it is not running. Works on both sides. |
+| `getDiscoveredStages(PlayerEntity)` | Snapshot of what the player has learned about synergy stages: `"<synergyId>#<stage>"` per stage reached, `"<synergyId>#<stage>/aftermath"` per synergy aftermath suffered. |
 | `removeBuff(PlayerEntity, String targetOrItemId)` | Removes one active buff, addressed by its config target or by the item that was eaten. Returns whether such a buff was active. Its aftermath starts. |
 | `clearBuffs(PlayerEntity)` | Removes all active buffs, synergies and aftermaths, same as `/florafare clear`; starts no aftermath. |
 | `clearAftermaths(PlayerEntity)` | Ends every running aftermath and leaves the buffs alone. Effects they granted stay. Returns how many ended. |
@@ -1168,7 +1363,10 @@ import net.tend1tnuy.florafare.api.FlorafareAPI;
 `FoodBuffData` also has a `FoodBuffData.builder(target)...build()` fluent builder, so you
 don't need to fill in the full 10-argument record constructor by hand; `.aftermath(new
 FoodAftermath(...))` sets an aftermath. The 9-argument `FoodBuffData` and 6-argument
-`FoodSynergyData` constructors from before aftermaths existed still work and mean "none".
+`FoodSynergyData` constructors from before aftermaths existed still work and mean "none";
+so does the 7-argument one from before `timer`, `overdrive` and the lockout (members' timer,
+no stages, no lockout). The full constructor takes a `FoodSynergyData.Timer`, a nullable
+`SynergyOverdrive` (its stages II and up), `lockout` and a nullable `lockoutGroup`.
 An aftermath is looked up by the buff's target when it ends, so a buff applied from a
 `FoodBuffData` that was never registered leaves none.
 
@@ -1192,6 +1390,8 @@ Hunger-only entries (`duration <= 0`) fire none of them.
 | `SYNERGY_ENDED` | An active synergy ends (expiry, a requirement no longer being met, or death). |
 | `AFTERMATH_STARTED` | An ended buff's or synergy's [aftermath](#aftermath) starts, or is refreshed — `(player, source, aftermath)`. Fires after the source's own `BUFF_REMOVED`/`SYNERGY_ENDED`. Not for an effects-only aftermath, which tracks nothing. |
 | `AFTERMATH_ENDED` | An aftermath runs out or is cleared (`/florafare clear`, `clearBuffs`, `clearAftermaths`, death). |
+| `SYNERGY_STAGE_CHANGED` | An [overdrive](#overdrive) reaches a stage boundary still running and moves up — `(player, synergyId, oldStage, newStage)`, 1-based, after the new stage is applied. |
+| `SYNERGY_OVERLOADED` | An overdrive is prolonged at its last stage (or outlives it) and refuses — `(player, synergyId, stage)`. Its `SYNERGY_ENDED` and the last stage's `AFTERMATH_STARTED` follow. |
 | `FOOD_DISCOVERED` | A player eats a food item for the first time. |
 
 ```java

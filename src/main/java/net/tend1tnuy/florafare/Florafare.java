@@ -162,6 +162,7 @@ public class Florafare implements ModInitializer {
         PayloadTypeRegistry.playS2C().register(BuffStateSyncPayload.ID,   BuffStateSyncPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(OpenFoodJournalPayload.ID, OpenFoodJournalPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(SynergyUnlockedPayload.ID, SynergyUnlockedPayload.CODEC);
+        PayloadTypeRegistry.playS2C().register(StageDiscoveredPayload.ID, StageDiscoveredPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(FoodConfigSyncPayload.ID,  FoodConfigSyncPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(FoodConfigEntrySyncPayload.ID, FoodConfigEntrySyncPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(FoodSynergySyncPayload.ID, FoodSynergySyncPayload.CODEC);

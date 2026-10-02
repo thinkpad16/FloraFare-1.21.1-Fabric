@@ -22,7 +22,9 @@ import net.tend1tnuy.florafare.food.FoodAftermath;
 import net.tend1tnuy.florafare.food.FoodBuffData;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
 import net.tend1tnuy.florafare.food.FoodSynergyData;
+import net.tend1tnuy.florafare.food.SynergyOverdrive;
 import net.tend1tnuy.florafare.util.DurationFormat;
+import net.tend1tnuy.florafare.util.RomanNumerals;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
@@ -86,6 +88,28 @@ public final class BuffDescription {
 
     public static boolean isSynergyDiscovered(FoodSynergyData synergy) {
         return discoveredSynergies().contains(synergy.id());
+    }
+
+    private static Set<String> discoveredStages() {
+        PlayerEntity player = MinecraftClient.getInstance().player;
+        if (player == null) return Set.of();
+        return ((IFoodComponentProvider) player).florafare$getFoodComponent().getDiscoveredStages();
+    }
+
+    /**
+     * Whether the player has reached stage {@code stage} of a synergy, and so may read that
+     * stage's drawbacks. See {@code FoodSynergyData#stageKey}.
+     */
+    public static boolean isStageDiscovered(String synergyId, int stage) {
+        return discoveredStages().contains(FoodSynergyData.stageKey(synergyId, stage));
+    }
+
+    /**
+     * Whether stage {@code stage}'s aftermath has started on the player at least once —
+     * stage 1 for an ordinary synergy. Until it has, every surface shows "???" in its place.
+     */
+    public static boolean isAftermathDiscovered(String synergyId, int stage) {
+        return discoveredStages().contains(FoodSynergyData.aftermathKey(synergyId, stage));
     }
 
     // -------------------------------------------------------------------------
@@ -280,15 +304,209 @@ public final class BuffDescription {
         return lines;
     }
 
-    /** Everything a synergy grants, for the journal and the EMI panel. */
+    /**
+     * Everything a synergy grants, for the EMI panel — and what it costs, as far as the
+     * player has found out.
+     *
+     * <p>An ordinary synergy reads as it always has, except that its aftermath stays "???"
+     * until it has started on the player once. An overdrive lists stage I (the synergy's own
+     * fields, its drawbacks hidden until reached), then one block per further stage: in
+     * full once the player has reached it, a single "???" line until then. Each stage's
+     * aftermath is gated on its own, by having suffered it.
+     */
     public static List<Text> synergyLines(FoodSynergyData synergy) {
+        return synergyLines(synergy, false);
+    }
+
+    /**
+     * The same with every stage and aftermath shown as if suffered — what the block grows
+     * to. For the EMI panel to measure itself against, for the same reason
+     * {@link #foodBuffLines} exists: a panel sized for the "???" lines would clip the
+     * stages the moment the player reached them.
+     */
+    public static List<Text> revealedSynergyLines(FoodSynergyData synergy) {
+        return synergyLines(synergy, true);
+    }
+
+    private static List<Text> synergyLines(FoodSynergyData synergy, boolean revealAll) {
         List<Text> lines = new ArrayList<>();
-        lines.add(indent(Text.translatable("tooltip.florafare.buff.duration",
-                        Text.translatable("gui.florafare.journal.duration_dynamic"))
+        lines.add(indent(Text.translatable("tooltip.florafare.buff.duration", synergyDurationText(synergy))
                 .formatted(Formatting.GRAY)));
-        lines.addAll(effectBlock(synergy.healthBonus(), synergy.attributes(), synergy.effects()));
-        lines.addAll(aftermathBlock(synergy.aftermath()));
+
+        lines.addAll(lockoutLines(synergy));
+
+        if (!synergy.hasOverdrive()) {
+            lines.addAll(synergyEffectBlock(synergy.healthBonus(), synergy.attributes(), synergy.effects()));
+            lines.addAll(synergyAftermathBlock(synergy, 1, revealAll));
+            return lines;
+        }
+
+        lines.add(Text.translatable("tooltip.florafare.overdrive.header",
+                RomanNumerals.of(synergy.stageCount())).formatted(Formatting.LIGHT_PURPLE));
+        lines.add(overdriveRuleLine(synergy));
+        for (int stage = 1; stage <= synergy.stageCount(); stage++) {
+            lines.addAll(stageLines(synergy, stage, stage == 1, revealAll));
+        }
         return lines;
+    }
+
+    /**
+     * What a synergy's duration reads as: "dynamic" for one that follows its ingredients,
+     * the duration itself for one on its own timer.
+     */
+    public static Text synergyDurationText(FoodSynergyData synergy) {
+        return synergy.ownTimer()
+                ? Text.translatable("tooltip.florafare.buff.duration_own", formatDuration(synergy.duration()))
+                : Text.translatable("gui.florafare.journal.duration_dynamic");
+    }
+
+    /** An overdrive's standing rule: it climbs while kept going, and overloads past the last stage. */
+    public static Text overdriveRuleLine(FoodSynergyData synergy) {
+        return indent(Text.translatable("tooltip.florafare.overdrive.rule",
+                        RomanNumerals.of(synergy.stageCount()))
+                .formatted(Formatting.DARK_GRAY, Formatting.ITALIC));
+    }
+
+    /**
+     * "Won't start again while its aftermath lingers", or the same for its lockout group —
+     * any synergy can have one, overdrive or not. Empty without a lockout.
+     */
+    public static List<Text> lockoutLines(FoodSynergyData synergy) {
+        String lockout = synergy.lockoutKey();
+        if (lockout == null) return List.of();
+        return List.of(indent((lockout.equals(synergy.id())
+                ? Text.translatable("tooltip.florafare.overdrive.lockout")
+                : Text.translatable("tooltip.florafare.overdrive.lockout_group", lockout))
+                .formatted(Formatting.DARK_GRAY, Formatting.ITALIC)));
+    }
+
+    /**
+     * {@link #effectBlock} for a synergy, whose effects are listed without a duration of
+     * their own. The component grants every synergy effect for exactly as long as the
+     * synergy has left, whatever the datapack wrote, so the number stored on the effect —
+     * the synergy's {@code duration} when the line leaves it out, which is {@code 0} for a
+     * synergy with no ceiling — was never the length anyone got, and "0:00" or a two-minute
+     * cap on a synergy that runs for half an hour only misled. The duration line above the
+     * block already says how long it all lasts.
+     */
+    public static List<Text> synergyEffectBlock(double healthBonus,
+                                                List<FoodBuffData.AttributeData> attributes,
+                                                List<FoodBuffData.EffectData> effects) {
+        return effectBlock(healthBonus, attributes, effects, false);
+    }
+
+    /**
+     * One overdrive stage under a "Stage II:" heading, gated by discovery.
+     *
+     * @param alwaysShowBenefits whether the stage's helpful lines show even before it has
+     *                           been reached — stage I's do (they are the synergy itself),
+     *                           and so do those of the stage a player is in right now
+     */
+    public static List<Text> stageLines(FoodSynergyData synergy, int stage, boolean alwaysShowBenefits) {
+        return stageLines(synergy, stage, alwaysShowBenefits, false);
+    }
+
+    private static List<Text> stageLines(FoodSynergyData synergy, int stage, boolean alwaysShowBenefits,
+                                         boolean revealAll) {
+        List<Text> lines = new ArrayList<>();
+        String numeral = RomanNumerals.of(stage);
+        boolean reached = revealAll || isStageDiscovered(synergy.id(), stage);
+        if (!reached && !alwaysShowBenefits) {
+            lines.add(Text.translatable("tooltip.florafare.overdrive.stage_hidden", numeral)
+                    .formatted(Formatting.DARK_GRAY, Formatting.ITALIC));
+            return lines;
+        }
+        SynergyOverdrive.Stage fields = synergy.stage(stage);
+        lines.add(Text.translatable("tooltip.florafare.overdrive.stage", numeral)
+                .formatted(Formatting.LIGHT_PURPLE));
+        lines.addAll(stageEffectBlock(fields, reached));
+        lines.addAll(synergyAftermathBlock(synergy, stage, revealAll));
+        return lines;
+    }
+
+    /**
+     * A stage's modifiers and effects, with its drawbacks — the lines that work against the
+     * player — left out and replaced by one "???" line until {@code drawbacksVisible}.
+     * Nothing is said about drawbacks when the stage has none.
+     */
+    public static List<Text> stageEffectBlock(SynergyOverdrive.Stage stage, boolean drawbacksVisible) {
+        if (drawbacksVisible) return synergyEffectBlock(stage.healthBonus(), stage.attributes(), stage.effects());
+
+        List<FoodBuffData.AttributeData> attributes = new ArrayList<>();
+        for (FoodBuffData.AttributeData attr : stage.attributes()) {
+            if (!isDrawback(attr)) attributes.add(attr);
+        }
+        List<FoodBuffData.EffectData> effects = new ArrayList<>();
+        for (FoodBuffData.EffectData effect : stage.effects()) {
+            if (!isDrawback(effect)) effects.add(effect);
+        }
+        double health = stage.healthBonus() > 0 ? stage.healthBonus() : 0;
+
+        List<Text> lines = new ArrayList<>(synergyEffectBlock(health, attributes, effects));
+        if (hasDrawbacks(stage)) lines.add(hiddenDrawbacksLine());
+        return lines;
+    }
+
+    /** "Drawbacks: ??? — you haven't suffered them yet." */
+    public static Text hiddenDrawbacksLine() {
+        return indent(Text.translatable("tooltip.florafare.overdrive.drawbacks_hidden")
+                .formatted(Formatting.DARK_GRAY, Formatting.ITALIC));
+    }
+
+    /**
+     * Only the drawbacks of a stage, as bullets — for the HUD tooltip of a slot feeding an
+     * overdrive, where the benefits are already on the player and the question is "what is
+     * this costing me". Empty when the stage has none.
+     */
+    public static List<Text> drawbackLines(SynergyOverdrive.Stage stage) {
+        List<Text> lines = new ArrayList<>();
+        if (stage.healthBonus() < 0) lines.add(healthBullet(stage.healthBonus()));
+        for (FoodBuffData.AttributeData attr : stage.attributes()) {
+            if (isDrawback(attr)) lines.add(attributeBullet(attr));
+        }
+        for (FoodBuffData.EffectData effect : stage.effects()) {
+            if (isDrawback(effect)) lines.add(effectBullet(effect, false));
+        }
+        return lines;
+    }
+
+    /** Whether a stage has anything that works against the player. */
+    public static boolean hasDrawbacks(SynergyOverdrive.Stage stage) {
+        if (stage.healthBonus() < 0) return true;
+        for (FoodBuffData.AttributeData attr : stage.attributes()) if (isDrawback(attr)) return true;
+        for (FoodBuffData.EffectData effect : stage.effects()) if (isDrawback(effect)) return true;
+        return false;
+    }
+
+    /** An attribute line is a drawback when its own colour rule paints it red. */
+    public static boolean isDrawback(FoodBuffData.AttributeData attr) {
+        return attributeFormatting(attr.attributeId(), attr.amount()) == Formatting.RED;
+    }
+
+    /** An effect is a drawback when it is harmful. */
+    public static boolean isDrawback(FoodBuffData.EffectData effect) {
+        return effectCategory(effect.id()) == StatusEffectCategory.HARMFUL;
+    }
+
+    /**
+     * A synergy stage's aftermath, or "Aftermath: ??? — you haven't suffered it yet" until it
+     * has started on the player once. Empty when the stage leaves none.
+     */
+    public static List<Text> synergyAftermathBlock(FoodSynergyData synergy, int stage) {
+        return synergyAftermathBlock(synergy, stage, false);
+    }
+
+    private static List<Text> synergyAftermathBlock(FoodSynergyData synergy, int stage, boolean revealAll) {
+        FoodAftermath aftermath = synergy.aftermathOf(stage);
+        if (aftermath.isEmpty()) return List.of();
+        if (revealAll || isAftermathDiscovered(synergy.id(), stage)) return aftermathBlock(aftermath);
+        return List.of(hiddenAftermathLine());
+    }
+
+    /** "Aftermath: ??? — you haven't suffered it yet." */
+    public static Text hiddenAftermathLine() {
+        return Text.translatable("tooltip.florafare.overdrive.aftermath_hidden")
+                .formatted(Formatting.DARK_RED, Formatting.ITALIC);
     }
 
     /**
@@ -340,6 +558,14 @@ public final class BuffDescription {
     public static List<Text> effectBlock(double healthBonus,
                                          List<FoodBuffData.AttributeData> attributes,
                                          List<FoodBuffData.EffectData> effects) {
+        return effectBlock(healthBonus, attributes, effects, true);
+    }
+
+    /** @param effectDurations whether each effect shows its own duration; see {@link #synergyEffectBlock} */
+    private static List<Text> effectBlock(double healthBonus,
+                                          List<FoodBuffData.AttributeData> attributes,
+                                          List<FoodBuffData.EffectData> effects,
+                                          boolean effectDurations) {
         List<Text> lines = new ArrayList<>();
 
         boolean hasAttributes = attributes != null && !attributes.isEmpty();
@@ -372,18 +598,18 @@ public final class BuffDescription {
                 (effectCategory(effect.id()) == StatusEffectCategory.HARMFUL ? inflicted : granted)
                         .add(effect);
             }
-            appendEffects(lines, "tooltip.florafare.buff.effects", granted);
-            appendEffects(lines, "tooltip.florafare.buff.inflicts", inflicted);
+            appendEffects(lines, "tooltip.florafare.buff.effects", granted, effectDurations);
+            appendEffects(lines, "tooltip.florafare.buff.inflicts", inflicted, effectDurations);
         }
 
         return lines;
     }
 
     private static void appendEffects(List<Text> lines, String headingKey,
-                                      List<FoodBuffData.EffectData> effects) {
+                                      List<FoodBuffData.EffectData> effects, boolean durations) {
         if (effects.isEmpty()) return;
         lines.add(Text.translatable(headingKey).formatted(Formatting.GRAY));
-        for (FoodBuffData.EffectData effect : effects) lines.add(effectBullet(effect));
+        for (FoodBuffData.EffectData effect : effects) lines.add(effectBullet(effect, durations));
     }
 
     /** "• Max Health: +4" — a health bonus, as the max-health modifier it is applied as. */
@@ -405,9 +631,15 @@ public final class BuffDescription {
 
     /** "• Regeneration II: 0:10", coloured by the effect's category. */
     private static Text effectBullet(FoodBuffData.EffectData effect) {
-        return bullet(Text.translatable("tooltip.florafare.buff.entry",
-                        effectLabel(effect), formatDuration(effect.duration()))
-                .formatted(effectFormatting(effectCategory(effect.id()))));
+        return effectBullet(effect, true);
+    }
+
+    /** The same, or "• Regeneration II" without the duration. */
+    private static Text effectBullet(FoodBuffData.EffectData effect, boolean duration) {
+        MutableText text = duration
+                ? Text.translatable("tooltip.florafare.buff.entry", effectLabel(effect), formatDuration(effect.duration()))
+                : effectLabel(effect);
+        return bullet(text.formatted(effectFormatting(effectCategory(effect.id()))));
     }
 
     /** An effect's name with its level numeral, e.g. "Regeneration II". */

@@ -28,6 +28,8 @@ import net.tend1tnuy.florafare.food.FoodBuffData;
 import net.tend1tnuy.florafare.food.FoodBuffManager;
 import net.tend1tnuy.florafare.food.FoodSynergyData;
 import net.tend1tnuy.florafare.food.FoodSynergyManager;
+import net.tend1tnuy.florafare.food.SynergyOverdrive;
+import net.tend1tnuy.florafare.util.RomanNumerals;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -695,20 +697,110 @@ public class FoodJournalScreen extends Screen {
     private void buildDetailPages(FoodSynergyData data) {
         List<RenderLine> allLines = new ArrayList<>();
 
+        // "Dynamic" for a synergy that follows its ingredients, its own duration for one
+        // on its own timer — the same wording the EMI panel uses.
         allLines.add(new RenderLine(
                 Text.translatable("gui.florafare.journal.duration",
-                                Text.translatable("gui.florafare.journal.duration_dynamic").getString())
+                                BuffDescription.synergyDurationText(data).getString())
                         .getString(),
                 COLOR_INK_MID, 12, 0).withIcon(new ItemStack(Items.CLOCK)));
 
-        buildCommonDetailLines(allLines, data.healthBonus(), data.attributes(), data.effects());
-        appendAftermathLines(allLines, data.aftermath());
+        for (Text lockout : BuffDescription.lockoutLines(data)) {
+            allLines.add(new RenderLine(lockout.getString().trim(), COLOR_INK_FAINT, 11, 0));
+        }
+
+        if (!data.hasOverdrive()) {
+            buildCommonDetailLines(allLines, data.healthBonus(), data.attributes(), data.effects(), false);
+            appendSynergyAftermathLines(allLines, data, 1);
+            paginateLines(allLines, true);
+            return;
+        }
+
+        // An overdrive: its rules, then one block per stage, each gated by discovery the
+        // way BuffDescription#synergyLines gates the EMI panel's — a stage not yet reached
+        // is one "???" line, a stage reached but whose drawbacks were since forgotten shows
+        // its benefits only, and every stage's aftermath waits until it has been suffered.
+        allLines.add(new RenderLine("", COLOR_INK_DARK, 6, 0));
+        allLines.add(new RenderLine(
+                Text.translatable("tooltip.florafare.overdrive.header",
+                        RomanNumerals.of(data.stageCount())).getString(),
+                COLOR_GOLD, 14, 0, true));
+        allLines.add(new RenderLine(BuffDescription.overdriveRuleLine(data).getString().trim(),
+                COLOR_INK_FAINT, 11, 4));
+
+        for (int stage = 1; stage <= data.stageCount(); stage++) {
+            String numeral = RomanNumerals.of(stage);
+            boolean reached = BuffDescription.isStageDiscovered(data.id(), stage);
+            allLines.add(new RenderLine("", COLOR_INK_DARK, 6, 0));
+            // Stage I is the synergy itself, which the player has found to be reading this
+            // page at all; its benefits always show. The others stay dark until reached.
+            if (!reached && stage > 1) {
+                allLines.add(new RenderLine(
+                        Text.translatable("tooltip.florafare.overdrive.stage_hidden", numeral).getString(),
+                        COLOR_INK_FAINT, 12, 0));
+                continue;
+            }
+            allLines.add(new RenderLine(
+                    Text.translatable("tooltip.florafare.overdrive.stage", numeral).getString(),
+                    COLOR_GOLD, 14, 0, true));
+
+            SynergyOverdrive.Stage fields = data.stage(stage);
+            if (reached) {
+                buildCommonDetailLines(allLines, fields.healthBonus(), fields.attributes(), fields.effects(), false);
+            } else {
+                List<FoodBuffData.AttributeData> attributes = new ArrayList<>();
+                for (FoodBuffData.AttributeData attr : fields.attributes()) {
+                    if (!BuffDescription.isDrawback(attr)) attributes.add(attr);
+                }
+                List<FoodBuffData.EffectData> effects = new ArrayList<>();
+                for (FoodBuffData.EffectData effect : fields.effects()) {
+                    if (!BuffDescription.isDrawback(effect)) effects.add(effect);
+                }
+                buildCommonDetailLines(allLines, Math.max(0, fields.healthBonus()), attributes, effects, false);
+                if (BuffDescription.hasDrawbacks(fields)) {
+                    allLines.add(new RenderLine(
+                            Text.translatable("tooltip.florafare.overdrive.drawbacks_hidden").getString(),
+                            COLOR_INK_FAINT, 11, 4));
+                }
+            }
+            appendSynergyAftermathLines(allLines, data, stage);
+        }
         paginateLines(allLines, true);
+    }
+
+    /**
+     * One synergy stage's aftermath (stage 1 for an ordinary synergy): in full once it has
+     * started on the player, a single "???" line in the aftermath's red until then.
+     */
+    private void appendSynergyAftermathLines(List<RenderLine> allLines, FoodSynergyData data, int stage) {
+        FoodAftermath aftermath = data.aftermathOf(stage);
+        if (aftermath.isEmpty()) return;
+        if (BuffDescription.isAftermathDiscovered(data.id(), stage)) {
+            appendAftermathLines(allLines, aftermath);
+            return;
+        }
+        allLines.add(new RenderLine("", COLOR_INK_DARK, 6, 0));
+        allLines.add(new RenderLine(
+                Text.translatable("tooltip.florafare.overdrive.aftermath_hidden").getString(),
+                COLOR_RED_DARK, 12, 0));
     }
 
     private void buildCommonDetailLines(List<RenderLine> allLines, double healthBonus,
                                         List<FoodBuffData.AttributeData> attributes,
                                         List<FoodBuffData.EffectData> effects) {
+        buildCommonDetailLines(allLines, healthBonus, attributes, effects, true);
+    }
+
+    /**
+     * @param effectDurations whether each effect line shows its duration — not for a
+     *                        synergy, whose effects last exactly as long as the synergy
+     *                        whatever the datapack wrote; see
+     *                        {@link BuffDescription#synergyEffectBlock}
+     */
+    private void buildCommonDetailLines(List<RenderLine> allLines, double healthBonus,
+                                        List<FoodBuffData.AttributeData> attributes,
+                                        List<FoodBuffData.EffectData> effects,
+                                        boolean effectDurations) {
         boolean hasAttributes = attributes != null && !attributes.isEmpty();
 
         // Health first, under the same heading as the rest — it is a max-health modifier
@@ -753,8 +845,8 @@ public class FoodJournalScreen extends Screen {
                 (BuffDescription.effectCategory(effect.id()) == StatusEffectCategory.HARMFUL
                         ? inflicted : granted).add(effect);
             }
-            appendEffectLines(allLines, "gui.florafare.journal.effects_title", granted);
-            appendEffectLines(allLines, "gui.florafare.journal.inflicts_title", inflicted);
+            appendEffectLines(allLines, "gui.florafare.journal.effects_title", granted, effectDurations);
+            appendEffectLines(allLines, "gui.florafare.journal.inflicts_title", inflicted, effectDurations);
         }
     }
 
@@ -807,7 +899,7 @@ public class FoodJournalScreen extends Screen {
     }
 
     private void appendEffectLines(List<RenderLine> allLines, String headingKey,
-                                   List<FoodBuffData.EffectData> effects) {
+                                   List<FoodBuffData.EffectData> effects, boolean durations) {
         if (effects.isEmpty()) return;
         allLines.add(new RenderLine("", COLOR_INK_DARK, 6, 0));
         allLines.add(new RenderLine(Text.translatable(headingKey).getString(),
@@ -815,7 +907,7 @@ public class FoodJournalScreen extends Screen {
         for (FoodBuffData.EffectData effect : effects) {
             allLines.add(new RenderLine(
                     "• " + BuffDescription.effectLabel(effect).getString()
-                            + " (" + BuffDescription.formatDuration(effect.duration()) + ")",
+                            + (durations ? " (" + BuffDescription.formatDuration(effect.duration()) + ")" : ""),
                     effectColor(effect), 11, 4));
         }
     }

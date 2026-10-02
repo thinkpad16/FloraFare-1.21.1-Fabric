@@ -227,8 +227,12 @@ public class SynergyEmiRecipe implements EmiRecipe {
                 SLOT_SIZE + 4 + textRenderer.getWidth("???"),
                 slotsWide + 4 + textRenderer.getWidth(BuffDescription.synergyName(synergy.id())));
 
+        // Three states, not two: what is shown now, and what the block grows to once every
+        // stage and aftermath behind a "???" has been suffered — which, like the discovery
+        // itself, bumps nothing ensureMeasured watches.
         List<List<Text>> states = List.of(
-                BuffDescription.lockedLines(), BuffDescription.synergyLines(current()));
+                BuffDescription.lockedLines(), BuffDescription.synergyLines(current()),
+                BuffDescription.revealedSynergyLines(current()));
         for (List<Text> state : states) {
             for (Text line : state) {
                 widest = Math.max(widest, textRenderer.getWidth(line));

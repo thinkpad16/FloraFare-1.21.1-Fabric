@@ -17,9 +17,17 @@ import java.util.Map;
  * leaves out the ones that are null. Field names are therefore part of the dump's
  * documented format (see the README) and should not be renamed casually.
  *
- * @param trees per food id, the text-only crafting tree; not part of the JSON
+ * @param synergies every synergy loaded, sorted by id — whatever the mod filter, since a
+ *                  synergy is about combinations rather than one mod's items
+ * @param trees     per food id, the text-only crafting tree; not part of the JSON
  */
-public record FoodDump(Meta meta, List<Food> foods, Map<String, List<String>> trees) {
+public record FoodDump(Meta meta, List<Food> foods, List<Synergy> synergies,
+                       Map<String, List<String>> trees) {
+
+    /** A dump without the synergy section, as the format was before it. */
+    public FoodDump(Meta meta, List<Food> foods, Map<String, List<String>> trees) {
+        this(meta, foods, List.of(), trees);
+    }
 
     /**
      * @param formatVersion bumped whenever a field changes meaning or disappears
@@ -97,6 +105,30 @@ public record FoodDump(Meta meta, List<Food> foods, Map<String, List<String>> tr
      */
     public record Aftermath(int duration, double healthBonus, List<Effect> effects,
                             List<Attribute> attributes) {}
+
+    /**
+     * One {@code food_synergies} entry, as it loaded.
+     *
+     * @param file         the datapack file it came from, {@code <api>} for code
+     * @param duration     its ceiling in ticks ({@code 0}: none, it lasts as long as its
+     *                     shortest ingredient), or with an {@code own} timer how long it runs
+     * @param timer        {@code members} or {@code own}
+     * @param aftermath    stage I's aftermath; absent when it has none
+     * @param overdrive    its stages past I; absent for an ordinary synergy
+     * @param lockoutGroup the group it locks out with; absent when it locks out only itself
+     *                     or has no lockout
+     */
+    public record Synergy(String id, @Nullable String file, List<String> requirements, int duration,
+                          String timer, double healthBonus, List<Effect> effects,
+                          List<Attribute> attributes, @Nullable Aftermath aftermath,
+                          @Nullable Overdrive overdrive, boolean lockout, @Nullable String lockoutGroup) {}
+
+    /** @param stages stages II and up, in order */
+    public record Overdrive(int stageCount, List<Stage> stages) {}
+
+    /** One overdrive stage, numbered from 2 — stage I is the synergy's own fields. */
+    public record Stage(int stage, double healthBonus, List<Effect> effects, List<Attribute> attributes,
+                        @Nullable Aftermath aftermath) {}
 
     public record Loss(String file, int priority, String winnerFile, int winnerPriority, boolean tie) {}
 

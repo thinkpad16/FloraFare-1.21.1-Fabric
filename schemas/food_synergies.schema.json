@@ -57,16 +57,70 @@
         "duration": {
           "type": "integer",
           "default": 2400,
-          "description": "Ceiling in ticks. The synergy runs for the shortest remaining duration among the buffs feeding it, capped here. 0 or less means no ceiling."
+          "description": "Ceiling in ticks. The synergy runs for the shortest remaining duration among the buffs feeding it, capped here. 0 (or less) means no ceiling: it lasts exactly as long as its shortest ingredient, and re-eating that ingredient keeps it going. Left out, it is 2400 (two minutes). With \"timer\": \"own\" this is instead exactly how long it runs, and must be above 0."
         },
         "health_bonus": {
           "type": "number",
           "default": 0.0,
-          "description": "Extra max health while the synergy is active; negative allowed."
+          "description": "Extra max health while the synergy is active; negative allowed. With an overdrive, stage I's."
         },
         "effects": {
           "type": "array",
-          "description": "Same format as food_buffs. Effect durations are stretched to the synergy's duration.",
+          "description": "Same format as food_buffs. Each effect is granted for exactly as long as the synergy has left, whatever 'duration' it gives; with an overdrive, stage I's.",
+          "items": {
+            "$ref": "food_buffs.schema.json#/definitions/effect"
+          }
+        },
+        "attributes": {
+          "type": "array",
+          "description": "Same format as food_buffs. With an overdrive, stage I's.",
+          "items": {
+            "$ref": "food_buffs.schema.json#/definitions/attribute"
+          }
+        },
+        "aftermath": {
+          "description": "What the synergy leaves behind once it ends \u2014 same format and rules as a food_buffs entry's aftermath. Starts when the synergy runs out or loses a requirement. With an overdrive, stage I's; each stage has its own.",
+          "$ref": "food_buffs.schema.json#/definitions/aftermath"
+        },
+        "timer": {
+          "type": "string",
+          "enum": [
+            "members",
+            "own"
+          ],
+          "default": "members",
+          "description": "What the synergy's countdown follows. 'members': the shortest remaining buff among its requirements, capped by 'duration'; it ends when one of them does. 'own': once its requirements come together it runs for exactly 'duration' ticks (which must then be above 0), keeps running if an ingredient's buff ends, and resets to the full 'duration' whenever one of its ingredients is eaten again. Not allowed together with 'overdrive', whose stages need the members' timer."
+        },
+        "overdrive": {
+          "$ref": "#/definitions/overdrive"
+        },
+        "lockout": {
+          "type": "boolean",
+          "description": "While an aftermath this synergy left is running, it does not start (one already running is never ended by it). Works on any synergy, overdrive or not. Defaults to true when lockout_group is set, false otherwise."
+        },
+        "lockout_group": {
+          "type": "string",
+          "pattern": "^([a-z0-9_.-]+:)?[a-z0-9_./-]+$",
+          "description": "Synergies sharing this identifier lock each other out: while an aftermath from any of them is running, none of them can start. Put every synergy in one group (e.g. \"falleneden:all\") to allow only one bill at a time."
+        },
+        "_comment": {
+          "description": "Ignored by the loader \u2014 a note for whoever edits the file. Florafare's own tag_categories.json uses it."
+        }
+      },
+      "additionalProperties": false
+    },
+    "overdrive_stage": {
+      "type": "object",
+      "description": "One overdrive stage: a full replacement of the synergy's health_bonus, effects and attributes while it is at this stage, plus the aftermath this stage leaves behind.",
+      "properties": {
+        "health_bonus": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Extra max health while the synergy is at this stage; negative allowed."
+        },
+        "effects": {
+          "type": "array",
+          "description": "Same format as food_buffs; durations are stretched to the synergy's.",
           "items": {
             "$ref": "food_buffs.schema.json#/definitions/effect"
           }
@@ -79,11 +133,29 @@
           }
         },
         "aftermath": {
-          "description": "What the synergy leaves behind once it ends \u2014 same format and rules as a food_buffs entry's aftermath. Starts when the synergy runs out or loses a requirement.",
+          "description": "What the synergy leaves behind if it ends while at this stage (runs out, loses a requirement, or overloads at the last stage). Same format as food_buffs.",
           "$ref": "food_buffs.schema.json#/definitions/aftermath"
         },
         "_comment": {
-          "description": "Ignored by the loader \u2014 a note for whoever edits the file. Florafare's own tag_categories.json uses it."
+          "description": "Ignored by the loader \u2014 a note for whoever edits the file."
+        }
+      },
+      "additionalProperties": false
+    },
+    "overdrive": {
+      "type": "object",
+      "description": "Makes the synergy an overdrive (members' timer only). Its own top-level health_bonus/effects/attributes/aftermath are stage I; 'stages' lists stages II, III, ... It climbs one stage at each boundary it is still running at: the first when its shortest ingredient (at activation) would run out, then one every full duration of that ingredient. Eating never moves the stage; at the last stage, a bite that would prolong it overloads it instead: it ends at once and the last stage's aftermath starts. Ending any other way starts the aftermath of the stage it reached. 'lockout' and 'lockout_group' go at the synergy's top level, not in here.",
+      "properties": {
+        "stages": {
+          "type": "array",
+          "default": [],
+          "description": "Stages II, III, ... in order. Empty: stage I is the last, so the first bite that prolongs it overloads it.",
+          "items": {
+            "$ref": "#/definitions/overdrive_stage"
+          }
+        },
+        "_comment": {
+          "description": "Ignored by the loader \u2014 a note for whoever edits the file."
         }
       },
       "additionalProperties": false

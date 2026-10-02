@@ -51,6 +51,32 @@ public class ActiveFoodBuff {
     private int durationRemaining;
     private int initialDuration;
 
+    /**
+     * The overdrive stage, 1-based: on an active synergy the stage it has reached, on a
+     * synergy's aftermath the stage its synergy had reached when it ended — which is the
+     * stage whose aftermath it is. Always 1 for a food buff, and for a synergy without an
+     * overdrive, which has stage I only.
+     *
+     * <p>Mutable, unlike the identity fields above: a synergy moves up a stage in place,
+     * keeping its slot in the list, its modifier scope and its icon.
+     */
+    private int stage = 1;
+
+    /**
+     * An overdrive's stage clock: ticks until it next moves up a stage, and how long each
+     * stage after the first lasts. Both 0 — no clock — on everything but a running overdrive.
+     *
+     * <p>A countdown rather than an absolute tick, like the duration above, so it needs no
+     * shared clock between client and server, survives a relog exactly where it was, and
+     * does not run while the player is offline (nor does anything else on a buff). The
+     * first boundary is the shortest ingredient's remaining time when the synergy started;
+     * every later one is a whole {@link #phaseLength} — that ingredient's full duration —
+     * after the last. Eating does not touch either, which is the point: no number of bites
+     * inside one phase can move the synergy more than the one stage the boundary gives.
+     */
+    private int ticksToNextStage = 0;
+    private int phaseLength      = 0;
+
     private final Map<Identifier, AppliedModifier> appliedModifiers = new HashMap<>();
 
     // #25 — Lazily cached ItemStack so the registry is not queried every render frame.
@@ -86,6 +112,7 @@ public class ActiveFoodBuff {
 
     public void tick() {
         if (durationRemaining > 0) durationRemaining--;
+        if (phaseLength > 0 && ticksToNextStage > 0) ticksToNextStage--;
     }
 
     /** Restarts the buff: it now has {@code newDuration} left, out of that same total. */
@@ -129,6 +156,47 @@ public class ActiveFoodBuff {
     public int     getDurationRemaining() { return durationRemaining; }
     public int     getInitialDuration()   { return initialDuration; }
     public boolean isExpired()            { return durationRemaining <= 0; }
+
+    /** The overdrive stage, 1-based; see {@link #stage}. */
+    public int     getStage()             { return stage; }
+
+    /** Moves the entry to stage {@code stage}; anything below 1 reads as stage I. */
+    public void setStage(int stage) {
+        this.stage = Math.max(1, stage);
+    }
+
+    /** Whether this entry has a stage clock running — a running overdrive. */
+    public boolean hasStageClock()        { return phaseLength > 0; }
+
+    /** Ticks until the next stage boundary; meaningless without {@link #hasStageClock()}. */
+    public int     getTicksToNextStage()  { return ticksToNextStage; }
+
+    /** How long each stage after the first lasts, in ticks; 0 without a stage clock. */
+    public int     getPhaseLength()       { return phaseLength; }
+
+    /** Whether the stage clock has reached a boundary that has not been dealt with yet. */
+    public boolean isStageDue()           { return phaseLength > 0 && ticksToNextStage <= 0; }
+
+    /**
+     * Starts the stage clock: the first boundary {@code firstBoundary} ticks from now, then
+     * one every {@code phaseLength}. Both held to the buff ceiling; a phase is at least one
+     * tick, so a boundary can never fire every tick.
+     */
+    public void startStageClock(int firstBoundary, int phaseLength) {
+        this.phaseLength      = Math.max(1, clampDuration(phaseLength));
+        this.ticksToNextStage = clampDuration(firstBoundary);
+    }
+
+    /** A boundary was dealt with: the next one is a whole phase away. */
+    public void restartPhase() {
+        if (phaseLength > 0) ticksToNextStage = phaseLength;
+    }
+
+    /** Stops the stage clock — the synergy is no longer an overdrive (a /reload changed it). */
+    public void clearStageClock() {
+        this.phaseLength      = 0;
+        this.ticksToNextStage = 0;
+    }
 
     /**
      * Whether this entry is a synergy rather than a food buff.
@@ -216,6 +284,13 @@ public class ActiveFoodBuff {
         // Only written when true: a food buff is the overwhelmingly common case, and
         // leaving the key off keeps the per-buff tag the size it has always been.
         if (synergy) nbt.putBoolean("Synergy", true);
+        // Same reasoning: stage I is every buff, every ordinary synergy and every save
+        // written before overdrives existed, so only a stage past it costs a key.
+        if (stage > 1) nbt.putInt("Stage", stage);
+        if (phaseLength > 0) {
+            nbt.putInt("PhaseLength", phaseLength);
+            nbt.putInt("NextStage",   ticksToNextStage);
+        }
 
         NbtList modList = new NbtList();
         appliedModifiers.forEach((modId, modifier) -> {
@@ -253,6 +328,12 @@ public class ActiveFoodBuff {
                 nbt.getInt("InitialDuration"),
                 forceSynergy || nbt.getBoolean("Synergy")
         );
+        // Absent from every tag written before overdrives existed, and from every stage I
+        // entry since: getInt reads that as 0, which setStage turns into stage I.
+        buff.setStage(nbt.getInt("Stage"));
+        // No clock in a tag written before stage clocks existed; the component starts one
+        // from the ingredients the next time it looks at the synergy.
+        if (nbt.getInt("PhaseLength") > 0) buff.startStageClock(nbt.getInt("NextStage"), nbt.getInt("PhaseLength"));
 
         if (nbt.contains("Modifiers", NbtElement.LIST_TYPE)) {
             NbtList list = nbt.getList("Modifiers", NbtElement.COMPOUND_TYPE);

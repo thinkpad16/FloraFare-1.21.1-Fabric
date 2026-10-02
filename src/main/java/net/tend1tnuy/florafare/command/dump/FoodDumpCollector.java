@@ -180,7 +180,9 @@ public final class FoodDumpCollector {
                                 + "recipe here may still be obtainable.",
                         "Recipe flags (storage, reversible, decomposition) are inferred from recipe shapes "
                                 + "and never pick the primary recipe of a food made some other way."));
-        return new FoodDump(meta, out, trees);
+        List<FoodDump.Synergy> synergyEntries = new ArrayList<>(synergies.size());
+        for (FoodSynergyData synergy : synergies) synergyEntries.add(synergyEntry(synergy));
+        return new FoodDump(meta, out, synergyEntries, trees);
     }
 
     private static boolean matches(@Nullable String modFilter, String id) {
@@ -597,6 +599,41 @@ public final class FoodDumpCollector {
     // -------------------------------------------------------------------------
     // SYNERGIES
     // -------------------------------------------------------------------------
+
+    /** One synergy as the dump writes it: requirements, timing, stage I, then the overdrive. */
+    private static FoodDump.Synergy synergyEntry(FoodSynergyData synergy) {
+        FoodDump.Overdrive overdrive = null;
+        if (synergy.hasOverdrive()) {
+            List<FoodDump.Stage> stages = new ArrayList<>();
+            for (int stage = 2; stage <= synergy.stageCount(); stage++) {
+                net.tend1tnuy.florafare.food.SynergyOverdrive.Stage fields = synergy.stage(stage);
+                stages.add(new FoodDump.Stage(stage, fields.healthBonus(), effectsOf(fields.effects()),
+                        attributesOf(fields.attributes()), aftermathOf(fields.aftermath())));
+            }
+            overdrive = new FoodDump.Overdrive(synergy.stageCount(), stages);
+        }
+        return new FoodDump.Synergy(synergy.id(), FoodSynergyManager.sourceOf(synergy.id()),
+                synergy.requirements(), synergy.duration(), synergy.timer().jsonName(),
+                synergy.healthBonus(), effectsOf(synergy.effects()), attributesOf(synergy.attributes()),
+                aftermathOf(synergy.aftermath()), overdrive, synergy.lockout(), synergy.lockoutGroup());
+    }
+
+    private static List<FoodDump.Effect> effectsOf(List<FoodBuffData.EffectData> effects) {
+        List<FoodDump.Effect> out = new ArrayList<>(effects.size());
+        for (FoodBuffData.EffectData effect : effects) {
+            out.add(new FoodDump.Effect(effect.id().toString(), effect.duration(), effect.amplifier(), 1f));
+        }
+        return out;
+    }
+
+    private static List<FoodDump.Attribute> attributesOf(List<FoodBuffData.AttributeData> attributes) {
+        List<FoodDump.Attribute> out = new ArrayList<>(attributes.size());
+        for (FoodBuffData.AttributeData attribute : attributes) {
+            out.add(new FoodDump.Attribute(attribute.attributeId().toString(),
+                    attribute.amount(), attribute.operation()));
+        }
+        return out;
+    }
 
     /** The synergies with a requirement this item satisfies, by id or by tag. */
     private static List<String> synergiesFor(List<FoodSynergyData> synergies, String id, ItemStack stack) {
