@@ -862,7 +862,8 @@ public class Florafare implements ModInitializer {
                 net.tend1tnuy.florafare.config.FlorafareConfig.enableAlwaysEdibleOverride,
                 net.tend1tnuy.florafare.config.FlorafareConfig.allowEatingWhenFull,
                 net.tend1tnuy.florafare.config.FlorafareConfig.respectVanillaFoodEffects,
-                net.tend1tnuy.florafare.config.FlorafareConfig.enableForgottenMead
+                net.tend1tnuy.florafare.config.FlorafareConfig.enableForgottenMead,
+                net.tend1tnuy.florafare.config.FlorafareConfig.maxSaturation
         );
     }
 }

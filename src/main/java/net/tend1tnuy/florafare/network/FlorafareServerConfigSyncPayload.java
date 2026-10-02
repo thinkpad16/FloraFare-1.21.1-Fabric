@@ -21,7 +21,8 @@ public record FlorafareServerConfigSyncPayload(
         boolean enableAlwaysEdibleOverride,
         boolean allowEatingWhenFull,
         boolean respectVanillaFoodEffects,
-        boolean enableForgottenMead
+        boolean enableForgottenMead,
+        float maxSaturation
 ) implements CustomPayload {
 
     public static final CustomPayload.Id<FlorafareServerConfigSyncPayload> ID =
@@ -38,6 +39,7 @@ public record FlorafareServerConfigSyncPayload(
                 buf.writeBoolean(payload.allowEatingWhenFull());
                 buf.writeBoolean(payload.respectVanillaFoodEffects());
                 buf.writeBoolean(payload.enableForgottenMead());
+                buf.writeFloat(payload.maxSaturation());
             },
             buf -> new FlorafareServerConfigSyncPayload(
                     buf.readVarInt(),
@@ -47,7 +49,8 @@ public record FlorafareServerConfigSyncPayload(
                     buf.readBoolean(),
                     buf.readBoolean(),
                     buf.readBoolean(),
-                    buf.readBoolean()
+                    buf.readBoolean(),
+                    buf.readFloat()
             )
     );
 

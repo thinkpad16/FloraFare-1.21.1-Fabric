@@ -138,6 +138,22 @@ public class FlorafareConfig {
     /** Upper bound for {@link #runtimeBuffRetentionDays}: a hundred years is "forever" enough. */
     public static final int MAX_RUNTIME_RETENTION_DAYS = 36_500;
 
+    /**
+     * The most saturation a player can hold, in points.
+     *
+     * <p>{@code 0} keeps vanilla's rule: saturation can never exceed the current hunger
+     * level, so at most 20. Any other value is a fixed ceiling that no longer follows the
+     * hunger bar, for packs that hand out more saturation than a full bar can hold (a
+     * dish worth 40 points would otherwise lose half of it on the spot). A bigger pool
+     * makes food last longer, and because the fast regeneration at a full hunger bar
+     * spends saturation, it also means more healing per meal. Server-authoritative and
+     * synced, so clients predict the same ceiling.
+     */
+    public static volatile float maxSaturation = 0f;
+
+    /** Upper bound for {@link #maxSaturation}. */
+    public static final float MAX_SATURATION_CEILING = 1000f;
+
     // -------------------------------------------------------------------------
     // CONCURRENCY
     //
@@ -194,6 +210,7 @@ public class FlorafareConfig {
         boolean allowEatingWhenFull;
         boolean respectVanillaFoodEffects;
         boolean enableForgottenMead;
+        float   maxSaturation;
     }
 
     /**
@@ -216,6 +233,7 @@ public class FlorafareConfig {
         snapshot.allowEatingWhenFull        = allowEatingWhenFull;
         snapshot.respectVanillaFoodEffects  = respectVanillaFoodEffects;
         snapshot.enableForgottenMead        = enableForgottenMead;
+        snapshot.maxSaturation              = maxSaturation;
         local = snapshot;
     }
 
@@ -236,7 +254,8 @@ public class FlorafareConfig {
                 || enableAlwaysEdibleOverride        != snapshot.enableAlwaysEdibleOverride
                 || allowEatingWhenFull               != snapshot.allowEatingWhenFull
                 || respectVanillaFoodEffects         != snapshot.respectVanillaFoodEffects
-                || enableForgottenMead               != snapshot.enableForgottenMead;
+                || enableForgottenMead               != snapshot.enableForgottenMead
+                || Float.compare(maxSaturation, snapshot.maxSaturation) != 0;
 
         maxBuffSlots               = snapshot.maxBuffSlots;
         autoGenDurationMultiplier  = snapshot.autoGenDurationMultiplier;
@@ -246,6 +265,7 @@ public class FlorafareConfig {
         allowEatingWhenFull        = snapshot.allowEatingWhenFull;
         respectVanillaFoodEffects  = snapshot.respectVanillaFoodEffects;
         enableForgottenMead        = snapshot.enableForgottenMead;
+        maxSaturation              = snapshot.maxSaturation;
         return changed;
     }
 
@@ -261,6 +281,7 @@ public class FlorafareConfig {
     public static boolean localAllowEatingWhenFull()        { return local != null ? local.allowEatingWhenFull        : allowEatingWhenFull; }
     public static boolean localRespectVanillaFoodEffects()  { return local != null ? local.respectVanillaFoodEffects  : respectVanillaFoodEffects; }
     public static boolean localEnableForgottenMead()        { return local != null ? local.enableForgottenMead        : enableForgottenMead; }
+    public static float   localMaxSaturation()              { return local != null ? local.maxSaturation              : maxSaturation; }
 
     public static void setLocalMaxBuffSlots(int v)               { if (local != null) local.maxBuffSlots               = v; else maxBuffSlots               = v; }
     public static void setLocalAutoGenDurationMultiplier(int v)  { if (local != null) local.autoGenDurationMultiplier  = v; else autoGenDurationMultiplier  = v; }
@@ -270,6 +291,7 @@ public class FlorafareConfig {
     public static void setLocalAllowEatingWhenFull(boolean v)    { if (local != null) local.allowEatingWhenFull        = v; else allowEatingWhenFull        = v; }
     public static void setLocalRespectVanillaFoodEffects(boolean v) { if (local != null) local.respectVanillaFoodEffects = v; else respectVanillaFoodEffects  = v; }
     public static void setLocalEnableForgottenMead(boolean v)    { if (local != null) local.enableForgottenMead        = v; else enableForgottenMead        = v; }
+    public static void setLocalMaxSaturation(float v)            { if (local != null) local.maxSaturation              = v; else maxSaturation              = v; }
 
     // -------------------------------------------------------------------------
     // EXCLUSIONS
@@ -408,6 +430,7 @@ public class FlorafareConfig {
                     commandPermissionLevel = data.commandPermissionLevel;
                     writeCommandPermissionLevel = data.writeCommandPermissionLevel;
                     runtimeBuffRetentionDays = data.runtimeBuffRetentionDays;
+                    maxSaturation = data.maxSaturation;
                     if (data.ignoredFoodItems != null) ignoredFoodItems = data.ignoredFoodItems;
                     if (data.ignoredFoodMods  != null) ignoredFoodMods  = data.ignoredFoodMods;
                     if (data.managedFoodItems != null) managedFoodItems = data.managedFoodItems;
@@ -507,6 +530,7 @@ public class FlorafareConfig {
         setLocalAllowEatingWhenFull(data.allowEatingWhenFull);
         setLocalRespectVanillaFoodEffects(data.respectVanillaFoodEffects);
         setLocalEnableForgottenMead(data.enableForgottenMead);
+        setLocalMaxSaturation(data.maxSaturation);
         grantJournalOnFirstJoin = data.grantJournalOnFirstJoin;
         notifyOnFullBuffSlots   = data.notifyOnFullBuffSlots;
         commandPermissionLevel  = data.commandPermissionLevel;
@@ -568,6 +592,11 @@ public class FlorafareConfig {
         runtimeBuffRetentionDays  = clamp(runtimeBuffRetentionDays, 0, MAX_RUNTIME_RETENTION_DAYS,
                 "runtimeBuffRetentionDays");
         toastDisplayTimeMs        = clamp(toastDisplayTimeMs, MIN_TOAST_MS, MAX_TOAST_MS, "toastDisplayTimeMs");
+        float saturationCeiling = clampMaxSaturation(maxSaturation);
+        if (Float.compare(saturationCeiling, maxSaturation) != 0) {
+            warnClamped("maxSaturation", maxSaturation, saturationCeiling);
+            maxSaturation = saturationCeiling;
+        }
 
         double healthMult = clampAutoGenHealth(autoGenHealthMultiplier);
         if (Double.compare(healthMult, autoGenHealthMultiplier) != 0) {
@@ -605,6 +634,15 @@ public class FlorafareConfig {
      * value makes eating <em>lower</em> max health, and a stray extra digit hands every
      * player on the server hundreds of hearts. Shared with {@code config_generation.json}.
      */
+    /**
+     * {@link #maxSaturation} kept in range: negative and NaN mean "vanilla" (0), and the
+     * top is {@link #MAX_SATURATION_CEILING}.
+     */
+    public static float clampMaxSaturation(float value) {
+        if (Float.isNaN(value) || value < 0f) return 0f;
+        return Math.min(value, MAX_SATURATION_CEILING);
+    }
+
     public static double clampAutoGenHealth(double value) {
         if (Double.isNaN(value)) return 0.5;
         return Math.min(Math.max(value, 0.0), MAX_AUTO_GEN_HEALTH_MULT);
@@ -683,6 +721,7 @@ public class FlorafareConfig {
             data.commandPermissionLevel = commandPermissionLevel;
             data.writeCommandPermissionLevel = writeCommandPermissionLevel;
             data.runtimeBuffRetentionDays = runtimeBuffRetentionDays;
+            data.maxSaturation = localMaxSaturation();
             // Copies, so what is serialized is one consistent snapshot even if a caller
             // that skipped editExclusionLists() is changing a list right now.
             data.ignoredFoodItems = new java.util.ArrayList<>(ignoredFoodItems);
@@ -756,6 +795,7 @@ public class FlorafareConfig {
         public int commandPermissionLevel = 2;
         public int writeCommandPermissionLevel = 3;
         public int runtimeBuffRetentionDays = 180;
+        public float maxSaturation = 0f;
         public java.util.List<String> ignoredFoodItems = new java.util.ArrayList<>();
         public java.util.List<String> ignoredFoodMods = new java.util.ArrayList<>();
         public java.util.List<String> managedFoodItems = new java.util.ArrayList<>();

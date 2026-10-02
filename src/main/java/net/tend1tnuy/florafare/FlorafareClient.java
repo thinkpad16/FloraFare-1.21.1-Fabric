@@ -282,6 +282,10 @@ public class FlorafareClient implements ClientModInitializer {
                     FlorafareConfig.allowEatingWhenFull = payload.allowEatingWhenFull();
                     FlorafareConfig.respectVanillaFoodEffects = payload.respectVanillaFoodEffects();
                     FlorafareConfig.enableForgottenMead = payload.enableForgottenMead();
+                    // The client runs HungerManager#addInternal too when it predicts a bite;
+                    // without the server's ceiling it would clamp to the hunger bar and the
+                    // saturation shown would dip for a tick until the server's value arrived.
+                    FlorafareConfig.maxSaturation = payload.maxSaturation();
                     PlayerFoodComponent.setMaxBuffSlots(payload.maxBuffSlots());
                 }));
 
