@@ -427,7 +427,7 @@
   "command.florafare.help.commands.buffs": "що діє на гравця зараз, із застосованими модифікаторами",
   "command.florafare.help.commands.explain": "чому предмет має саме такий баф",
   "command.florafare.help.commands.validate": "усе, що не так із завантаженими даними їжі, за розділами",
-  "command.florafare.help.commands.validate_file": "повний звіт перевірки у florafare/reports/",
+  "command.florafare.help.commands.validate_file": "повний звіт перевірки у logs/florafare/reports/",
   "command.florafare.help.commands.buff": "надати або зняти один баф",
   "command.florafare.help.commands.clear": "завершити всі бафи й синергії",
   "command.florafare.help.commands.journal": "видати журнал, показати, відкрити чи закрити відкриття",
@@ -438,5 +438,5 @@
   "command.florafare.help.commands.setbuff": "поставити баф на їжу в руці; тривалість 0 — лише голод",
   "command.florafare.help.commands.setbuff_prune": "видалити бафи стаків, яких не бачили стільки днів",
   "command.florafare.help.commands.repair": "прибрати залишкові модифікатори атрибутів Florafare",
-  "command.florafare.help.commands.dumpfoods": "уся їжа, її баф FloraFare і рецепти — у florafare/dumps/ (* = усі моди, типово всі формати, глибина 3)"
+  "command.florafare.help.commands.dumpfoods": "уся їжа, її баф FloraFare і рецепти — у logs/florafare/dumps/ (* = усі моди, типово всі формати, глибина 3)"
 }

@@ -34,7 +34,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * {@code /florafare dumpfoods [modFilter] [json|txt|csv|all] [maxDepth]} — every food in
  * the game, what FloraFare does with it, and every recipe that makes it, written to
- * {@code <game dir>/florafare/dumps/foods-<timestamp>.<ext>}.
+ * {@code <game dir>/logs/florafare/dumps/foods-<timestamp>.<ext>}.
  *
  * <p>For building datapacks: the JSON is for scripts, the text for reading, the CSV for a
  * spreadsheet. The format is described in the README; {@link FoodDumpCollector} explains

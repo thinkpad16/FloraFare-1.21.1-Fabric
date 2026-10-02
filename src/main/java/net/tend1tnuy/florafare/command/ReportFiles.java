@@ -18,7 +18,9 @@ import java.time.format.DateTimeFormatter;
 /**
  * Where the commands that write files put them, and how they name them.
  *
- * <p>Everything goes under {@code <game dir>/florafare/<kind>/}, named with the moment it
+ * <p>Everything goes under {@code <game dir>/logs/florafare/<kind>/}, next to the game's own
+ * logs and where other tooling (CraftTweaker's {@code crafttweaker.log}) leaves its output,
+ * so server hosts find and rotate it with the rest. Each file is named with the moment it
  * was made: the food dump used to write one fixed {@code florafare_edible_items_dump.txt}
  * into the game directory itself, so two dumps overwrote each other — or, run back to
  * back, wrote into the same file at the same time from two IO threads.
@@ -30,9 +32,9 @@ public final class ReportFiles {
     /** {@code 20261002-143015}: sorts by time, and is legal in a file name everywhere. */
     public static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
-    /** {@code <game dir>/florafare/<kind>}, not yet created. */
+    /** {@code <game dir>/logs/florafare/<kind>}, not yet created. */
     public static Path directory(String kind) {
-        return FabricLoader.getInstance().getGameDir().resolve("florafare").resolve(kind);
+        return FabricLoader.getInstance().getGameDir().resolve("logs").resolve("florafare").resolve(kind);
     }
 
     /** A stamp for files made right now. */

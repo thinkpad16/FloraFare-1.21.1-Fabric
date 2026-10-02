@@ -62,7 +62,7 @@ import java.util.TreeSet;
  *       then "…and N more", with the section name clickable;</li>
  *   <li>{@code validate <section> [page]} — one section in full, ten lines a page;</li>
  *   <li>{@code validate file} — the full report written to
- *       {@code <game dir>/florafare/reports/}, for a report too long for chat. The write
+ *       {@code <game dir>/logs/florafare/reports/}, for a report too long for chat. The write
  *       level, since it writes into the server's file system.</li>
  * </ul>
  *

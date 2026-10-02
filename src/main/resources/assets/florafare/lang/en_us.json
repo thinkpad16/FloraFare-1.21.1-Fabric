@@ -427,7 +427,7 @@
   "command.florafare.help.commands.buffs": "what a player has running, with the modifiers applied",
   "command.florafare.help.commands.explain": "why an item has the buff it has",
   "command.florafare.help.commands.validate": "everything wrong with the loaded food data, by section",
-  "command.florafare.help.commands.validate_file": "the full validate report, written to florafare/reports/",
+  "command.florafare.help.commands.validate_file": "the full validate report, written to logs/florafare/reports/",
   "command.florafare.help.commands.buff": "grant or drop one buff",
   "command.florafare.help.commands.clear": "end every buff and synergy",
   "command.florafare.help.commands.journal": "give a journal, list, unlock or lock discoveries",
@@ -438,5 +438,5 @@
   "command.florafare.help.commands.setbuff": "stamp a buff on the food in your hand; duration 0 is hunger-only",
   "command.florafare.help.commands.setbuff_prune": "drop stack buffs not seen for that many days",
   "command.florafare.help.commands.repair": "remove leftover Florafare attribute modifiers",
-  "command.florafare.help.commands.dumpfoods": "every food, its FloraFare buff and recipes, to florafare/dumps/ (* = all mods, default all formats, depth 3)"
+  "command.florafare.help.commands.dumpfoods": "every food, its FloraFare buff and recipes, to logs/florafare/dumps/ (* = all mods, default all formats, depth 3)"
 }
